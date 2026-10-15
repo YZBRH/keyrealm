@@ -241,6 +241,10 @@ class VaultApi:
     def minimize_to_tray(self):
         return api.minimize_to_tray()
 
+    def log_frontend_error(self, message=""):
+        """前端把用户看不见的失败回传到后端日志（见 api.log_frontend_error）。"""
+        return api.log_frontend_error(message)
+
     def get_tray_status(self):
         return api.get_tray_status_api()
 
@@ -402,6 +406,9 @@ _quitting = False
 
 # 轻量模式：界面文档已被释放（换成了占位页）时置 True。见 _release_page / _restore_page。
 _page_released = False
+# 释放页面要**延后**这么多秒（见 _hide_to_tray）：得让「最小化到托盘」这个 JS 调用的返回值
+# 先写回页面，否则 pywebview 会往一个已经被换掉的文档里写回调，抛 JavascriptException。
+_RELEASE_DELAY_SEC = 0.8
 _page_released_lock = threading.Lock()
 
 # 启动时实际交给 pywebview 的前端 URL。轻量模式恢复时**原样**重载它：
@@ -471,7 +478,13 @@ def _hide_to_tray():
         logger.get_logger("main").warning("隐藏窗口失败，跳过界面释放：%s", e)
         return
     if api.read_light_mode():
-        _release_page()
+        # 页面一换，当前文档就没了；而此刻 pywebview 很可能**还在把本次 JS 调用的返回值**
+        # 写回页面（「最小化到托盘」就是从界面按钮过来的一个 JS 调用）——换早了，这趟写回就
+        # 落到一个已不存在的回调上，抛 JavascriptException（Linux 上稳定复现）。
+        # 延后一拍：让返回值先落地，再换页。
+        timer = threading.Timer(_RELEASE_DELAY_SEC, _release_page)
+        timer.daemon = True
+        timer.start()
 
 
 # 轻量模式释放后显示的那一页。正常流程下用户看不到它（窗口是隐藏的），

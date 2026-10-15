@@ -1145,6 +1145,16 @@ def minimize_to_tray() -> dict:
     return {"ok": True}
 
 
+def log_frontend_error(message: str = "") -> dict:
+    """前端把**用户看不见的失败**回传到后端日志，便于排障。
+
+    前端跑在 WebView 里，`console.error` 用户看不到、事后也无从查起（比如「读初始化状态
+    失败」这种：现象是界面跳回注册页，日志里一个字都没有）。故留这个后门。
+    """
+    _log.error("前端报错：%s", str(message or "").strip()[:2000])
+    return {"ok": True}
+
+
 def get_tray_status_api() -> dict:
     return get_tray_status()
 

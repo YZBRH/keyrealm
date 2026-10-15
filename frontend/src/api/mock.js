@@ -644,6 +644,12 @@ export function createMockApi() {
       return { ok: true }
     },
 
+    async log_frontend_error(message) {
+      // 开发模式下只打浏览器控制台，够用了。
+      console.error('[Keyrealm][mock] 前端报错：', message)
+      return { ok: true }
+    },
+
     // ── 关闭窗口行为 ──────────────────────────────────────
     async get_close_action() {
       await delay(40)

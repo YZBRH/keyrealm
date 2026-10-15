@@ -235,6 +235,9 @@ export const api = {
   getTrayStatus: () => call('get_tray_status'),
   minimizeToTray: () => call('minimize_to_tray'),
 
+  // 把**用户看不见的**失败回传到后端日志（WebView 里的 console.error 用户看不到）。
+  logFrontendError: (message) => call('log_frontend_error', message),
+
   // ── 关闭窗口行为 ────────────────────────────────────────
   getCloseAction: () => call('get_close_action'),
   setCloseAction: (action) => call('set_close_action', action),

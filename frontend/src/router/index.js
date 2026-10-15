@@ -40,9 +40,29 @@ const router = createRouter({
   ],
 })
 
+// 启动时读保险库状态。**读不到 ≠ 没初始化** —— 桥还没就绪、或这次调用失败时，绝不能把用户
+// 扔到「注册」页面：那看起来就像数据丢了，而且会诱使用户去重新初始化一个已存在的库。
+// 故失败时做几次有界重试（只在**抛异常**时重试，「读成功但确实没初始化」不重试）。
+const BOOTSTRAP_DEADLINE_MS = 25000   // 总预算：再久就别让用户干等一片空白了
+const BOOTSTRAP_RETRY_DELAY_MS = 800
+
+async function readVaultState(appStore) {
+  const deadline = Date.now() + BOOTSTRAP_DEADLINE_MS
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await appStore.bootstrap()
+      return
+    } catch (err) {
+      console.error(`[Keyrealm] 读取保险库状态失败（第 ${attempt + 1} 次）：`, err)
+      if (Date.now() >= deadline) return
+      await new Promise((resolve) => setTimeout(resolve, BOOTSTRAP_RETRY_DELAY_MS))
+    }
+  }
+}
+
 router.beforeEach(async (to) => {
   const appStore = useAppStore()
-  await appStore.bootstrap()
+  await readVaultState(appStore)
 
   if (!appStore.initialized) {
     return to.name === 'setup' ? true : { name: 'setup' }

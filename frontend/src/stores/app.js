@@ -23,7 +23,12 @@ export const useAppStore = defineStore('app', {
   }),
 
   actions: {
-    /** 读取初始化/解锁状态。可安全重复调用（并发去重 + 结果缓存）。 */
+    /** 读取初始化/解锁状态。可安全重复调用（并发去重 + 结果缓存）。
+     *
+     * **失败会抛出**，由调用方决定重试——这点很关键：以前这里把异常吞掉并置
+     * `initialized = false`，等于把「读不到」说成「没注册」，用户会被扔到注册页面
+     * （看起来就像数据丢了），而且因为下面把 `bootstrapped` 置了真，之后再也不会重试。
+     */
     async bootstrap(force = false) {
       if (this.bootstrapped && !force) return
       if (bootstrapPromise && !force) return bootstrapPromise
@@ -38,11 +43,13 @@ export const useAppStore = defineStore('app', {
           } else {
             this.unlocked = false
           }
-        } catch {
-          this.initialized = false
-          this.unlocked = false
-        } finally {
-          this.bootstrapped = true
+          this.bootstrapped = true   // 只有**成功**才算引导完成；失败时留 false，下次调用会重试
+        } catch (err) {
+          // 前端控制台用户看不到——把真实原因回传到后端日志（best-effort，这条本身失败就算了）。
+          api.logFrontendError(
+            `读取初始化状态失败：${err && err.message ? err.message : String(err)}`
+          ).catch(() => {})
+          throw err
         }
       })()
 
