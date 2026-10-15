@@ -4,6 +4,7 @@ pywebview 主窗口 + 系统托盘 + MCP Server + 调度器
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from pathlib import Path
@@ -12,6 +13,18 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
+
+# ── Linux：兜住 WebKitGTK 的「纯黑窗口」────────────────────────────────────
+# 在虚拟机 / 无可用 GPU 的机器上，WebKitGTK 默认的渲染路径会给出一个**完全黑屏**的窗口——
+# 不是崩溃、日志里什么都没有，极易被误判成「前端没加载」。实测关掉下面任一个即可：
+#   * WEBKIT_DISABLE_DMABUF_RENDERER：WebKitGTK 2.42+ 的 dmabuf 渲染器（现代路径，VM 上最常黑）；
+#   * WEBKIT_DISABLE_COMPOSITING_MODE：关掉加速合成（老版本 WebKitGTK 的经典解法）。
+# 两个都设是为了同时覆盖新旧；本应用是表单型界面，软件合成的性能损失可以忽略。
+# **可覆盖**：`setdefault` 不覆盖已有值——想恢复 GPU 合成，把它导出成 0 即可
+# （例如 `WEBKIT_DISABLE_COMPOSITING_MODE=0`）。
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+    os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
 
 import webview  # pywebview
 
@@ -369,7 +382,12 @@ def _get_frontend_path() -> str:
     dist = root / "frontend" / "dist" / "index.html"
     if dist.exists():
         return str(dist)
-    # 开发模式：Vite dev server
+    # 没有构建过前端：`frontend/dist` 是 gitignore 的，源码树里**天然没有**。下面会退到 Vite 的
+    # **开发**入口（只有 `npm run dev` 能服务它），直接加载就是一片空白——所以要明确说一句，
+    # 否则用户只看到一个黑/白窗口，毫无线索可循。
+    logger.get_logger("main").warning(
+        "未找到前端构建产物 %s —— 窗口将是空白的。请先构建前端："
+        "cd frontend && npm ci && npm run build", dist)
     return str(root / "frontend" / "index.html")
 
 
