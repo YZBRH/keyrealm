@@ -1,7 +1,8 @@
 """
 系统托盘
-pystray 后台守护线程（**macOS 例外**：见 `start_tray`，darwin 后端会自己跑 Cocoa 主循环，
-必须用 `run_detached()` 挂到 pywebview 的循环上，绝不能放进线程）。
+pystray。**Windows 用后台守护线程；macOS / Linux 必须在主线程并入 pywebview 的主循环**
+（见 `start_tray`：这两个平台的后端会去跑各自的主事件循环——Cocoa / GLib——丢进线程
+就会把循环抢走，让 `webview.start()` 立刻返回、应用秒退）。
 窗口关闭 → 隐藏到托盘
 图标颜色：🟢运行+活跃Token 🔵运行空闲 🔴停止/错误 ⚪锁定
 """
@@ -143,7 +144,7 @@ def start_tray(
     quit_cb: Callable,
     get_status_cb: Callable,
 ):
-    """启动系统托盘。**Windows / Linux 用后台守护线程；macOS 必须挂到主循环上**（见下）。"""
+    """启动系统托盘。**Windows 用后台守护线程；macOS / Linux 必须挂到 pywebview 的主循环上**（见下）。"""
     global _tray_icon, _tray_thread
     global _show_window_cb, _lock_vault_cb, _quit_cb, _get_status_cb
 
@@ -180,25 +181,28 @@ def start_tray(
             **icon_kwargs,
         )
     except TypeError as exc:
-        # 旧版 pystray 不认 `darwin_nsapplication`；而旧版 `run_detached()` 的语义是
-        # 「另起线程跑 run()」——正是把 Cocoa 主循环抢走、让应用秒退的那个坑。
-        # **宁可没有托盘**，也不能再赌一次。
-        _log.warning("当前 pystray 不支持 macOS 托盘集成，跳过系统托盘（应用照常运行）：%s", exc)
+        # 旧版 pystray 不认平台专属构造选项（如 macOS 的 `darwin_nsapplication`）；
+        # 而旧版 `run_detached()` 的语义是「另起线程跑 run()」——正是把主循环抢走、
+        # 让应用秒退的那个坑。**宁可没有托盘**，也不能再赌一次。
+        _log.warning("当前 pystray 不支持托盘集成，跳过系统托盘（应用照常运行）：%s", exc)
         return
 
-    if sys.platform == "darwin":
-        # macOS **不能**把 pystray 放进后台线程：它的 darwin 后端 `_run()` 里直接是
-        # `NSApplication.sharedApplication().run()`——那是 Cocoa 的**主事件循环**。
-        # 放进线程 = 由那个线程占住主循环，随后主线程的 `webview.start()` 拿不到控制权、
-        # 会立刻返回，表现为「应用启动一两秒后自己退出」（Windows / Linux 的后端能在后台
-        # 线程里跑，所以只有 macOS 坏）。正解是把托盘挂到 pywebview 的主循环上：
-        # 构造时传入那个共享的 NSApplication，再 `run_detached()`（非阻塞）——
-        # 由 pywebview 随后启动的循环来驱动托盘。
+    if os.name != "nt":
+        # **macOS / Linux 都不能把 pystray 放进后台线程** —— 这两个平台的后端会去跑各自
+        # 的主事件循环，丢进线程 = 把循环抢走，随后主线程的 `webview.start()` 拿不到控制权、
+        # 立刻返回，表现为「应用启动一两秒后自己退出」：
+        #   * macOS：darwin 后端 `_run()` 里直接是 `NSApplication.sharedApplication().run()`；
+        #   * Linux：AppIndicator / GTK 后端要 GLib 主上下文，抢不到就报
+        #     ``g_application_run() cannot acquire the default main context because it is
+        #     already acquired by another thread!``
+        # 正解是 pystray 为这种情形提供的 `run_detached()`（非阻塞）：**在主线程、进入
+        # pywebview 主循环之前**把托盘挂上去，由 pywebview 随后启动的循环来驱动它。
+        # macOS 还需在构造时传入那个共享的 NSApplication（见上）。
         try:
             icon.run_detached()
             _tray_icon = icon
         except Exception as exc:  # noqa: BLE001 - 托盘起不来不该拖垮应用
-            _log.warning("macOS 托盘启动失败，应用照常运行但没有菜单栏图标：%s", exc)
+            _log.warning("托盘启动失败（%s），应用照常运行但没有托盘图标：%s", sys.platform, exc)
         return
 
     _tray_icon = icon
