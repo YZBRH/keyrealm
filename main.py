@@ -15,16 +15,53 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 # ── Linux：兜住 WebKitGTK 的「纯黑窗口」────────────────────────────────────
-# 在虚拟机 / 无可用 GPU 的机器上，WebKitGTK 默认的渲染路径会给出一个**完全黑屏**的窗口——
-# 不是崩溃、日志里什么都没有，极易被误判成「前端没加载」。实测关掉下面任一个即可：
-#   * WEBKIT_DISABLE_DMABUF_RENDERER：WebKitGTK 2.42+ 的 dmabuf 渲染器（现代路径，VM 上最常黑）；
-#   * WEBKIT_DISABLE_COMPOSITING_MODE：关掉加速合成（老版本 WebKitGTK 的经典解法）。
-# 两个都设是为了同时覆盖新旧；本应用是表单型界面，软件合成的性能损失可以忽略。
-# **可覆盖**：`setdefault` 不覆盖已有值——想恢复 GPU 合成，把它导出成 0 即可
-# （例如 `WEBKIT_DISABLE_COMPOSITING_MODE=0`）。
+# 在虚拟机 / 无 GPU / NVIDIA 专有驱动的机器上，WebKitGTK 的 **dmabuf 渲染器**会让窗口完全
+# 黑屏——不崩溃、日志无痕，用户只看到一片黑。
+#
+# **但不在所有机器上一刀切**：健康环境什么都不动，保留完整的 GPU 加速路径；只有**能明确
+# 判断有风险**时才关掉 dmabuf 渲染器。注意这**不等于**关掉 GPU 加速——那要
+# `WEBKIT_DISABLE_COMPOSITING_MODE=1`（退回软件渲染，代价大得多），本程序不设它；
+# 万一某台机器连关 dmabuf 都救不了，用户可以自己补上那个变量。
+#
+# 取舍：宁可**误关**（代价只是少走零拷贝，仍走 GPU 合成），也不要**漏关**（代价是用户
+# 面对一个纯黑窗口、且毫无线索）。想强制走完整路径：`WEBKIT_DISABLE_DMABUF_RENDERER=0`。
+_WEBKIT_FALLBACK_REASON = ""
+
+
+def _webkit_fallback_reason() -> str:
+    """Linux 上该不该关掉 WebKitGTK 的 dmabuf 渲染器。返回原因；空串 = 不用关（健康环境）。
+
+    判据都取「有明确证据」的那几类：NVIDIA 专有驱动、没有 DRM 渲染节点、虚拟机。
+    任何一步探测失败都不抛异常，按「没命中」处理。
+    """
+    try:
+        if os.path.exists("/proc/driver/nvidia/version"):
+            return "NVIDIA 专有驱动"
+    except OSError:
+        pass
+    try:
+        dri = Path("/dev/dri")
+        if not dri.is_dir() or not any(dri.glob("renderD*")):
+            return "没有 DRM 渲染节点（无可用 GPU）"
+    except OSError:
+        pass
+    dmi = ""
+    for path in ("/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"):
+        try:
+            dmi += Path(path).read_text(encoding="utf-8", errors="replace").strip().lower() + " "
+        except OSError:
+            pass
+    for marker in ("virtualbox", "vmware", "qemu", "kvm", "innotek",
+                   "microsoft corporation", "parallels", "xen", "bochs", "virtual machine"):
+        if marker in dmi:
+            return f"虚拟机（{marker}）"
+    return ""
+
+
 if sys.platform.startswith("linux"):
-    os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
-    os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+    _WEBKIT_FALLBACK_REASON = _webkit_fallback_reason()
+    if _WEBKIT_FALLBACK_REASON:
+        os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 
 import webview  # pywebview
 
@@ -597,6 +634,12 @@ def main():
 
     log.info("应用启动（版本=%s，frozen=%s，日志级别=%s，数据目录=%s）",
              version.version_string(), is_frozen(), logger.get_level(), app_dir())
+
+    # 上面那段 Linux WebKit 回退是**模块级**做的（必须早于 `import webview`），那时日志还没配好，
+    # 所以原因在这里补记一笔——否则用户想查「为什么我的 GPU 合成没生效」会毫无线索。
+    if _WEBKIT_FALLBACK_REASON:
+        log.info("WebKit 渲染回退：已关闭 dmabuf 渲染器（原因：%s）；想强制走完整路径，"
+                 "设 WEBKIT_DISABLE_DMABUF_RENDERER=0", _WEBKIT_FALLBACK_REASON)
 
     # 迁移改名（Credential Vault → Keyrealm）留在系统里的旧自启条目：不清掉的话，
     # 开关会显示「已关闭」而系统里仍有一条指向旧 exe 的条目，开机弹「找不到文件」。
