@@ -73,7 +73,14 @@ if sys.platform.startswith("linux"):
     _GPU_RISK_REASON = _risky_gpu_reason()
     if _GPU_RISK_REASON:
         os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
-        # Qt：软件渲染 + 内嵌 Chromium 不碰 GPU（两个缺一即崩）。用户已显式设过就不覆盖。
+        # Qt 三件套（实测**缺一不可**，少任何一条主窗口都渲染不出来）：
+        #   · QT_QUICK_BACKEND=software —— Qt 6 的 WebEngine 内部走 Qt Quick 渲染栈，
+        #     RHI 建不出 GL context 时报 `QQuickWidget: Attempted to render scene with no rhi`，
+        #     主窗口空白或不出现；这一条让它改走 CPU 软件渲染。**最关键的一条。**
+        #   · QT_OPENGL=software —— Qt 自身的 GL 也退回软件。
+        #   · QTWEBENGINE_CHROMIUM_FLAGS 追加 --disable-gpu —— 内嵌 Chromium 别碰 GPU。
+        # 一律 setdefault / 追加，不覆盖用户显式设置。
+        os.environ.setdefault("QT_QUICK_BACKEND", "software")
         os.environ.setdefault("QT_OPENGL", "software")
         _qtweb_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
         if "--disable-gpu" not in _qtweb_flags:
