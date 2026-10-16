@@ -80,6 +80,12 @@ if sys.platform.startswith("linux"):
         #   · QT_OPENGL=software —— Qt 自身的 GL 也退回软件。
         #   · QTWEBENGINE_CHROMIUM_FLAGS 追加 --disable-gpu —— 内嵌 Chromium 别碰 GPU。
         # 一律 setdefault / 追加，不覆盖用户显式设置。
+        # xcb（X11）平台：**必须禁掉 GLX 集成**。某些 X server（VMware 未开 3D 加速、
+        # 远程 X、纯 X11 转发）的 GLX 探测失败会让 Qt **直接 abort**
+        # （`qt.glx: … Failed to finding matching FBConfig` → `Could not initialize GLX`
+        # → `IOT instruction`），窗口根本出不来；禁掉后 Qt 走 Qt Quick 的软件后端即可正常渲染。
+        # wayland 平台忽略这个变量，无副作用。
+        os.environ.setdefault("QT_XCB_GL_INTEGRATION", "none")
         os.environ.setdefault("QT_QUICK_BACKEND", "software")
         os.environ.setdefault("QT_OPENGL", "software")
         _qtweb_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")

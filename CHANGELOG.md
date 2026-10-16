@@ -27,11 +27,11 @@
 
 - **Linux（Qt 后端）在 WSL / 无 GPU / 虚拟机 / 远程 X 上显示不出主窗口**：Qt 6 的 WebEngine
   内部走 Qt Quick 渲染栈，RHI 建不出 GL context 时报 `QQuickWidget: Attempted to render scene
-  with no rhi`（主窗口空白或不出现），有的环境更直接以 `Could not initialize GLX` →
-  `IOT instruction` 崩掉。现在检测到这类环境（WSL、无 DRM 渲染节点、虚拟机、NVIDIA 专有驱动）
-  会自动退回**全软件渲染**——`QT_QUICK_BACKEND=software` + `QT_OPENGL=software` + 内嵌
-  Chromium `--disable-gpu`（实测**三条缺一不可**）；健康环境不受影响，仍走 GPU 加速。
-  想强制走硬件可自行覆盖这几个变量。
+  with no rhi`（主窗口空白或不出现）；xcb（X11）环境更会因 GLX 探测失败**直接 abort**
+  （`Could not initialize GLX` → `IOT instruction`）。现在检测到这类环境（WSL、无 DRM 渲染
+  节点、虚拟机、NVIDIA 专有驱动）会自动**退回全软件渲染**：`QT_QUICK_BACKEND=software` +
+  `QT_OPENGL=software` + `QT_XCB_GL_INTEGRATION=none`（关掉 xcb 的 GLX 集成）+ 内嵌 Chromium
+  `--disable-gpu`。健康环境不受影响，仍走 GPU 加速；想强制走硬件可自行覆盖这几个变量。
 
 ## [1.4.3] - 2026-10-15
 
