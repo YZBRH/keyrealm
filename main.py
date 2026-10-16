@@ -565,6 +565,59 @@ def _restore_page():
         api.mark_page_released(False)
 
 
+# ── GUI 后端缺失（Linux）──────────────────────────────────────────────────
+# pywebview 在 Linux 上要么用 GTK、要么用 Qt，两者都没有时它抛 WebViewException。
+# 把那段 traceback 原样甩给用户毫无用处（尤其对预编译包：**运行期再装系统包也没用**），
+# 所以拦下来，换成能照着做的指引。
+_GUI_BACKEND_HINT_SOURCE = """\
+Keyrealm 需要一个 WebView 后端才能显示界面，但当前环境里 GTK 与 Qt 都没有。
+
+按你的发行版装其中一套（推荐 GTK）：
+
+  Debian / Ubuntu / Kali
+      sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+  Fedora / RHEL
+      sudo dnf install python3-gobject gtk3 webkit2gtk4.1
+  Arch / Manjaro
+      sudo pacman -S python-gobject gtk3 webkit2gtk-4.1
+
+注意：装完请用**系统 Python** 运行（python3 main.py）。venv 里看不到系统装的 gi——
+非要用 venv，建的时候得加 --system-site-packages。
+
+不想装系统包也可以走 Qt（纯 pip 能装，但要装进**实际运行它的那个**环境）：
+      pip install pywebview[pyside6]
+"""
+
+_GUI_BACKEND_HINT_FROZEN = """\
+这个预编译包里没有内嵌 Linux 的 WebView 后端（GTK / Qt），所以起不了窗口。
+
+**运行期再装系统包没有用**——PyInstaller 打出来的程序只认打包时收进去的东西。
+请改从源码运行（见 README 的「Linux」一节），或换一个带了 GUI 后端的构建。
+"""
+
+
+def _is_missing_gui_backend(exc: BaseException) -> bool:
+    """是不是「GTK / Qt 都不在」这一类错误。
+
+    只认 pywebview 针对「没有后端」抛的那一种，别的 WebViewException（例如「窗口已创建」）
+    照旧抛出去——那是真 bug，不该被伪装成环境问题。
+    """
+    if type(exc).__name__ != "WebViewException":
+        return False
+    text = str(exc)
+    return "QT" in text or "GTK" in text
+
+
+def _report_missing_gui_backend(exc: BaseException) -> None:
+    """GUI 后端缺失：打印可照做的指引（而不是 traceback），并记进日志。"""
+    hint = _GUI_BACKEND_HINT_FROZEN if is_frozen() else _GUI_BACKEND_HINT_SOURCE
+    print("\n" + hint, file=sys.stderr, flush=True)
+    try:
+        logger.get_logger("main").error("无可用 GUI 后端（pywebview）：%s", exc)
+    except Exception:  # noqa: BLE001 - 日志失败不该盖过这条提示
+        pass
+
+
 def _on_closing():
     """窗口关闭事件：按用户设置的关闭行为处理（询问/直接退出/后台运行）。"""
     if _quitting:
@@ -719,9 +772,21 @@ def main():
     webview_dir.mkdir(parents=True, exist_ok=True)
     _icon_file = resource_dir() / "assets" / "icon.ico"
     _icon = str(_icon_file) if _icon_file.is_file() else None
-    webview.start(
-        debug=False, private_mode=False, storage_path=str(webview_dir), icon=_icon
-    )
+    try:
+        webview.start(
+            debug=False, private_mode=False, storage_path=str(webview_dir), icon=_icon
+        )
+    except Exception as exc:  # noqa: BLE001
+        if not _is_missing_gui_backend(exc):
+            raise       # 别的异常照旧抛：那是真 bug，不该被当成环境问题糊过去
+        # 没装 GTK / Qt：先把服务收干净，再给一段能照着做的指引，然后干净退出——
+        # 不甩 traceback（对用户毫无用处，尤其对预编译包）。
+        try:
+            _shutdown_services()
+        except Exception:  # noqa: BLE001
+            pass
+        _report_missing_gui_backend(exc)
+        sys.exit(1)
     log.info("应用退出")
 
 
