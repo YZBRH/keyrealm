@@ -13,10 +13,8 @@
 | WebView2 Runtime | — | Windows 运行前提；Windows 10/11 通常已内置 |
 
 ```bash
-```bash
 git clone https://github.com/YZBRH/keyrealm.git
 cd keyrealm
-```
 
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -33,8 +31,39 @@ python main.py
 > **Linux 的界面后端二选一**（Windows 靠系统 WebView2、macOS 靠 WebKit，都不用选）：
 > 默认 **Qt** —— `pip install "pywebview[pyside6]"`，打包时 spec 会**强制要求**它、缺了直接
 > 中止构建（免得打出一个起不了窗口的包）；也可以选系统 **GTK**。源码运行用
-> `KEYREALM_GUI=gtk`，打包用 `--gui gtk`。详见 [README 的 Linux 一节](README.md#linux)
-> （含 CentOS 8 要钉 `PySide6==6.9.3`）。
+> `KEYREALM_GUI=gtk`，打包用 `--gui gtk`。
+>
+> **GTK 的系统包（各发行版）** —— 体积实测：系统侧约 105 MB（WebKitGTK 93.5 MB + GTK3 9 MB +
+> pygobject 1 MB）、venv 侧约 0；桌面发行版通常已经装着 WebKit，最小化安装的服务器版则没有。
+> **要求你的 Python 与系统 Python 是同一个版本**（`gi` 是按系统 Python 编译的）。
+>
+> | 发行版 | 命令 |
+> |---|---|
+> | Debian / Ubuntu / Kali | `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1` |
+> | Fedora | `sudo dnf install python3-gobject gtk3 webkit2gtk4.1` |
+> | CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
+> | Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
+>
+> **打包成冻结包**：可以 —— CI 的 `linux-gtk-*` 专项档正是这么打的（`pip install PyGObject`
+> 现场编译 + spec 显式收 `gi.*` + `hooksconfig` 钉 typelib 版本）。**但产物只在该构建系统上稳**
+> （gi/glib/WebKit 都来自构建机），所以按发行版出专项档、不能一份包通吃。详见
+> [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md)。
+>
+> **CentOS 8 三个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；
+> ② 系统 Python 是 **3.6**（跑不了本项目），得先弄一个 3.11+（`uv python install 3.12` 最省事）
+> ——而这时**只能用 Qt**：系统的 `gi` 是 3.6 编的、3.12 导不进来；③ 前端的 Vite 5 要 **Node 18+**，
+> 而 CentOS 8 自带的 nodejs 太老——用 [NodeSource](https://github.com/nodesource/distributions)：
+> `curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo dnf install -y nodejs`。
+>
+> ⚠️ **Qt 还得钉版本**：PySide6 **6.10 起**的 wheel 要求 **glibc ≥ 2.34**，而 CentOS 8 是 **2.28**
+> ——直接 `pip install "pywebview[pyside6]"` 会报「找不到匹配的发行版」。必须钉到 **6.9.3**
+> （它的 wheel 是 `manylinux_2_28`，实测可用）：
+>
+> ```bash
+> pip install "pywebview[pyside6]" "PySide6==6.9.3"
+> ```
+>
+> 判据很直接：**wheel 文件名里的 `manylinux_2_XX` 就是它要求的 glibc 版本**（`2_28` ≤ CentOS 8 的 2.28 才行）。
 
 ## 2. 在浏览器里调前端（不必启动 Python）
 

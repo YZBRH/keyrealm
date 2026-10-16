@@ -108,43 +108,81 @@
 
 ## 下载与安装
 
-### Windows / macOS
+### 通过预编译程序运行
 
-从 [Releases](../../releases) 下载对应平台的压缩包，解压后直接运行，免安装。
+#### Windows
 
-- **Windows**：运行 `Keyrealm.exe`。需要 **WebView2 Runtime**（Windows 10/11 通常已内置；
-  若启动时报缺 WebView2，从微软官网装一次即可）。
-- **macOS**：运行包内的 `Keyrealm`。由于未签名——首次打开会被 Gatekeeper 拦，右键→「打开」，
-  或终端执行 `xattr -dr com.apple.quarantine Keyrealm` 放行。
+从 [Releases](../../releases) 下载对应平台与架构的压缩包，解压后直接运行，双击运行  `Keyrealm.exe` 即可。
 
-首次运行会在程序同级目录创建 `data/`（数据库、日志、界面偏好都在这里）。
+PS：需要 **WebView2 Runtime**（Windows 10/11 通常已内置；若启动时报缺 WebView2，从微软官网安装即可）。
 
-### Linux
 
-从 [Releases](../../releases) 下载压缩包，解压后运行包内的 `Keyrealm`，免安装。**两种包**：
 
-| 包 | 界面后端 | 适合的系统 |
-|---|---|---|
-| `Keyrealm-<版本>-linux-general-x86_64.zip` | **Qt**（PySide6 自包含） | **任意发行版**，基线 **glibc ≥ 2.35**（Ubuntu 22.04 / Debian 12 / Fedora 36 及更新）。通用兜底、体积大 |
-| `Keyrealm-<版本>-linux-gtk-<系统>-x86_64.zip` | **GTK**（用系统 WebKitGTK） | **仅限构建它的那个发行版**（如 `ubuntu22.04`）。体积小、不依赖 GL |
+#### MacOS
 
-> `linux-gtk-*` 是**专项包**：它依赖系统里的 WebKitGTK / PyGObject，只在**构建它的那个发行版**上稳，
-> 所以包名带构建系统标识。没有对应专项档时就用 `linux-general` 通用版。矩阵与选档规则见
-> [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md)。更老的发行版（如 CentOS 8）请从源码运行。
+从 [Releases](../../releases) 下载对应平台与架构的压缩包，解压后运行包内的 `Keyrealm` 文件。
 
-也可以从源码运行（建环境见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节）。
-**界面后端二选一**（Windows / macOS 用系统自带的 WebView2 / WebKit，无需选）：
+PS：由于未签名，首次打开会被 Gatekeeper 拦，需要右键→「打开」，或终端执行 `xattr -dr com.apple.quarantine Keyrealm` 放行。
 
-| | **Qt**（默认） | **GTK** |
-|---|---|---|
-| 装什么 | `pip install "pywebview[pyside6]"` | 按发行版装系统包（见下） |
-| 体积（实测） | 下载 ≈ 253 MB / 装完 ≈ **677 MB** | 系统侧 ≈ **105 MB**，venv 侧 ≈ 0 |
-| **打包分发** | ✅ **自包含**——PyInstaller 把 PySide6 整包收进去 | ✅ **可打包**——打成"专项档"（收进系统 gi/WebKit），见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md) |
-| 适合 | 打包分发、给谁都能跑 | 本机跑源码；或只在**同款机器**上分发 |
 
-**怎么选**：一个开关 `KEYREALM_GUI`，**源码运行与打包都认**：
 
-```bash
+#### Linux
+
+从 [Releases](../../releases) 下载压缩包，解压后运行包内的 `Keyrealm`，免安装。
+
+由于 Linux 生态的多样性，将预先给出**两种包**，请根据自身情况选择：
+
+| 包                                            | 界面后端                    | 适合的系统                                                   |
+| --------------------------------------------- | --------------------------- | ------------------------------------------------------------ |
+| `Keyrealm-<版本>-linux-general-<架构>.zip`    | **Qt**（PySide6 自包含）    | **任意发行版**，基线 **glibc ≥ 2.35**（Ubuntu 22.04 / Debian 12 / Fedora 36 及更新）。通用兜底、体积大 |
+| `Keyrealm-<版本>-linux-gtk-<系统>-<架构>.zip` | **GTK**（用系统 WebKitGTK） | **仅限构建它的那个发行版**（如 `ubuntu22.04`）。体积小、不依赖 GL |
+
+对于 Linux 系统，我们更推荐自行构建源码运行，以适应各自高度个性化的系统，
+
+
+
+### 通过源码运行
+
+基础环境要求：
+
+| 依赖    | 版本  | 说明           |
+| ------- | ----- | -------------- |
+| Python  | 3.11+ | 后端与打包     |
+| Node.js | 18+   | 仅用于构建前端 |
+
+如果需要从源码运行，请参考以下流程：
+
+```shell
+git clone https://github.com/YZBRH/keyrealm.git
+cd keyrealm
+
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+.venv/bin/python main.py
+```
+
+如果你想要把他编译成二进制文件，参考追加执行命令：
+
+```shell
+.venv/bin/pip install pyinstaller
+.venv/bin/python scripts/build.py --frontend
+```
+
+
+
+如果你是在 Linux 系统上运行的，还需要指定界面后端，它们之间的区别如下：
+
+|              | **Qt**（默认）                                | **GTK**                                                      |
+| ------------ | --------------------------------------------- | ------------------------------------------------------------ |
+| 装什么       | `pip install "pywebview[pyside6]"`            | 按发行版装系统包（见下）                                     |
+| 体积（实测） | 下载 ≈ 253 MB / 装完 ≈ **677 MB**             | 系统侧 ≈ **105 MB**，venv 侧 ≈ 0                             |
+| **打包分发** | **自包含**——PyInstaller 把 PySide6 整包收进去 | **可打包**——打成"专项档"（收进系统 gi/WebKit），见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md) |
+| 适合         | 打包分发、给谁都能跑                          | 本机跑源码；或只在**同款机器**上分发                         |
+
+
+
+```shell
 # 源码运行
 python main.py                       # Linux 默认：有 Qt 用 Qt，没有则退回 GTK
 KEYREALM_GUI=gtk python main.py      # 指定走系统 GTK
@@ -154,44 +192,53 @@ python scripts/build.py --frontend               # 默认打成 Qt 版
 python scripts/build.py --frontend --gui gtk     # 打成 GTK 版
 ```
 
-> 构建时选中的那个会**烘进包里**（写进 `backend/_build_info.py`），运行时不必再设环境变量。
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-<details>
-<summary>GTK 的系统包（各发行版）与它的坑</summary>
 
-体积实测：**系统侧约 105 MB**（WebKitGTK 93.5 MB + GTK3 9 MB + pygobject 1 MB），venv 侧约 0
-—— 桌面发行版通常已经装着 WebKit，最小化安装的服务器版则没有。
-**要求你的 Python 与系统 Python 是同一个版本**（`gi` 是按系统 Python 编译的）。
+---
 
-| 发行版 | 命令 |
-|---|---|
-| Debian / Ubuntu / Kali | `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1` |
-| Fedora | `sudo dnf install python3-gobject gtk3 webkit2gtk4.1` |
-| CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
-| Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
+## 程序更新
 
-> **打包成冻结包**：可以——CI 的 `linux-gtk-*` 专项档正是这么打的（`pip install PyGObject` 现场编译 +
-> spec 显式收 `gi.*` + `hooksconfig` 钉 typelib 版本）。**但产物只在该构建系统上稳**（gi/glib/WebKit
-> 都来自构建机），所以按发行版出专项档、不能一份包通吃。详见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md)。
-</details>
+### 软件内更新
 
-> **CentOS 8 三个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；
-> ② 系统 Python 是 **3.6**（跑不了本项目），得先弄一个 3.11+（`uv python install 3.12` 最省事）——
-> 而这时**只能用 Qt**：系统的 `gi` 是 3.6 编的、3.12 导不进来；
-> ③ 前端的 Vite 5 要 **Node 18+**，而 CentOS 8 自带的 nodejs 太老——用
-> [NodeSource](https://github.com/nodesource/distributions)：
-> `curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo dnf install -y nodejs`。
->
-> ⚠️ **Qt 还得钉版本**：PySide6 **6.10 起**的 wheel 要求 **glibc ≥ 2.34**，而 CentOS 8 是 **2.28**
-> —— 直接 `pip install "pywebview[pyside6]"` 会报「找不到匹配的发行版」。必须钉到 **6.9.3**
-> （它的 wheel 是 `manylinux_2_28`，实测可用）：
->
-> ```bash
-> pip install "pywebview[pyside6]" "PySide6==6.9.3"
-> ```
->
-> 判据很直接：**wheel 文件名里的 `manylinux_2_XX` 就是它要求的 glibc 版本**（`2_28` ≤ CentOS 8 的
-> 2.28 才行）。
+![image-20261016195757014](img/image-20261016195757014.png)
+
+根据软件内选项选择即可。
+
+将更新渠道设置为"正式版"时，将从 [Releases](../../releases) 中拉取对应架构的最新版本；
+
+将更新渠道设置为"测试版"时，将从仓库当中拉取最新的 commit 并进行源码编译成最新的二进制文件。
+
+
+
+如果是从 [Releases](../../releases) 中下载的预编译包运行的，我们推荐后续的所有更新都通过"正式版"方式更新。
+
+
+
+如果 [Releases](../../releases) 中没有对应的预编译包，通过"正式版"渠道更新可能会出问题，欢迎提交 Issue 或 PR 来说明需要支持的更多操作系统版本。
+
+
+
+### 软件外更新
+
+如果你通过预编译程序运行的，请优先考虑通过软件内更新。
+
+
+
+对于源码运行，只需要拉取最新 commit 提交，然后运行数据库迁移脚本即可（如果有），示例：
+
+```shell
+cd keyrealm
+git pull
+
+# 如果数据库结构版本有改动，运行对应的一跳迁移脚本（脚本默认只演练，加 --apply 才写库；
+# 跑之前请先完全退出应用）
+python scripts/migrations/m_1.2.1__to_1.2.2.py --apply
+
+python main.py
+```
+
+
 
 ---
 
