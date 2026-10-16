@@ -32,7 +32,7 @@ from .paths import is_frozen
 #
 # **只在用户明确要求时才改动版本号**（其余提交照常，只写 commit，不动版本）；每次改版本号
 # **必须同时更新 `CHANGELOG.md`**（仓库根目录的独立更新日志文件）。
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 
 # **数据库结构版本**：与应用同号起步。
 #

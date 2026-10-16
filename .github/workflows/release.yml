@@ -31,6 +31,13 @@ jobs:
             pkg: windows-x64
           - os: macos-latest    # Apple Silicon（暂不出 Intel 版；以后要加就再加一条 macos-13 / macos-x64）
             pkg: macos-arm64
+          # Linux **通用版**：界面后端用 Qt（PyInstaller 把 PySide6 整包收进去 → 自包含），
+          # 不依赖宿主机的 GTK/WebKit，所以能分发给任意发行版。**产物 glibc 基线 = 构建机的
+          # glibc**（PyInstaller 与构建机的 libc 绑定符号版本），故这里取**最老的可选 runner**
+          # ubuntu-22.04（glibc 2.35）而非 ubuntu-latest（24.04，glibc 2.39）——后者打出来的包
+          # 在 22.04 上都跑不起来。想覆盖更老的发行版得改用容器构建，另议。
+          - os: ubuntu-22.04
+            pkg: linux-general-x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +59,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
+
+      - name: 安装 Linux 界面后端（Qt / PySide6）
+        # Windows/macOS 用系统 WebView，无需此步。Linux 没有系统级 WebView，必须自带：
+        # Qt 后端靠 PySide6（spec 在 Linux 上**强制校验** qtpy + PySide6，缺一即中止构建），
+        # 装 pywebview 的 pyside6 extra 会一并带来入口模块 qtpy。
+        if: runner.os == 'Linux'
+        run: pip install "pywebview[pyside6]"
 
       - name: 安装前端依赖
         working-directory: frontend
@@ -86,10 +100,17 @@ jobs:
         env:
           PKG_NAME: ${{ matrix.pkg }}
         run: |
-          import os, zipfile
+          import os, sys, zipfile
           from pathlib import Path
+          sys.path.insert(0, ".")
           ref = os.environ.get("GITHUB_REF_NAME", "")
-          ver = ref[1:] if ref.startswith("v") else "dev"
+          if ref.startswith("v"):
+              ver = ref[1:]
+          else:
+              # 手动触发（Actions → Run workflow）或分支推送：没有 tag，回落到应用版本号，
+              # 这样**测试产物也带版本**（Keyrealm-1.4.4-… 而不是 Keyrealm-dev-…）。
+              from backend import version
+              ver = version.APP_VERSION
           pkg = os.environ["PKG_NAME"]
           top = f"Keyrealm-{ver}-{pkg}"          # 解压后是一个干净的顶层目录，不散落
           out = f"{top}.zip"

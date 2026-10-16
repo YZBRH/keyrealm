@@ -1,7 +1,7 @@
 # 凭域 Keyrealm 
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20MacOS-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 
 致力于 **ALL IN ONE** 的本地凭据管理与验证平台。 允许将红队渗透测试中获取的散落在各处的 API Key、云厂商 AK/SK、机器人 Token、邮箱授权码、登录态等集中加密保管、便捷验证与快速利用。
@@ -69,7 +69,7 @@
 - **独立日志页**：级别可调、支持关键词搜索（含 traceback 的整条记录匹配）。
 - **单实例**：重复启动不会开出第二个窗口，而是把已运行的拉到前台。
 - **开机自启动**（默认关闭）。
-- **跨平台**：Windows 优先，兼容 macOS。
+- **跨平台**：Windows 优先，兼容 macOS 与 Linux。
 
 ---
 
@@ -121,7 +121,12 @@
 
 ### Linux
 
-暂无预编译包，从源码运行（建环境见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节）。
+从 [Releases](../../releases) 下载**通用版**压缩包 `Keyrealm-<版本>-linux-general-x86_64.zip`：
+**Qt 后端、自包含**（PySide6 已打进包，不依赖宿主机 GTK/WebKit），解压后运行包内的
+`Keyrealm`，免安装。基线 **glibc ≥ 2.35**（Ubuntu 22.04 / Debian 12 / Fedora 36 及更新）；
+更老的发行版（如 CentOS 8）请从源码运行。
+
+也可以从源码运行（建环境见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节）。
 **界面后端二选一**（Windows / macOS 用系统自带的 WebView2 / WebKit，无需选）：
 
 | | **Qt**（默认） | **GTK** |
