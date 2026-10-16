@@ -159,6 +159,15 @@ if sys.platform.startswith("linux"):
             "（各发行版包名见 README）；或改用 Qt：python scripts/build.py --gui qt",
         )
     else:
+        # **两个都要**：pywebview 的 Qt 后端第一句就是 `from qtpy import …` ——
+        # `qtpy` 是**入口**（纯 Python，装了才说明这条路通）；真正的绑定 PySide6 是 qtpy
+        # **动态加载**的，PyInstaller 静态分析看不到，必须显式收集。
+        # 只收 PySide6 会「构建通过、包里却没有入口模块」——跑起来仍报「没有 WebView 后端」。
+        require(
+            "qtpy",
+            "**无法显示界面**（Qt 后端的入口模块，pywebview 第一句就 import 它）",
+            'pip install "pywebview[pyside6]"（会一并带来 qtpy 与 PySide6）',
+        )
         require(
             "PySide6",
             "**无法显示界面**（Linux 默认用 Qt 后端）",
