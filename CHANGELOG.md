@@ -23,6 +23,14 @@
 - README：平台标识补上 **Linux**；Linux 段从「暂无预编译包」改为「下载通用版」，
   并写明 glibc 基线与「更老发行版走源码」的分流。
 
+### 修复
+
+- **Linux（Qt 后端）在 WSL / 无 GPU / 虚拟机上直接崩溃**：QtWebEngine 的 GLX 初始化失败会
+  **直接 abort**（`qt.glx: … Failed to finding matching FBConfig` → `Could not initialize GLX`
+  → `IOT instruction`），窗口根本出不来。现在检测到这类环境（WSL、无 DRM 渲染节点、虚拟机、
+  NVIDIA 专有驱动）会自动退回软件渲染（`QT_OPENGL=software` + 内嵌 Chromium `--disable-gpu`，
+  实测两者必须同时）；健康环境不受影响，仍走 GPU 加速。想强制走硬件可自行覆盖那两个变量。
+
 ## [1.4.3] - 2026-10-15
 
 ### 新增
