@@ -257,6 +257,35 @@ def build_frontend() -> None:
     _run([npm, "run", "build"], cwd=FRONTEND)
 
 
+def _distro_id() -> str:
+    """构建机的发行版标识（``ID`` + ``VERSION_ID``，小写、去空格），如 ``ubuntu22.04``。
+
+    用于拼 GTK 专项档的包名（与 CI 产物一致）。取不到就退回 ``linux``。
+    """
+    try:
+        kv: dict[str, str] = {}
+        for line in Path("/etc/os-release").read_text(encoding="utf-8", errors="replace").splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                kv[k.strip()] = v.strip().strip('"')
+        return f"{kv.get('ID', 'linux')}{kv.get('VERSION_ID', '')}".replace(" ", "").lower()
+    except OSError:
+        return "linux"
+
+
+def _linux_flavor(gui: str) -> str:
+    """Linux 上本次构建对应的**发布包 flavor**，与 CI 产物命名一致：
+    Qt 通用版 → ``linux-general-<arch>``；GTK 专项档 → ``linux-gtk-<系统>-<arch>``。
+    非 Linux 返回空串（Windows / macOS 的包名由 updater 另行拼）。
+    """
+    if platform.system() != "Linux":
+        return ""
+    arch = "arm64" if (platform.machine() or "").lower() in ("arm64", "aarch64") else "x86_64"
+    if gui == "gtk":
+        return f"linux-gtk-{_distro_id()}-{arch}"
+    return f"linux-general-{arch}"
+
+
 def write_build_info(gui: str = "") -> None:
     """把当前 commit 短 hash 写进 `backend/_build_info.py`，供 exe 内显示「构建版本」。
 
@@ -264,8 +293,8 @@ def write_build_info(gui: str = "") -> None:
     （见 .gitignore）。源码运行时它不存在 → `backend/version.build_id()` 会现查 git。
     工作区有未提交改动时追加 `-dirty`，避免拿一个「改了东西却没提交」的 exe 当发布版。
 
-    顺带记下**构建时选定的界面后端**（``--gui``）：Linux 上这个选择要跟着包走，
-    运行时才不必再设 `KEYREALM_GUI`（见 main.py 的 ``_preferred_gui``）。
+    顺带记下**构建时选定的界面后端**（``--gui``）与**发布包 flavor**（``LINUX_FLAVOR``）：
+    Linux 上这两个选择都要跟着包走，运行时才不必再设环境变量、更新时也能认出自己是哪个档。
     """
     commit = "unknown"
     try:
@@ -278,15 +307,19 @@ def write_build_info(gui: str = "") -> None:
     except Exception as e:  # noqa: BLE001 - 万一没装 git：标 unknown，不拦构建
         print(f"警告：无法获取 git 版本，构建版本将标为 unknown（{e}）", file=sys.stderr)
 
+    flavor = _linux_flavor(gui)
     (ROOT / "backend" / "_build_info.py").write_text(
         '"""由 scripts/build.py 生成 —— **勿手工编辑、不入库**。"""\n'
         f'COMMIT = "{commit}"\n'
-        f'GUI = "{gui}"      # 空 = 平台默认（Linux 上默认偏好 Qt）\n',
+        f'GUI = "{gui}"      # 空 = 平台默认（Linux 上默认偏好 Qt）\n'
+        f'LINUX_FLAVOR = "{flavor}"   # Linux 发布包 flavor（与 CI 产物名一致）；非 Linux 为空\n',
         encoding="utf-8",
     )
     print(f"构建版本   : {commit}")
     if gui:
         print(f"界面后端   : {gui}")
+    if flavor:
+        print(f"发布包档   : {flavor}")
 
 
 def run_pyinstaller(console: bool, allow_missing: bool = False) -> None:

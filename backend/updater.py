@@ -365,22 +365,45 @@ def _read_version_module(text: str) -> tuple[Optional[str], Optional[str]]:
 
 # ── 平台 / 正式版 Release 资产 ────────────────────────────
 
+def _machine_arch() -> str:
+    """本机架构，统一成发布包里的写法：``x86_64`` / ``arm64``（其余原样返回）。"""
+    m = (platform.machine() or "").lower()
+    if m in ("arm64", "aarch64"):
+        return "arm64"
+    if m in ("x86_64", "amd64", "x64"):
+        return "x86_64"
+    return m or "unknown"
+
+
+def _linux_flavor(arch: str | None = None) -> str:
+    """Linux 上**当前程序**所对应的发布包 flavor（它自己是哪个档），与 CI 产物命名一致。
+
+    冻结包：取构建时烘进的 ``_build_info.LINUX_FLAVOR``（``linux-general-<arch>`` 或
+    ``linux-gtk-<系统>-<arch>``）；源码运行 / 该字段为空时退回 ``linux-general-<arch>``
+    （源码跑的就是本机库，等同通用版）。用途是让「正式版更新」按**同一个档**升级。
+    """
+    try:
+        from . import _build_info
+        flav = str(getattr(_build_info, "LINUX_FLAVOR", "") or "").strip()
+        if flav:
+            return flav
+    except Exception:  # noqa: BLE001 - 源码运行 / 从未构建过
+        pass
+    return f"linux-general-{arch or _machine_arch()}"
+
+
 def platform_pkg() -> str:
-    """当前平台的发布包后缀，与 CI 产物命名一致：``windows-x64`` / ``macos-arm64`` / ``linux-x64``。"""
+    """当前平台的发布包后缀，与 CI 产物命名一致。
+
+    Windows / macOS 用简写：``windows-x64`` / ``macos-arm64``；
+    Linux 带 flavor：``linux-general-<arch>``（Qt 通用版）或 ``linux-gtk-<系统>-<arch>``（GTK 专项档）。
+    """
+    arch = _machine_arch()
     if os.name == "nt":
-        osname = "windows"
-    elif sys.platform == "darwin":
-        osname = "macos"
-    else:
-        osname = "linux"
-    machine = (platform.machine() or "").lower()
-    if machine in ("arm64", "aarch64"):
-        arch = "arm64"
-    elif machine in ("x86_64", "amd64", "x64"):
-        arch = "x64"
-    else:
-        arch = machine or "unknown"
-    return f"{osname}-{arch}"
+        return f"windows-{'x64' if arch == 'x86_64' else arch}"
+    if sys.platform == "darwin":
+        return f"macos-{arch}"
+    return _linux_flavor(arch)
 
 
 def release_asset_name(ver: str) -> str:
