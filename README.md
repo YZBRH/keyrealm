@@ -122,24 +122,35 @@
 ### Linux
 
 暂无预编译包，从源码运行（建环境见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节）。
-**界面后端用 Qt**（Windows / macOS 用系统自带的 WebView2 / WebKit，都不必额外安装）：
+**界面后端二选一**（Windows / macOS 用系统自带的 WebView2 / WebKit，无需选）：
+
+| | **Qt**（默认） | **GTK** |
+|---|---|---|
+| 装什么 | `pip install "pywebview[pyside6]"` | 按发行版装系统包（见下） |
+| 体积（实测） | 下载 ≈ 253 MB / 装完 ≈ **677 MB** | 系统侧 ≈ **105 MB**，venv 侧 ≈ 0 |
+| **打包分发** | ✅ **自包含**——PyInstaller 把 PySide6 整包收进去 | ⚠️ 仍依赖宿主机的 typelib 与 WebKit 库，**实测会失败**（见下） |
+| 适合 | 打包分发、给谁都能跑 | 本机跑源码；或只在**同款机器**上分发 |
+
+**怎么选**：一个开关 `KEYREALM_GUI`，**源码运行与打包都认**：
 
 ```bash
-pip install "pywebview[pyside6]"      # 装进**你运行它的那个** Python 环境
+# 源码运行
+python main.py                       # Linux 默认：有 Qt 用 Qt，没有则退回 GTK
+KEYREALM_GUI=gtk python main.py      # 指定走系统 GTK
+
+# 打包
+python scripts/build.py --frontend               # 默认打成 Qt 版
+python scripts/build.py --frontend --gui gtk     # 打成 GTK 版
 ```
 
-> 体积实测（PySide6 6.12）：下载约 **253 MB**、装完约 **677 MB**——其中 QtWebEngine 的单个
-> `.so` 就 195 MB，而 pywebview 本身只有 17 MB。
->
-> **为什么 Linux 特意选 Qt**：PyInstaller 能把 PySide6 **完整收进包里**，打出来的程序**自包含**；
-> 而 GTK 走的是系统 typelib + 一整棵 WebKit/GTK 依赖树，冻完照样得去宿主机找——实测会死在
-> `gi.overrides` 的 typelib 版本错配上（`unix_signal_add_full` 那个断言）。
+> 构建时选中的那个会**烘进包里**（写进 `backend/_build_info.py`），运行时不必再设环境变量。
 
 <details>
-<summary>不想装 Qt？也可以走系统 GTK（<b>只适合在本机跑源码</b>，且要求你的 Python 与系统 Python 同版本）</summary>
+<summary>GTK 的系统包（各发行版）与它的坑</summary>
 
 体积实测：**系统侧约 105 MB**（WebKitGTK 93.5 MB + GTK3 9 MB + pygobject 1 MB），venv 侧约 0
 —— 桌面发行版通常已经装着 WebKit，最小化安装的服务器版则没有。
+**要求你的 Python 与系统 Python 是同一个版本**（`gi` 是按系统 Python 编译的）。
 
 | 发行版 | 命令 |
 |---|---|
@@ -148,8 +159,9 @@ pip install "pywebview[pyside6]"      # 装进**你运行它的那个** Python �
 | CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
 | Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
 
-程序**优先用 Qt，没装 Qt 才退回 GTK** —— 两条路可以共存，装了 Qt 也不会把原来的 GTK 环境弄坏。
-
+⚠️ **打成冻结包这条路实测走不通**：GTK 走的是宿主机的 typelib + 一整棵 WebKit/GTK 依赖树，
+PyInstaller 收不全，冻出来的程序会死在 `gi.overrides` 的 typelib 版本错配上
+（`unix_signal_add_full` 那条断言）。**所以 GTK 形态请只用于「本机跑源码」。**
 </details>
 
 > **CentOS 8 三个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；

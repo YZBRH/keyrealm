@@ -257,12 +257,15 @@ def build_frontend() -> None:
     _run([npm, "run", "build"], cwd=FRONTEND)
 
 
-def write_build_info() -> None:
+def write_build_info(gui: str = "") -> None:
     """把当前 commit 短 hash 写进 `backend/_build_info.py`，供 exe 内显示「构建版本」。
 
     冻结的 exe 里**没有 git**，所以必须在打包**之前**落盘；该文件由本脚本生成、不入库
     （见 .gitignore）。源码运行时它不存在 → `backend/version.build_id()` 会现查 git。
     工作区有未提交改动时追加 `-dirty`，避免拿一个「改了东西却没提交」的 exe 当发布版。
+
+    顺带记下**构建时选定的界面后端**（``--gui``）：Linux 上这个选择要跟着包走，
+    运行时才不必再设 `KEYREALM_GUI`（见 main.py 的 ``_preferred_gui``）。
     """
     commit = "unknown"
     try:
@@ -277,10 +280,13 @@ def write_build_info() -> None:
 
     (ROOT / "backend" / "_build_info.py").write_text(
         '"""由 scripts/build.py 生成 —— **勿手工编辑、不入库**。"""\n'
-        f'COMMIT = "{commit}"\n',
+        f'COMMIT = "{commit}"\n'
+        f'GUI = "{gui}"      # 空 = 平台默认（Linux 上默认偏好 Qt）\n',
         encoding="utf-8",
     )
     print(f"构建版本   : {commit}")
+    if gui:
+        print(f"界面后端   : {gui}")
 
 
 def run_pyinstaller(console: bool, allow_missing: bool = False) -> None:
@@ -434,10 +440,27 @@ def main() -> None:
     ap.add_argument("--keep-intermediates", action="store_true", help="保留 dist/ 与 build/ 中间产物")
     ap.add_argument("--allow-missing-deps", action="store_true",
                     help="依赖缺失时仍继续构建（产物可能缺功能，默认中止）")
+    ap.add_argument("--gui", choices=("qt", "gtk"), default=None,
+                    help="仅 Linux 有效：界面后端 qt（默认，自包含）/ gtk（用系统 GTK）。"
+                         "选中的那个会烘进包里，运行时不必再设环境变量")
     args = ap.parse_args()
 
     console = args.console or args.smoke
     out_dir = Path(args.output).expanduser().resolve()
+
+    gui = (args.gui or "").strip().lower()
+    if gui and platform.system() != "Linux":
+        print(f"注意：--gui {gui} 只对 Linux 有意义，本机是 {platform.system()}，本次忽略",
+              file=sys.stderr)
+        gui = ""
+    if gui:
+        # 透传给 PyInstaller 子进程：spec 据此决定收集 Qt 还是 gi（见 Keyrealm.spec）
+        os.environ["KEYREALM_GUI"] = gui
+
+    if platform.system() == "Linux":
+        gui_note = gui or "（未指定 → 默认 Qt；没装 Qt 则退回 GTK）"
+    else:
+        gui_note = "（用系统自带的 WebView，无需选择）"
 
     print("=" * 60)
     print(f"目标平台   : {platform.system()} {platform.machine()}")
@@ -446,12 +469,13 @@ def main() -> None:
     print(f"产物名     : {EXE_NAME}")
     print(f"输出目录   : {out_dir}")
     print(f"控制台模式 : {console}")
+    print(f"界面后端   : {gui_note}")
     print("=" * 60)
 
     check_environment(args.allow_missing_deps)
     check_schema()
     # 打包前落盘 commit hash（exe 里没有 git）——必须在 run_pyinstaller 之前
-    write_build_info()
+    write_build_info(gui)
 
     if args.frontend:
         build_frontend()

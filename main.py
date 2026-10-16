@@ -616,18 +616,40 @@ def _is_missing_gui_backend(exc: BaseException) -> bool:
     return "QT" in text or "GTK" in text
 
 
+#: 界面后端的显式选择：``qt`` / ``gtk``（空 = 自动）。源码运行与打包都认这个变量。
+GUI_ENV_KEY = "KEYREALM_GUI"
+
+
+def _baked_gui() -> str:
+    """冻结包**构建时**选定的界面后端（``build.py --gui`` 写进 ``_build_info.GUI``）；无则空串。"""
+    try:
+        from backend import _build_info          # 由 scripts/build.py 生成，不入库
+        return str(getattr(_build_info, "GUI", "") or "").strip().lower()
+    except Exception:  # noqa: BLE001 - 源码运行 / 从未构建过
+        return ""
+
+
 def _preferred_gui() -> str | None:
     """优先用哪个 WebView 后端；``None`` = 交给 pywebview 自己挑（即平台默认）。
 
-    **Linux 优先 Qt**：PyInstaller 能把 PySide6 完整收进包里 → 冻出来的程序**自包含**；
-    而系统 GTK 走的是 typelib + 一整棵 WebKit/GTK 依赖树，冻完照样得去宿主机找，实测会死在
-    `gi.overrides` 的 typelib 版本错配上（`unix_signal_add_full` 那个断言）。
-    Windows 用系统 WebView2、macOS 用系统 WebKit，**都保持默认、不指定**。
+    取值优先级：
+      1. 环境变量 ``KEYREALM_GUI``（``qt`` / ``gtk``）—— 显式指定，源码运行与打包都认；
+      2. 冻结包**构建时**选定的那个（``build.py --gui`` 写进 ``_build_info.GUI``）；
+      3. Linux 的默认：有 Qt 就 Qt，否则返回 ``None`` 交回 pywebview（会退到 GTK）；
+         Windows / macOS 一律 ``None``，继续用系统自带的 WebView2 / WebKit。
 
-    没装 Qt 就返回 ``None``——退给 pywebview 自己挑（会走到 GTK），不把已经有 GTK 的用户堵死。
+    Linux 默认偏好 Qt 的缘由见 README 的 Linux 一节：PyInstaller 能把 PySide6 整包收进去 →
+    冻出来的程序**自包含**；而 GTK 走的是宿主 typelib + 一整棵 WebKit 依赖树，冻结后仍依赖
+    宿主机（实测会死在 `gi.overrides` 的版本错配上）。想改用 GTK：``KEYREALM_GUI=gtk``。
     """
+    explicit = (os.environ.get(GUI_ENV_KEY) or "").strip().lower()
+    if explicit in ("qt", "gtk"):
+        return explicit
     if not sys.platform.startswith("linux"):
         return None
+    baked = _baked_gui()
+    if baked in ("qt", "gtk"):
+        return baked
     try:
         import qtpy  # noqa: F401  —— pywebview 的 Qt 后端入口；装了才说明 Qt 可用
         return "qt"
