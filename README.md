@@ -140,9 +140,12 @@
   | CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
   | Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
 
-> **CentOS 8 两个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；
+> **CentOS 8 三个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；
 > ② 系统 Python 是 **3.6**（跑不了本项目），得先弄一个 3.11+（`uv python install 3.12` 最省事）——
-> 而这时**只能用 Qt**：系统的 `gi` 是 3.6 编的、3.12 导不进来。
+> 而这时**只能用 Qt**：系统的 `gi` 是 3.6 编的、3.12 导不进来；
+> ③ 前端的 Vite 5 要 **Node 18+**，而 CentOS 8 自带的 nodejs 太老——用
+> [NodeSource](https://github.com/nodesource/distributions)：
+> `curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo dnf install -y nodejs`。
 > 好消息：CentOS 8 是 **glibc 2.28**，现代 PySide6 的 wheel 正好能用。
 
 ---
