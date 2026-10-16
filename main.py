@@ -574,6 +574,9 @@ Keyrealm 需要一个 WebView 后端才能显示界面，但当前环境里 GTK 
 
 【首选 · Qt】纯 pip，装进**当前这个** Python 环境即可，不依赖任何系统包：
       pip install "pywebview[pyside6]"
+      ⚠️ glibc 较老的机器（如 CentOS/RHEL 8 = glibc 2.28）要钉版本——PySide6 6.10 起要求
+         glibc >= 2.34，装不上；改用 6.9.3（其 wheel 是 manylinux_2_28）：
+             pip install "pywebview[pyside6]" "PySide6==6.9.3"
 
 【或者 · GTK】用系统自带的 GTK/WebKit（体积小），但**只在你这个 Python 与系统 Python
 是同一个版本时**才可行——系统装的 gi 是按系统 Python 编的，版本对不上就导不进来。

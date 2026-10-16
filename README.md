@@ -130,8 +130,15 @@
   pip install "pywebview[pyside6]"
   ```
 
+  > 体积实测（PySide6 6.12）：下载约 **253 MB**、装完约 **677 MB**；其中光是 QtWebEngine 的
+  > 单个 `.so` 就 195 MB —— 而 pywebview 本身只有 17 MB。
+
 - **GTK**——体积小，用系统自带的 GTK/WebKit；**要求你的 Python 与系统 Python 是同一个版本**
   （系统装的 `gi` 是按系统 Python 编译的，版本对不上就导不进来）：
+
+  > 体积实测：**系统侧约 105 MB**（WebKitGTK 93.5 MB + GTK3 9 MB + pygobject 1 MB），
+  > venv 侧增量约 0。**桌面发行版通常已经装着 WebKit**，那种情况下什么都不用额外装；
+  > 但**最小化安装的服务器版（含 CentOS 8）没有**，那就得实打实装这 105 MB。
 
   | 发行版 | 命令 |
   |---|---|
@@ -146,7 +153,17 @@
 > ③ 前端的 Vite 5 要 **Node 18+**，而 CentOS 8 自带的 nodejs 太老——用
 > [NodeSource](https://github.com/nodesource/distributions)：
 > `curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - && sudo dnf install -y nodejs`。
-> 好消息：CentOS 8 是 **glibc 2.28**，现代 PySide6 的 wheel 正好能用。
+>
+> ⚠️ **Qt 还得钉版本**：PySide6 **6.10 起**的 wheel 要求 **glibc ≥ 2.34**，而 CentOS 8 是 **2.28**
+> —— 直接 `pip install "pywebview[pyside6]"` 会报「找不到匹配的发行版」。必须钉到 **6.9.3**
+> （它的 wheel 是 `manylinux_2_28`，实测可用）：
+>
+> ```bash
+> pip install "pywebview[pyside6]" "PySide6==6.9.3"
+> ```
+>
+> 判据很直接：**wheel 文件名里的 `manylinux_2_XX` 就是它要求的 glibc 版本**（`2_28` ≤ CentOS 8 的
+> 2.28 才行）。
 
 ---
 
