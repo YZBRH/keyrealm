@@ -361,6 +361,7 @@ async function submit() {
     :title="isEdit ? '编辑凭据' : '添加凭据'"
     width="640px"
     top="6vh"
+    class="credential-dialog"
     :close-on-click-modal="false"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -503,6 +504,20 @@ async function submit() {
 <style scoped>
 .full-width {
   width: 100%;
+}
+
+/* 内容超长时让弹窗内部滚动，避免「保存」按钮被挤出视口（默认窗口高度下也能点到保存） */
+.credential-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;      /* 与 top="6vh" 配合：上下各留 6vh */
+  margin-bottom: 6vh;
+}
+
+.credential-dialog :deep(.el-dialog__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .divider-text {

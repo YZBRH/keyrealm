@@ -1485,6 +1485,9 @@ function loadColumnOrder() {
   return [...ALL_COLUMN_KEYS]
 }
 
+// 首次使用时默认隐藏的列（用户可在「列设置」里打开）
+const DEFAULT_HIDDEN_COLUMNS = ['group', 'created_at', 'last_verified']
+
 function loadVisibleColumns() {
   try {
     const saved = JSON.parse(localStorage.getItem(COLUMN_VISIBLE_KEY) || 'null')
@@ -1495,7 +1498,7 @@ function loadVisibleColumns() {
   } catch {
     // 忽略损坏的本地配置
   }
-  return [...ALL_COLUMN_KEYS]
+  return ALL_COLUMN_KEYS.filter((key) => !DEFAULT_HIDDEN_COLUMNS.includes(key))
 }
 
 const columnOrder = ref(loadColumnOrder())
