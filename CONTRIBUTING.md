@@ -30,6 +30,12 @@ python main.py
 > `python-socks`）在 PyInstaller 静态分析里看不到，构建脚本会**显式按环境核对**它们；
 > 装进系统 Python 而用 venv 跑构建，就会出现「明明装了却报缺」。
 
+> **Linux 还要一个 WebView 后端**（Windows 靠系统 WebView2、macOS 靠 WebKit，都不必额外装）：
+> `pip install "pywebview[pyside6]"`（推荐，纯 pip、不依赖系统包）；或按发行版装 GTK——后者
+> 要求**你的 Python 与系统 Python 同版本**（`gi` 是按系统 Python 编的），CentOS 8 这类
+> 系统 Python 还是 3.6 的机器因此只能走 Qt。命令与注意事项见
+> [README 的 Linux 一节](README.md#linux)。
+
 ## 2. 在浏览器里调前端（不必启动 Python）
 
 ```bash

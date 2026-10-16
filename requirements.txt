@@ -1,4 +1,9 @@
 pywebview>=5.1
+# Linux 上还要再装**一个** WebView 后端（「多选一」写不进依赖表）：
+#   Qt（推荐，纯 pip，不依赖系统包）：  pip install "pywebview[pyside6]"
+#   GTK（体积小，用系统自带的）      ：  按发行版装 python3-gi / gir1.2-webkit2-4.1 等
+#     —— GTK 要求你的 Python 与系统 Python **同版本**（gi 是按系统 Python 编的）。
+# 具体命令与 CentOS 8 的注意事项见 README「下载与安装 → Linux」。
 pystray>=0.19
 Pillow>=10.0
 APScheduler>=3.10

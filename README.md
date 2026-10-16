@@ -121,7 +121,29 @@
 
 ### Linux
 
-暂无预编译包，需从源码运行，见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节。
+暂无预编译包，从源码运行（建环境见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节）。
+**先装一个 WebView 后端**，二选一：
+
+- **Qt**（推荐）——纯 pip，装进**你运行它的那个** Python 环境即可，不依赖任何系统包：
+
+  ```bash
+  pip install "pywebview[pyside6]"
+  ```
+
+- **GTK**——体积小，用系统自带的 GTK/WebKit；**要求你的 Python 与系统 Python 是同一个版本**
+  （系统装的 `gi` 是按系统 Python 编译的，版本对不上就导不进来）：
+
+  | 发行版 | 命令 |
+  |---|---|
+  | Debian / Ubuntu / Kali | `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1` |
+  | Fedora | `sudo dnf install python3-gobject gtk3 webkit2gtk4.1` |
+  | CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
+  | Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
+
+> **CentOS 8 两个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；
+> ② 系统 Python 是 **3.6**（跑不了本项目），得先弄一个 3.11+（`uv python install 3.12` 最省事）——
+> 而这时**只能用 Qt**：系统的 `gi` 是 3.6 编的、3.12 导不进来。
+> 好消息：CentOS 8 是 **glibc 2.28**，现代 PySide6 的 wheel 正好能用。
 
 ---
 

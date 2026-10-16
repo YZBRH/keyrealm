@@ -572,20 +572,25 @@ def _restore_page():
 _GUI_BACKEND_HINT_SOURCE = """\
 Keyrealm 需要一个 WebView 后端才能显示界面，但当前环境里 GTK 与 Qt 都没有。
 
-按你的发行版装其中一套（推荐 GTK）：
+【首选 · Qt】纯 pip，装进**当前这个** Python 环境即可，不依赖任何系统包：
+      pip install "pywebview[pyside6]"
+
+【或者 · GTK】用系统自带的 GTK/WebKit（体积小），但**只在你这个 Python 与系统 Python
+是同一个版本时**才可行——系统装的 gi 是按系统 Python 编的，版本对不上就导不进来。
+（典型：CentOS 8 的系统 Python 是 3.6，而你跑的是 3.12 → 用不了 GTK，请走上面的 Qt。）
 
   Debian / Ubuntu / Kali
       sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
-  Fedora / RHEL
+  Fedora
       sudo dnf install python3-gobject gtk3 webkit2gtk4.1
+  CentOS / RHEL 8
+      sudo dnf install python3-gobject gtk3 webkit2gtk3
+      （CentOS 8 官方源已 EOL：先把 yum 源指向 vault.centos.org 才装得上，见 README）
   Arch / Manjaro
       sudo pacman -S python-gobject gtk3 webkit2gtk-4.1
 
-注意：装完请用**系统 Python** 运行（python3 main.py）。venv 里看不到系统装的 gi——
-非要用 venv，建的时候得加 --system-site-packages。
-
-不想装系统包也可以走 Qt（纯 pip 能装，但要装进**实际运行它的那个**环境）：
-      pip install pywebview[pyside6]
+走 GTK 时请用**系统 Python** 运行（python3 main.py）；要留在 venv 就在建 venv 时加
+--system-site-packages，且解释器版本必须与系统一致。
 """
 
 _GUI_BACKEND_HINT_FROZEN = """\
