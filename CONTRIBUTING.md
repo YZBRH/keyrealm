@@ -248,7 +248,8 @@ keyrealm/
 打 tag（`vX.Y.Z`）会触发 **`.github/workflows/release.yml`**：在三个 runner 上并行构建，把产物挂到
 该 tag 的 GitHub Release，用户下载即用。
 
-- 矩阵：`windows-latest`（x64）、`macos-latest`（Apple Silicon）。暂不出 macOS Intel 与 Linux 版；
+- 矩阵：`windows-latest`（x64）、`macos-latest`（Apple Silicon）、`ubuntu-22.04`（Linux **通用版**）、
+  `ubuntu-20.04`（Linux **GTK 专项版**）。暂不出 macOS Intel 版；
   以后要加 macOS Intel 就补一条 `macos-13` / `macos-x64`。
   **必须矩阵**——PyInstaller **不能跨平台编译**，每个平台只能在对应系统上构建。
 - 每个 runner：装 Python + Node → `pip install -r requirements.txt pyinstaller` → `npm ci` →
@@ -259,7 +260,13 @@ keyrealm/
 - **手动触发**（Actions → Release → Run workflow）只产出构建产物、不发 Release，可用于验证。
 - 目标机前提：**Windows** 需 WebView2 Runtime（Win10/11 通常自带）；**macOS** 产物**未签名**，
   首次打开会被 Gatekeeper 拦，需右键→「打开」或 `xattr -dr com.apple.quarantine <文件>` 放行。
-- Linux 暂无预编译包（pywebview 依赖 GTK/WebKitGTK，打包成本高）。
+- **Linux 出两类包**（详见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md)）：
+  - **通用版** `Keyrealm-<版本>-linux-general-x86_64.zip`：`ubuntu-22.04` 上构建、**Qt 后端**（自包含），
+    任意发行版可用（glibc ≥ 2.35）。
+  - **GTK 专项版** `Keyrealm-<版本>-linux-gtk-<系统>-x86_64.zip`：在**目标发行版自己的环境**里构建、
+    **GTK 后端**（用系统 WebKitGTK）——CI 额外 apt 装 GTK3 / WebKit2GTK 4.1 / AyatanaAppIndicator 的
+    typelib 与编译依赖，再 `pip install "PyGObject<3.51"`，spec 仅在 GTK 档收 `gi.*`。**产物只在构建它的
+    那个发行版上稳**，故包名带构建系统（如 `ubuntu20.04`）。
 
 ## 10. 提交约定
 

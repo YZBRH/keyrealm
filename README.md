@@ -121,10 +121,16 @@
 
 ### Linux
 
-从 [Releases](../../releases) 下载**通用版**压缩包 `Keyrealm-<版本>-linux-general-x86_64.zip`：
-**Qt 后端、自包含**（PySide6 已打进包，不依赖宿主机 GTK/WebKit），解压后运行包内的
-`Keyrealm`，免安装。基线 **glibc ≥ 2.35**（Ubuntu 22.04 / Debian 12 / Fedora 36 及更新）；
-更老的发行版（如 CentOS 8）请从源码运行。
+从 [Releases](../../releases) 下载压缩包，解压后运行包内的 `Keyrealm`，免安装。**两种包**：
+
+| 包 | 界面后端 | 适合的系统 |
+|---|---|---|
+| `Keyrealm-<版本>-linux-general-x86_64.zip` | **Qt**（PySide6 自包含） | **任意发行版**，基线 **glibc ≥ 2.35**（Ubuntu 22.04 / Debian 12 / Fedora 36 及更新）。通用兜底、体积大 |
+| `Keyrealm-<版本>-linux-gtk-<系统>-x86_64.zip` | **GTK**（用系统 WebKitGTK） | **仅限构建它的那个发行版**（如 `ubuntu20.04`）。体积小、不依赖 GL |
+
+> `linux-gtk-*` 是**专项包**：它依赖系统里的 WebKitGTK / PyGObject，只在**构建它的那个发行版**上稳，
+> 所以包名带构建系统标识。没有对应专项档时就用 `linux-general` 通用版。矩阵与选档规则见
+> [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md)。更老的发行版（如 CentOS 8）请从源码运行。
 
 也可以从源码运行（建环境见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节）。
 **界面后端二选一**（Windows / macOS 用系统自带的 WebView2 / WebKit，无需选）：
@@ -133,7 +139,7 @@
 |---|---|---|
 | 装什么 | `pip install "pywebview[pyside6]"` | 按发行版装系统包（见下） |
 | 体积（实测） | 下载 ≈ 253 MB / 装完 ≈ **677 MB** | 系统侧 ≈ **105 MB**，venv 侧 ≈ 0 |
-| **打包分发** | ✅ **自包含**——PyInstaller 把 PySide6 整包收进去 | ⚠️ 仍依赖宿主机的 typelib 与 WebKit 库，**实测会失败**（见下） |
+| **打包分发** | ✅ **自包含**——PyInstaller 把 PySide6 整包收进去 | ✅ **可打包**——打成"专项档"（收进系统 gi/WebKit），见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md) |
 | 适合 | 打包分发、给谁都能跑 | 本机跑源码；或只在**同款机器**上分发 |
 
 **怎么选**：一个开关 `KEYREALM_GUI`，**源码运行与打包都认**：
@@ -164,9 +170,9 @@ python scripts/build.py --frontend --gui gtk     # 打成 GTK 版
 | CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
 | Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
 
-⚠️ **打成冻结包这条路实测走不通**：GTK 走的是宿主机的 typelib + 一整棵 WebKit/GTK 依赖树，
-PyInstaller 收不全，冻出来的程序会死在 `gi.overrides` 的 typelib 版本错配上
-（`unix_signal_add_full` 那条断言）。**所以 GTK 形态请只用于「本机跑源码」。**
+> **打包成冻结包**：可以——CI 的 `linux-gtk-*` 专项档正是这么打的（`pip install PyGObject` 现场编译 +
+> spec 显式收 `gi.*` + `hooksconfig` 钉 typelib 版本）。**但产物只在该构建系统上稳**（gi/glib/WebKit
+> 都来自构建机），所以按发行版出专项档、不能一份包通吃。详见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md)。
 </details>
 
 > **CentOS 8 三个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；

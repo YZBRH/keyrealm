@@ -31,13 +31,18 @@ jobs:
             pkg: windows-x64
           - os: macos-latest    # Apple Silicon（暂不出 Intel 版；以后要加就再加一条 macos-13 / macos-x64）
             pkg: macos-arm64
-          # Linux **通用版**：界面后端用 Qt（PyInstaller 把 PySide6 整包收进去 → 自包含），
-          # 不依赖宿主机的 GTK/WebKit，所以能分发给任意发行版。**产物 glibc 基线 = 构建机的
-          # glibc**（PyInstaller 与构建机的 libc 绑定符号版本），故这里取**最老的可选 runner**
-          # ubuntu-22.04（glibc 2.35）而非 ubuntu-latest（24.04，glibc 2.39）——后者打出来的包
-          # 在 22.04 上都跑不起来。想覆盖更老的发行版得改用容器构建，另议。
+          # Linux 出**两类包**（各取该形态下最老的可用构建机——PyInstaller 产物绑构建机 glibc）：
+          #   · linux-general-<arch>      ：**Qt 后端**（PyInstaller 把 PySide6 整包收进去 → 自包含），
+          #                                 不依赖宿主机 GTK/WebKit，任意发行版都能跑，是"通用兜底"。
+          #   · linux-gtk-<系统>-<arch>   ：**GTK 后端**（用系统的 WebKitGTK），体积小、不依赖 GL；
+          #                                 但 gi/glib/girepository 都来自构建机，**只在构建它的那个发行版上稳**，
+          #                                 所以包名里带构建系统。详见 docs/LINUX_GTK_MATRIX.md。
           - os: ubuntu-22.04
             pkg: linux-general-x86_64
+            gui: qt
+          - os: ubuntu-20.04
+            pkg: linux-gtk-ubuntu20.04-x86_64
+            gui: gtk
 
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +57,17 @@ jobs:
         with:
           node-version: "20"
 
+      - name: 安装 Linux 系统依赖（GTK / WebKit2GTK / PyGObject 构建头文件）
+        if: matrix.gui == 'gtk'
+        # PyGObject 要从源码编译（需 gobject-introspection + cairo 头文件）；
+        # gir1.2-* 提供 typelib，PyInstaller 的 gi 钩子会把它们与对应 .so 一起收进包里。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgirepository1.0-dev libcairo2-dev pkg-config \
+            gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libwebkit2gtk-4.1-0 \
+            gir1.2-ayatanaappindicator3-0.1
+
       - name: 安装 Python 依赖
         # requirements.txt 含 socksio（httpx[socks]）、PySocks、telethon、python-socks——
         # spec 会对这四个「静态分析看不到」的依赖做强校验，缺一即中止构建，故必须装齐。
@@ -60,20 +76,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
-      - name: 安装 Linux 界面后端（Qt / PySide6）
-        # Windows/macOS 用系统 WebView，无需此步。Linux 没有系统级 WebView，必须自带：
-        # Qt 后端靠 PySide6（spec 在 Linux 上**强制校验** qtpy + PySide6，缺一即中止构建），
-        # 装 pywebview 的 pyside6 extra 会一并带来入口模块 qtpy。
-        if: runner.os == 'Linux'
+      - name: 安装 Linux GUI 绑定（Qt / PySide6）
+        # Linux 没有系统级 WebView，Qt 后端必须自带：spec 在 Linux 的 qt 分支**强制校验**
+        # qtpy + PySide6，缺一即中止构建；装 pywebview 的 pyside6 extra 会一并带来入口模块 qtpy。
+        if: matrix.gui == 'qt'
         run: pip install "pywebview[pyside6]"
+
+      - name: 安装 Linux GUI 绑定（GTK / PyGObject）
+        # PyGObject 3.51+ 需要 girepository-2.0（Ubuntu 24.04 才有），20.04/22.04 上钉到 3.50.x。
+        if: matrix.gui == 'gtk'
+        run: pip install "PyGObject>=3.42,<3.51"
 
       - name: 安装前端依赖
         working-directory: frontend
         run: npm ci
 
       - name: 构建（前端 + PyInstaller）
-        # --output release：产物落到 release/（exe + plugins/），便于整目录打包。
-        run: python scripts/build.py --frontend --output release
+        # --gui 只在 Linux 上有意义；非 Linux 条目没设 matrix.gui，表达式给空串、参数不出现。
+        # --output release：产物落到 release/（可执行文件 + plugins/），便于整目录打包。
+        run: python scripts/build.py --frontend --output release ${{ matrix.gui && format('--gui {0}', matrix.gui) || '' }}
 
       - name: 写入更新元数据（version.json + migrations/）
         # 程序内「正式版更新」下载本包后，要靠 .update-meta/version.json 才知道目标数据库结构版本；

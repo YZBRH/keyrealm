@@ -51,13 +51,16 @@ glibc → GLib/GIO → GTK3 → WebKitGTK → (typelib + libgirepository) → Py
 
 **一个"档" = 一个构建系统 + 一个架构**。每档在**该系统自己的 CI runner / 容器**里构建。
 
-| 档 (flavor) | 目标系统 | 架构 | WebKit 门槛 | 优先级 |
+| 档 (flavor) | 目标系统 | 架构 | WebKit 门槛 | 状态 |
 |---|---|---|---|---|
-| `linux-gtk-ubuntu22.04` | Ubuntu 22.04 | x86_64 | 2.36↑ | P0 |
-| `linux-gtk-ubuntu24.04` | Ubuntu 24.04 | x86_64 | 2.44↑ | P0 |
-| `linux-gtk-debian12` | Debian 12 | x86_64 | 2.40↑ | P1 |
-| `linux-gtk-rocky9` / `rhel9` | RHEL 9 系 | x86_64 | 2.36↑ | P1 |
+| `linux-gtk-ubuntu20.04` | Ubuntu 20.04 | x86_64 | 2.32↑ | **首批（已在 CI 矩阵）** |
+| `linux-gtk-ubuntu22.04` | Ubuntu 22.04 | x86_64 | 2.36↑ | 待加 |
+| `linux-gtk-ubuntu24.04` | Ubuntu 24.04 | x86_64 | 2.44↑ | 待加 |
+| `linux-gtk-debian12` | Debian 12 | x86_64 | 2.40↑ | 待加 |
+| `linux-gtk-rocky9` | RHEL 9 系 | x86_64 | 2.36↑ | 待加 |
 | ~~`linux-gtk-centos8`~~ | CentOS 8 | — | **2.28 太老，不出** | 劝用 Qt 通用版 |
+
+> **首批只出 Ubuntu 20.04**（试水）。跑通后再按需加档——**加一档 = CI 加一条矩阵项**，不动功能代码。
 
 **加新档的成本**：CI 加一条矩阵项 + 一个容器镜像。**不改任何功能代码**。
 
@@ -117,10 +120,17 @@ Keyrealm-<版本>-macos-arm64.zip
 - **`backend/updater.py`** 的资产探测需支持"按顺序试多个包名"（404 则下一档）。
 - **README**「下载与安装」的 Linux 一节要列出"通用版 / 各专项档"及各自适用系统。
 
-## 8. 待定决策
+## 8. 已定决策
 
-1. **GTK 包是否收 typelib**：收（PR 做法）→ 绑得更死、档更细；不收（用系统 typelib）→ 档可粗，但
-   需验证目标机 typelib 版本够不够。**建议先按"收"来，档切细，验证后再看能否放宽**。
-2. **切档是否自动**：§6 方案是"有对应档就自动切、并在 UI 明示"。若希望更保守，可改为"默认同档升级，
-   提供「切换到本机系统档」按钮"。
-3. **专项档的上限数量**：先出 Ubuntu 22.04/24.04 + Debian 12 + Rocky 9，按需求再扩。
+1. **GTK 包收 typelib**（PR 做法）：绑得更死、档切细 —— `gi` 现场编译 + spec 收 `gi.*` + `hooksconfig` 钉版本。
+2. **切档自动**：按 §6 三级匹配 —— "有对应档就自动切，并在更新提示里明示"。
+3. **首批只出 `linux-gtk-ubuntu20.04`**，跑通后再按需加档（见 §3）。
+4. **CentOS 8 不出 GTK 档**（WebKit 2.28 太老），引导用 Qt 通用版。
+
+## 9. 本次落地范围（与 PR #1 合并时）
+
+- CI 矩阵加 `ubuntu-20.04` / `linux-gtk-ubuntu20.04-x86_64`（GTK 档），与既有 `linux-general-x86_64`（Qt 档）并存；
+  依赖与 `--gui` 按 matrix 的 `gui` 字段分流。
+- spec 的 `gi.*` 收集**与 `_gui == "gtk"` 挂钩**（Qt 档不拖系统 gi/WebKit 进包）。
+- tray 的 Linux `run_detached` 沿用现有实现（`os.name != "nt"` 已覆盖 macOS+Linux），不重复引入 PR 的分支。
+- **`backend/updater.py` 的 `platform_pkg()` 命名修正 + §6 三级选包：另立一项做**（1.4.5），本 PR 不动更新逻辑。
