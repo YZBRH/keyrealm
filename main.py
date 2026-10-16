@@ -616,6 +616,25 @@ def _is_missing_gui_backend(exc: BaseException) -> bool:
     return "QT" in text or "GTK" in text
 
 
+def _preferred_gui() -> str | None:
+    """优先用哪个 WebView 后端；``None`` = 交给 pywebview 自己挑（即平台默认）。
+
+    **Linux 优先 Qt**：PyInstaller 能把 PySide6 完整收进包里 → 冻出来的程序**自包含**；
+    而系统 GTK 走的是 typelib + 一整棵 WebKit/GTK 依赖树，冻完照样得去宿主机找，实测会死在
+    `gi.overrides` 的 typelib 版本错配上（`unix_signal_add_full` 那个断言）。
+    Windows 用系统 WebView2、macOS 用系统 WebKit，**都保持默认、不指定**。
+
+    没装 Qt 就返回 ``None``——退给 pywebview 自己挑（会走到 GTK），不把已经有 GTK 的用户堵死。
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import qtpy  # noqa: F401  —— pywebview 的 Qt 后端入口；装了才说明 Qt 可用
+        return "qt"
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _report_missing_gui_backend(exc: BaseException) -> None:
     """GUI 后端缺失：打印可照做的指引（而不是 traceback），并记进日志。"""
     hint = _GUI_BACKEND_HINT_FROZEN if is_frozen() else _GUI_BACKEND_HINT_SOURCE
@@ -811,7 +830,8 @@ def main():
     _icon = str(_icon_file) if _icon_file.is_file() else None
     try:
         webview.start(
-            debug=False, private_mode=False, storage_path=str(webview_dir), icon=_icon
+            debug=False, private_mode=False, storage_path=str(webview_dir), icon=_icon,
+            gui=_preferred_gui(),
         )
     except Exception as exc:  # noqa: BLE001
         if not _is_missing_gui_backend(exc):

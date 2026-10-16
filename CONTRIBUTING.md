@@ -30,11 +30,10 @@ python main.py
 > `python-socks`）在 PyInstaller 静态分析里看不到，构建脚本会**显式按环境核对**它们；
 > 装进系统 Python 而用 venv 跑构建，就会出现「明明装了却报缺」。
 
-> **Linux 还要一个 WebView 后端**（Windows 靠系统 WebView2、macOS 靠 WebKit，都不必额外装）：
-> `pip install "pywebview[pyside6]"`（推荐，纯 pip、不依赖系统包）；或按发行版装 GTK——后者
-> 要求**你的 Python 与系统 Python 同版本**（`gi` 是按系统 Python 编的），CentOS 8 这类
-> 系统 Python 还是 3.6 的机器因此只能走 Qt。命令与注意事项见
-> [README 的 Linux 一节](README.md#linux)。
+> **Linux 的界面后端是 Qt**（Windows 靠系统 WebView2、macOS 靠 WebKit，都不必额外装）：
+> `pip install "pywebview[pyside6]"`。打包时 `Keyrealm.spec` 会在 Linux 上**强制要求**它，
+> 缺了直接中止构建——免得打出一个起不了窗口的包。命令与注意事项（含 CentOS 8 要钉
+> `PySide6==6.9.3`）见 [README 的 Linux 一节](README.md#linux)。
 
 ## 2. 在浏览器里调前端（不必启动 Python）
 

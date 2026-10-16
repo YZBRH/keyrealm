@@ -1,9 +1,9 @@
 pywebview>=5.1
-# Linux 上还要再装**一个** WebView 后端（「多选一」写不进依赖表）：
-#   Qt（推荐，纯 pip，不依赖系统包）：  pip install "pywebview[pyside6]"
-#   GTK（体积小，用系统自带的）      ：  按发行版装 python3-gi / gir1.2-webkit2-4.1 等
-#     —— GTK 要求你的 Python 与系统 Python **同版本**（gi 是按系统 Python 编的）。
-# 具体命令与 CentOS 8 的注意事项见 README「下载与安装 → Linux」。
+# **Linux 的界面后端是 Qt**（Windows / macOS 用系统自带的 WebView2 / WebKit，无需额外装）。
+# 「平台条件」写不进这张表（构建脚本的依赖检查不认环境标记），所以单独一行写明：
+#     pip install "pywebview[pyside6]"
+# 打包时 Keyrealm.spec 会在 Linux 上**强制要求 PySide6**（缺了就中止构建，不会打出没后端的包）。
+# 想改用系统 GTK（体积小，但只适合在本机跑源码）见 README「下载与安装 → Linux」。
 pystray>=0.19
 Pillow>=10.0
 APScheduler>=3.10

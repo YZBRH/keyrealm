@@ -141,6 +141,18 @@ def require(pkg: str, why: str, install: str) -> None:
     print(f"[spec] 已收集 {pkg}")
 
 
+# ── Linux：界面后端是 Qt，必须**打进包里** ────────────────────
+# Windows 用系统 WebView2、macOS 用系统 WebKit（都不需要收集）；**Linux 没有系统级的 WebView
+# 统一层**，所以要么用宿主机的 GTK（typelib + 一整棵 WebKit 依赖树，冻完仍依赖宿主机，实测会
+# 死在 gi.overrides 的 typelib 版本错配上），要么**自带 Qt**——选后者：自包含、可分发。
+# 缺了它，打出来的包就是「没有 WebView 后端」，起不了窗口（这就是最初那个失败）。
+if sys.platform.startswith("linux"):
+    require(
+        "PySide6",
+        "**无法显示界面**（Linux 的界面后端就是 Qt）",
+        'pip install "pywebview[pyside6]"',
+    )
+
 # SOCKS 代理支持：httpx 在**函数体内**静态 import socksio（httpx/_transports/default.py），
 # 构建机没装这个包时 PyInstaller 既不报错也不会打包它，症状是 exe 里一用 socks5 代理
 # 就抛英文 ImportError("Using SOCKS proxy, but the 'socksio' package is not installed")。

@@ -122,30 +122,35 @@
 ### Linux
 
 暂无预编译包，从源码运行（建环境见 [CONTRIBUTING.md](CONTRIBUTING.md) 的开发环境一节）。
-**先装一个 WebView 后端**，二选一：
+**界面后端用 Qt**（Windows / macOS 用系统自带的 WebView2 / WebKit，都不必额外安装）：
 
-- **Qt**（推荐）——纯 pip，装进**你运行它的那个** Python 环境即可，不依赖任何系统包：
+```bash
+pip install "pywebview[pyside6]"      # 装进**你运行它的那个** Python 环境
+```
 
-  ```bash
-  pip install "pywebview[pyside6]"
-  ```
+> 体积实测（PySide6 6.12）：下载约 **253 MB**、装完约 **677 MB**——其中 QtWebEngine 的单个
+> `.so` 就 195 MB，而 pywebview 本身只有 17 MB。
+>
+> **为什么 Linux 特意选 Qt**：PyInstaller 能把 PySide6 **完整收进包里**，打出来的程序**自包含**；
+> 而 GTK 走的是系统 typelib + 一整棵 WebKit/GTK 依赖树，冻完照样得去宿主机找——实测会死在
+> `gi.overrides` 的 typelib 版本错配上（`unix_signal_add_full` 那个断言）。
 
-  > 体积实测（PySide6 6.12）：下载约 **253 MB**、装完约 **677 MB**；其中光是 QtWebEngine 的
-  > 单个 `.so` 就 195 MB —— 而 pywebview 本身只有 17 MB。
+<details>
+<summary>不想装 Qt？也可以走系统 GTK（<b>只适合在本机跑源码</b>，且要求你的 Python 与系统 Python 同版本）</summary>
 
-- **GTK**——体积小，用系统自带的 GTK/WebKit；**要求你的 Python 与系统 Python 是同一个版本**
-  （系统装的 `gi` 是按系统 Python 编译的，版本对不上就导不进来）：
+体积实测：**系统侧约 105 MB**（WebKitGTK 93.5 MB + GTK3 9 MB + pygobject 1 MB），venv 侧约 0
+—— 桌面发行版通常已经装着 WebKit，最小化安装的服务器版则没有。
 
-  > 体积实测：**系统侧约 105 MB**（WebKitGTK 93.5 MB + GTK3 9 MB + pygobject 1 MB），
-  > venv 侧增量约 0。**桌面发行版通常已经装着 WebKit**，那种情况下什么都不用额外装；
-  > 但**最小化安装的服务器版（含 CentOS 8）没有**，那就得实打实装这 105 MB。
+| 发行版 | 命令 |
+|---|---|
+| Debian / Ubuntu / Kali | `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1` |
+| Fedora | `sudo dnf install python3-gobject gtk3 webkit2gtk4.1` |
+| CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
+| Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
 
-  | 发行版 | 命令 |
-  |---|---|
-  | Debian / Ubuntu / Kali | `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1` |
-  | Fedora | `sudo dnf install python3-gobject gtk3 webkit2gtk4.1` |
-  | CentOS / RHEL 8 | `sudo dnf install python3-gobject gtk3 webkit2gtk3` |
-  | Arch / Manjaro | `sudo pacman -S python-gobject gtk3 webkit2gtk-4.1` |
+程序**优先用 Qt，没装 Qt 才退回 GTK** —— 两条路可以共存，装了 Qt 也不会把原来的 GTK 环境弄坏。
+
+</details>
 
 > **CentOS 8 三个坑**：① 官方 yum 源**已 EOL**，要先把源指向 `vault.centos.org` 才装得上包；
 > ② 系统 Python 是 **3.6**（跑不了本项目），得先弄一个 3.11+（`uv python install 3.12` 最省事）——
