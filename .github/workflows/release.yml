@@ -31,7 +31,7 @@ jobs:
             pkg: windows-x64
           - os: macos-latest    # Apple Silicon（暂不出 Intel 版；以后要加就再加一条 macos-13 / macos-x64）
             pkg: macos-arm64
-          # Linux 出**两类包**（各取该形态下最老的可用构建机——PyInstaller 产物绑构建机 glibc）：
+          # Linux 出**两类包**（都在 ubuntu-22.04 上构建——PyInstaller 产物绑构建机 glibc）：
           #   · linux-general-<arch>      ：**Qt 后端**（PyInstaller 把 PySide6 整包收进去 → 自包含），
           #                                 不依赖宿主机 GTK/WebKit，任意发行版都能跑，是"通用兜底"。
           #   · linux-gtk-<系统>-<arch>   ：**GTK 后端**（用系统的 WebKitGTK），体积小、不依赖 GL；
@@ -40,8 +40,8 @@ jobs:
           - os: ubuntu-22.04
             pkg: linux-general-x86_64
             gui: qt
-          - os: ubuntu-20.04
-            pkg: linux-gtk-ubuntu20.04-x86_64
+          - os: ubuntu-22.04
+            pkg: linux-gtk-ubuntu22.04-x86_64
             gui: gtk
 
     steps:
@@ -83,7 +83,7 @@ jobs:
         run: pip install "pywebview[pyside6]"
 
       - name: 安装 Linux GUI 绑定（GTK / PyGObject）
-        # PyGObject 3.51+ 需要 girepository-2.0（Ubuntu 24.04 才有），20.04/22.04 上钉到 3.50.x。
+        # PyGObject 3.51+ 需要 girepository-2.0（Ubuntu 24.04 才有），22.04 上钉到 3.50.x。
         if: matrix.gui == 'gtk'
         run: pip install "PyGObject>=3.42,<3.51"
 

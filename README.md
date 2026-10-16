@@ -126,7 +126,7 @@
 | 包 | 界面后端 | 适合的系统 |
 |---|---|---|
 | `Keyrealm-<版本>-linux-general-x86_64.zip` | **Qt**（PySide6 自包含） | **任意发行版**，基线 **glibc ≥ 2.35**（Ubuntu 22.04 / Debian 12 / Fedora 36 及更新）。通用兜底、体积大 |
-| `Keyrealm-<版本>-linux-gtk-<系统>-x86_64.zip` | **GTK**（用系统 WebKitGTK） | **仅限构建它的那个发行版**（如 `ubuntu20.04`）。体积小、不依赖 GL |
+| `Keyrealm-<版本>-linux-gtk-<系统>-x86_64.zip` | **GTK**（用系统 WebKitGTK） | **仅限构建它的那个发行版**（如 `ubuntu22.04`）。体积小、不依赖 GL |
 
 > `linux-gtk-*` 是**专项包**：它依赖系统里的 WebKitGTK / PyGObject，只在**构建它的那个发行版**上稳，
 > 所以包名带构建系统标识。没有对应专项档时就用 `linux-general` 通用版。矩阵与选档规则见

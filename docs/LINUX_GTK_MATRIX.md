@@ -53,14 +53,15 @@ glibc → GLib/GIO → GTK3 → WebKitGTK → (typelib + libgirepository) → Py
 
 | 档 (flavor) | 目标系统 | 架构 | WebKit 门槛 | 状态 |
 |---|---|---|---|---|
-| `linux-gtk-ubuntu20.04` | Ubuntu 20.04 | x86_64 | 2.32↑ | **首批（已在 CI 矩阵）** |
-| `linux-gtk-ubuntu22.04` | Ubuntu 22.04 | x86_64 | 2.36↑ | 待加 |
+| `linux-gtk-ubuntu22.04` | Ubuntu 22.04 | x86_64 | 2.36↑ | **首批（已在 CI 矩阵）** |
 | `linux-gtk-ubuntu24.04` | Ubuntu 24.04 | x86_64 | 2.44↑ | 待加 |
+| `linux-gtk-ubuntu20.04` | Ubuntu 20.04 | x86_64 | 2.32↑ | 待加 |
 | `linux-gtk-debian12` | Debian 12 | x86_64 | 2.40↑ | 待加 |
 | `linux-gtk-rocky9` | RHEL 9 系 | x86_64 | 2.36↑ | 待加 |
 | ~~`linux-gtk-centos8`~~ | CentOS 8 | — | **2.28 太老，不出** | 劝用 Qt 通用版 |
 
-> **首批只出 Ubuntu 20.04**（试水）。跑通后再按需加档——**加一档 = CI 加一条矩阵项**，不动功能代码。
+> **首批只出 Ubuntu 22.04**（复用社区 PR 已验证的构建配置，省去额外验证）。跑通后再按需加档——
+> **加一档 = CI 加一条矩阵项**，不动功能代码。
 
 **加新档的成本**：CI 加一条矩阵项 + 一个容器镜像。**不改任何功能代码**。
 
@@ -124,13 +125,13 @@ Keyrealm-<版本>-macos-arm64.zip
 
 1. **GTK 包收 typelib**（PR 做法）：绑得更死、档切细 —— `gi` 现场编译 + spec 收 `gi.*` + `hooksconfig` 钉版本。
 2. **切档自动**：按 §6 三级匹配 —— "有对应档就自动切，并在更新提示里明示"。
-3. **首批只出 `linux-gtk-ubuntu20.04`**，跑通后再按需加档（见 §3）。
+3. **首批只出 `linux-gtk-ubuntu22.04`**，跑通后再按需加档（见 §3）。
 4. **CentOS 8 不出 GTK 档**（WebKit 2.28 太老），引导用 Qt 通用版。
 
 ## 9. 本次落地范围（与 PR #1 合并时）
 
-- CI 矩阵加 `ubuntu-20.04` / `linux-gtk-ubuntu20.04-x86_64`（GTK 档），与既有 `linux-general-x86_64`（Qt 档）并存；
-  依赖与 `--gui` 按 matrix 的 `gui` 字段分流。
+- CI 矩阵加 `ubuntu-22.04` / `linux-gtk-ubuntu22.04-x86_64`（GTK 档），与 `linux-general-x86_64`（Qt 档，
+  同在 ubuntu-22.04）并存；依赖与 `--gui` 按 matrix 的 `gui` 字段分流。
 - spec 的 `gi.*` 收集**与 `_gui == "gtk"` 挂钩**（Qt 档不拖系统 gi/WebKit 进包）。
 - tray 的 Linux `run_detached` 沿用现有实现（`os.name != "nt"` 已覆盖 macOS+Linux），不重复引入 PR 的分支。
 - **`backend/updater.py` 的 `platform_pkg()` 命名修正 + §6 三级选包：另立一项做**（1.4.5），本 PR 不动更新逻辑。
