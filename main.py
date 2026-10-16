@@ -811,9 +811,9 @@ def main():
     # 上面那段 Linux 图形回退是**模块级**做的（必须早于 `import webview`），那时日志还没配好，
     # 所以原因在这里补记一笔——否则用户想查「为什么我的 GPU 加速没生效」会毫无线索。
     if _GPU_RISK_REASON:
-        log.info("图形回退：已退回软件渲染（原因：%s）——Qt 用 QT_OPENGL=software + "
-                 "Chromium --disable-gpu，GTK 关 dmabuf 渲染器；有真 GPU 想强制走硬件可自行覆盖",
-                 _GPU_RISK_REASON)
+        log.info("图形回退：已退回软件渲染（原因：%s）——Qt 用 QT_XCB_GL_INTEGRATION=none + "
+                 "QT_QUICK_BACKEND/QT_OPENGL=software + Chromium --disable-gpu，GTK 关 dmabuf "
+                 "渲染器；有真 GPU 想强制走硬件可自行覆盖", _GPU_RISK_REASON)
 
     # 迁移改名（Credential Vault → Keyrealm）留在系统里的旧自启条目：不清掉的话，
     # 开关会显示「已关闭」而系统里仍有一条指向旧 exe 的条目，开机弹「找不到文件」。
