@@ -109,20 +109,28 @@ _ALLOW_MISSING_DEPS = os.environ.get("CV_ALLOW_MISSING_DEPS") == "1"
 
 
 def require(pkg: str, why: str, install: str) -> None:
-    """收集一个「PyInstaller 静态分析看不到」的依赖。缺失时默认中止构建。
+    """收集一个「PyInstaller 静态分析看不到」的依赖。导入失败时默认中止构建。
 
     只能用 .extend() 而不是 `datas += ...`：函数体内的 `+=` 会把 datas 变成局部名。
+
+    **必须把真实异常打出来**：以前这里 `except Exception:` 吞掉细节、只说「未安装」，
+    于是「包装了但跑不起来」（SyntaxError / AttributeError / 某个子模块 import 失败）
+    和「压根没装」长得一模一样，白白让人去重装一遍。
     """
     try:
         __import__(pkg)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - 这里要的就是「什么都别放过」
+        detail = f"{type(exc).__name__}: {exc}"
         if _ALLOW_MISSING_DEPS:
-            print(f"[spec] 警告：构建环境未安装 {pkg} → 打出的程序{why}（已由 "
-                  f"--allow-missing-deps 放行）")
+            print(f"[spec] 警告：导入 {pkg} 失败 → 打出的程序{why}（已由 --allow-missing-deps "
+                  f"放行）；实际报错：{detail}")
             return
         raise SystemExit(
-            f"[spec] 构建中止：构建环境未安装 {pkg} —— 打出的程序{why}。\n"
-            f"[spec]           修复：{install}\n"
+            f"[spec] 构建中止：构建环境**导入 {pkg} 失败** —— 打出的程序{why}。\n"
+            f"[spec]           真实报错：{detail}\n"
+            f"[spec]           · 若是 `ModuleNotFoundError`（真的没装）→ {install}\n"
+            f"[spec]           · 若是别的（SyntaxError / AttributeError / 子模块失败…）→ "
+            f"**它装着，只是这个版本跑不起来**，别重装，按上面的报错查。\n"
             f"[spec]           确实要忽略缺依赖继续构建：加 --allow-missing-deps"
             f"（或直接设 CV_ALLOW_MISSING_DEPS=1）"
         )
