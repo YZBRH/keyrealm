@@ -618,6 +618,35 @@ def _report_missing_gui_backend(exc: BaseException) -> None:
         pass
 
 
+def _exit_cleanly() -> None:
+    """收尾：若仍有**非守护线程**活着，直接结束进程——否则会「日志说退了、进程却挂着」。
+
+    这类线程不在我们的管控里，也不吃 `daemon=True`，常见来源：
+      * 托盘后端（pystray 的 AppIndicator / GTK 路径）内部起的 GLib 主循环线程；
+      * GTK / GLib 自己创建的线程；
+      * `ThreadPoolExecutor` 的 worker —— **Python 会在 atexit 里 join 它们**（且不设超时），
+        只要有一个卡住，解释器就永久停在这儿（`backend/scheduler.py` 有个模块级
+        `ThreadPoolExecutor`，pywebview 的 JS 桥也用自己的池）。
+    所以退出前点名记一笔，然后强制退出；日志里那串名字就是将来要收口的目标。
+    """
+    leftovers = [
+        t for t in threading.enumerate()
+        if t is not threading.main_thread() and t.is_alive() and not t.daemon
+    ]
+    if not leftovers:
+        return
+    logger.get_logger("main").warning(
+        "退出时仍有非守护线程存活（进程本会卡住），已强制退出。线程：%s",
+        [(t.name, t.ident) for t in leftovers],
+    )
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001 - 收尾阶段，刷不动就算了
+            pass
+    os._exit(0)      # 跳过 atexit（正是它卡住的），直接退
+
+
 def _on_closing():
     """窗口关闭事件：按用户设置的关闭行为处理（询问/直接退出/后台运行）。"""
     if _quitting:
@@ -788,6 +817,7 @@ def main():
         _report_missing_gui_backend(exc)
         sys.exit(1)
     log.info("应用退出")
+    _exit_cleanly()
 
 
 if __name__ == "__main__":
