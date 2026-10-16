@@ -633,13 +633,51 @@ _GUI_BACKEND_HINT_FROZEN = """\
 """
 
 
+# Qt 6.5 起，xcb（X11）平台插件需要系统里的 **libxcb-cursor**；缺了它窗口根本起不来，
+# 报错是「Could not load the Qt platform plugin "xcb"」。它**不是**「GTK/Qt 都没装」——
+# 得单独给指引，否则会误导用户去装后端（装了也没用）。
+_LIBXCB_CURSOR_HINT = """\
+Qt 的 xcb 平台插件起不来 —— 从 Qt 6.5 起它需要系统里的 **libxcb-cursor** 这个库。
+
+  Debian / Ubuntu / Kali   sudo apt install libxcb-cursor0
+  Fedora / CentOS / RHEL   sudo dnf install xcb-util-cursor
+  Arch / Manjaro           sudo pacman -S xcb-util-cursor
+
+装完重新启动即可。注意它是**系统库**、打不进预编译包，所以预编译包也要在系统里装一次。
+"""
+
+
+def _is_xcb_cursor_error(exc: BaseException) -> bool:
+    """是不是「Qt 的 xcb 平台插件因缺 libxcb-cursor 加载失败」。
+
+    判据取 Qt 自己打的那几句（``Could not load the Qt platform plugin "xcb"`` /
+    ``xcb-cursor0 or libxcb-cursor0 is needed``）。**必须在 `_is_missing_gui_backend` 之前判断** ——
+    这类报错文本里也带 "Qt"，否则会被误当成「后端都没装」而给错指引。
+    """
+    text = str(exc).lower()
+    if "xcb" not in text:
+        return False
+    return "platform plugin" in text or "libxcb-cursor" in text or "xcb-cursor0" in text
+
+
+def _report_missing_libxcb_cursor(exc: BaseException) -> None:
+    """缺 libxcb-cursor：打印可照做的指引，并记进日志。"""
+    print("\n" + _LIBXCB_CURSOR_HINT, file=sys.stderr, flush=True)
+    try:
+        logger.get_logger("main").error("Qt 的 xcb 平台插件加载失败（多半缺 libxcb-cursor）：%s", exc)
+    except Exception:  # noqa: BLE001 - 日志失败不该盖过这条提示
+        pass
+
+
 def _is_missing_gui_backend(exc: BaseException) -> bool:
     """是不是「GTK / Qt 都不在」这一类错误。
 
     只认 pywebview 针对「没有后端」抛的那一种，别的 WebViewException（例如「窗口已创建」）
-    照旧抛出去——那是真 bug，不该被伪装成环境问题。
+    照旧抛出去——那是真 bug，不该被伪装成环境问题。xcb 插件那类**另行判断**（见上）。
     """
     if type(exc).__name__ != "WebViewException":
+        return False
+    if _is_xcb_cursor_error(exc):
         return False
     text = str(exc)
     return "QT" in text or "GTK" in text
@@ -886,15 +924,20 @@ def main():
             gui=_preferred_gui(),
         )
     except Exception as exc:  # noqa: BLE001
-        if not _is_missing_gui_backend(exc):
+        # 缺 libxcb-cursor、或没有 GUI 后端：先把服务收干净，再给一段能照着做的指引、
+        # 干净退出——不甩 traceback（对用户毫无用处，尤其对预编译包）。
+        report = None
+        if _is_xcb_cursor_error(exc):
+            report = _report_missing_libxcb_cursor
+        elif _is_missing_gui_backend(exc):
+            report = _report_missing_gui_backend
+        if report is None:
             raise       # 别的异常照旧抛：那是真 bug，不该被当成环境问题糊过去
-        # 没装 GTK / Qt：先把服务收干净，再给一段能照着做的指引，然后干净退出——
-        # 不甩 traceback（对用户毫无用处，尤其对预编译包）。
         try:
             _shutdown_services()
         except Exception:  # noqa: BLE001
             pass
-        _report_missing_gui_backend(exc)
+        report(exc)
         sys.exit(1)
     log.info("应用退出")
     _exit_cleanly()
