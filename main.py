@@ -433,6 +433,12 @@ class VaultApi:
 _window: webview.Window | None = None
 _quitting = False
 
+# 窗口状态跟踪（最大化 / 最小化）。托盘唤出时必须知道「隐藏前是什么状态」：
+# pywebview 的 `show()` 不保证从最小化恢复，而 `restore()` 在 Windows 上等价于
+# `WindowState = Normal`——对最大化窗口一并还原，于是出现「全屏后缩到托盘、再唤出
+# 时窗口缩回去」。状态由 pywebview 的窗口事件维护，唤出时只做必要的恢复。
+_window_state = {"maximized": False, "minimized": False}
+
 # 轻量模式：界面文档已被释放（换成了占位页）时置 True。见 _release_page / _restore_page。
 _page_released = False
 # 释放页面要**延后**这么多秒（见 _hide_to_tray）：得让「最小化到托盘」这个 JS 调用的返回值
@@ -792,14 +798,41 @@ def _on_closing():
     return False
 
 
+def _on_window_maximized():
+    """窗口进入最大化（含 pywebview 的全屏模式，它内部也是 Maximized）。"""
+    _window_state["maximized"] = True
+    _window_state["minimized"] = False
+
+
+def _on_window_minimized():
+    _window_state["minimized"] = True
+
+
+def _on_window_restored():
+    """窗口回到 Normal（从最大化或最小化恢复）。"""
+    _window_state["maximized"] = False
+    _window_state["minimized"] = False
+
+
 def _show_window():
-    """把窗口从托盘调出来（托盘菜单 / 关闭后再次打开）。"""
+    """把窗口从托盘调出来（托盘菜单 / 关闭后再次打开）。
+
+    **恢复顺序有讲究**：`restore()` 在 Windows 上是 `WindowState = Normal`，
+    对最大化窗口会把状态一起清掉。所以只有确实最小化时才调用它；最大化状态用
+    `maximize()` 还原，普通窗口靠 `show()` 即可保持原样。
+    """
     if _window is None:
         return
+    # 先取快照：`show()` 自身可能触发 resize/restored 事件，别让事件把手里的状态改掉。
+    was_maximized = _window_state["maximized"]
+    was_minimized = _window_state["minimized"]
     # 顺序：先显示、后恢复页面。load_url 要求窗口已显示；万一重载失败，
     # 用户至少能看到窗口与占位页上的提示，而不是一个"看起来没反应"的程序。
     _window.show()
-    _window.restore()
+    if was_maximized:
+        _window.maximize()
+    elif was_minimized:
+        _window.restore()
     _restore_page()
 
 
@@ -906,6 +939,11 @@ def main():
 
     # 绑定关闭事件
     _window.events.closing += _on_closing
+
+    # 跟踪最大化 / 最小化状态：托盘唤出时据此还原（见 _window_state / _show_window）
+    _window.events.maximized += _on_window_maximized
+    _window.events.minimized += _on_window_minimized
+    _window.events.restored += _on_window_restored
 
     # 启动 pywebview（阻塞主线程）。
     # private_mode=False + 固定 storage_path：持久化 localStorage（列顺序、

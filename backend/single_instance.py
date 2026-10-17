@@ -91,11 +91,16 @@ def focus_existing() -> bool:
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         user32.FindWindowW.restype = wintypes.HWND
         user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
         hwnd = user32.FindWindowW(None, WINDOW_TITLE)
         if not hwnd:
             return False
+        # SW_RESTORE 会取消最大化（窗口缩回普通尺寸）；只在确实最小化时用它，
+        # 否则用 SW_SHOW 保持原有窗口状态（最大化 / 全屏不被改变）。
+        SW_SHOW = 5
         SW_RESTORE = 9
-        user32.ShowWindow(hwnd, SW_RESTORE)
+        user32.ShowWindow(hwnd, SW_RESTORE if user32.IsIconic(hwnd) else SW_SHOW)
         user32.SetForegroundWindow(hwnd)
         return True
     except Exception:
