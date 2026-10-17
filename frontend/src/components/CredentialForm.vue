@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { useVaultStore } from '@/stores/vault'
 import { api } from '@/api'
-import { normalizeOptions, visibleFields } from '@/utils/format'
+import { matchPresets, normalizeOptions, visibleFields } from '@/utils/format'
 import ProxySelect from '@/components/ProxySelect.vue'
 import TlsSelect from '@/components/TlsSelect.vue'
 
@@ -56,6 +56,11 @@ const schema = computed(() => (currentPlugin.value && currentPlugin.value.fields
 // 条件显隐（manifest 的 show_if）：渲染与提交都用这份，保证「看到什么就提交什么」。
 // 被隐藏字段的值不再提交——否则切模式后另一组的密钥会一直留在库里。
 const visibleSchema = computed(() => visibleFields(schema.value, form.data))
+
+/** 端点字段的候选（manifest 的 presets）；输入本身不受限，候选只是补全。 */
+function fetchPresets(field, query, callback) {
+  callback(matchPresets(field, query))
+}
 
 const rules = computed(() => {
   const result = {
@@ -396,8 +401,26 @@ async function submit() {
 
       <template v-for="field in visibleSchema" :key="field.key">
         <el-form-item :label="field.label" :prop="`data.${field.key}`">
+          <!-- 端点地址（Base URL / 服务端点等）：始终可手输，有官方预设时可下拉补全 -->
+          <el-autocomplete
+            v-if="(field.type === 'text' || field.type === 'url') && field.presets?.length"
+            v-model="form.data[field.key]"
+            :fetch-suggestions="(query, cb) => fetchPresets(field, query, cb)"
+            :trigger-on-focus="true"
+            :placeholder="field.placeholder || ''"
+            clearable
+            class="full-width"
+          >
+            <template #default="{ item }">
+              <div style="display: flex; flex-direction: column; line-height: 1.3">
+                <span>{{ item.label }}</span>
+                <span style="font-size: 12px; color: var(--el-text-color-secondary); word-break: break-all">{{ item.value }}</span>
+              </div>
+            </template>
+          </el-autocomplete>
+
           <el-input
-            v-if="field.type === 'text' || field.type === 'url'"
+            v-else-if="field.type === 'text' || field.type === 'url'"
             v-model="form.data[field.key]"
             :placeholder="field.placeholder || ''"
             clearable

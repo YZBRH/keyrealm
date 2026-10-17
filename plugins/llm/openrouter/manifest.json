@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://openrouter.ai/api/v1"
+      "default": "https://openrouter.ai/api/v1",
+      "presets": [
+        {
+          "label": "OpenRouter 官方",
+          "value": "https://openrouter.ai/api/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

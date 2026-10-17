@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://integrate.api.nvidia.com/v1"
+      "default": "https://integrate.api.nvidia.com/v1",
+      "presets": [
+        {
+          "label": "NVIDIA NIM",
+          "value": "https://integrate.api.nvidia.com/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

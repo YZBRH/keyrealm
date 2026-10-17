@@ -11,7 +11,37 @@
       "label": "SMTP 服务器",
       "type": "text",
       "required": true,
-      "placeholder": "smtp.qq.com"
+      "placeholder": "smtp.qq.com",
+      "presets": [
+        {
+          "label": "QQ 邮箱",
+          "value": "smtp.qq.com"
+        },
+        {
+          "label": "网易 163",
+          "value": "smtp.163.com"
+        },
+        {
+          "label": "网易 126",
+          "value": "smtp.126.com"
+        },
+        {
+          "label": "Gmail",
+          "value": "smtp.gmail.com"
+        },
+        {
+          "label": "阿里邮箱",
+          "value": "smtp.aliyun.com"
+        },
+        {
+          "label": "新浪邮箱",
+          "value": "smtp.sina.com"
+        },
+        {
+          "label": "腾讯企业邮",
+          "value": "smtp.exmail.qq.com"
+        }
+      ]
     },
     {
       "key": "port",

@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://token.sensenova.cn/v1"
+      "default": "https://token.sensenova.cn/v1",
+      "presets": [
+        {
+          "label": "商汤日日新",
+          "value": "https://token.sensenova.cn/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

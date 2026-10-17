@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://generativelanguage.googleapis.com/v1beta"
+      "default": "https://generativelanguage.googleapis.com/v1beta",
+      "presets": [
+        {
+          "label": "Google AI Studio",
+          "value": "https://generativelanguage.googleapis.com/v1beta"
+        }
+      ]
     },
     {
       "key": "api_key",

@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://ark.cn-beijing.volces.com/api/v3"
+      "default": "https://ark.cn-beijing.volces.com/api/v3",
+      "presets": [
+        {
+          "label": "火山方舟 · 华北2（北京）",
+          "value": "https://ark.cn-beijing.volces.com/api/v3"
+        }
+      ]
     },
     {
       "key": "api_key",

@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://aip.baidubce.com"
+      "default": "https://aip.baidubce.com",
+      "presets": [
+        {
+          "label": "百度智能云 千帆",
+          "value": "https://aip.baidubce.com"
+        }
+      ]
     },
     {
       "key": "api_key",

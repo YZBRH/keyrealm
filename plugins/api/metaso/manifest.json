@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://metaso.cn/api/v1"
+      "default": "https://metaso.cn/api/v1",
+      "presets": [
+        {
+          "label": "秘塔 AI 搜索",
+          "value": "https://metaso.cn/api/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

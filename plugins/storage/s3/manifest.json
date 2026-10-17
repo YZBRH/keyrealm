@@ -12,7 +12,41 @@
       "type": "url",
       "required": true,
       "placeholder": "http://host:9000 或 https://s3.us-east-1.amazonaws.com",
-      "hint": "S3 兼容服务的接入地址（可带端口，如 MinIO 的 http://minio.example.com:9000）。不要带桶名与路径。"
+      "hint": "S3 兼容服务的接入地址（可带端口，如 MinIO 的 http://minio.example.com:9000）。不要带桶名与路径。",
+      "presets": [
+        {
+          "label": "AWS S3 · 全球",
+          "value": "https://s3.amazonaws.com"
+        },
+        {
+          "label": "AWS S3 · 美国东部（弗吉尼亚北部）us-east-1",
+          "value": "https://s3.us-east-1.amazonaws.com"
+        },
+        {
+          "label": "AWS S3 · 美国西部（俄勒冈）us-west-2",
+          "value": "https://s3.us-west-2.amazonaws.com"
+        },
+        {
+          "label": "AWS S3 · 亚太地区（新加坡）ap-southeast-1",
+          "value": "https://s3.ap-southeast-1.amazonaws.com"
+        },
+        {
+          "label": "AWS S3 · 亚太地区（东京）ap-northeast-1",
+          "value": "https://s3.ap-northeast-1.amazonaws.com"
+        },
+        {
+          "label": "AWS S3 · 欧洲（爱尔兰）eu-west-1",
+          "value": "https://s3.eu-west-1.amazonaws.com"
+        },
+        {
+          "label": "AWS S3 · 中国（北京）cn-north-1",
+          "value": "https://s3.cn-north-1.amazonaws.com.cn"
+        },
+        {
+          "label": "AWS S3 · 中国（宁夏）cn-northwest-1",
+          "value": "https://s3.cn-northwest-1.amazonaws.com.cn"
+        }
+      ]
     },
     {
       "key": "access_key",
@@ -55,8 +89,14 @@
       "required": false,
       "default": "path",
       "options": [
-        { "value": "path", "label": "路径风格（MinIO / 自建，推荐）" },
-        { "value": "virtual", "label": "虚拟主机风格（AWS S3 等）" }
+        {
+          "value": "path",
+          "label": "路径风格（MinIO / 自建，推荐）"
+        },
+        {
+          "value": "virtual",
+          "label": "虚拟主机风格（AWS S3 等）"
+        }
       ],
       "hint": "路径风格 = http://host:9000/<桶>/…；虚拟主机风格 = https://<桶>.host/…。MinIO / IP 端点用路径风格；AWS S3 两种都支持。"
     },

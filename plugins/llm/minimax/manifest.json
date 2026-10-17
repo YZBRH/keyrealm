@@ -12,7 +12,17 @@
       "type": "url",
       "required": false,
       "placeholder": "默认 https://api.minimax.cn/v1（国际站 https://api.minimax.io/v1）",
-      "default": "https://api.minimax.cn/v1"
+      "default": "https://api.minimax.cn/v1",
+      "presets": [
+        {
+          "label": "MiniMax 国内站",
+          "value": "https://api.minimax.cn/v1"
+        },
+        {
+          "label": "MiniMax 国际站",
+          "value": "https://api.minimax.io/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

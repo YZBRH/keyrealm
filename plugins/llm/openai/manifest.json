@@ -34,7 +34,13 @@
       "hint": "认证方式选「API Key」时有效；ChatGPT 登录态固定走 chatgpt.com。",
       "show_if": {
         "auth_mode": "api_key"
-      }
+      },
+      "presets": [
+        {
+          "label": "OpenAI 官方",
+          "value": "https://api.openai.com/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

@@ -12,7 +12,17 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://api.siliconflow.cn/v1"
+      "default": "https://api.siliconflow.cn/v1",
+      "presets": [
+        {
+          "label": "硅基流动 中国站",
+          "value": "https://api.siliconflow.cn/v1"
+        },
+        {
+          "label": "硅基流动 国际站",
+          "value": "https://api.siliconflow.com/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

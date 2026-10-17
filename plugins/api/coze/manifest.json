@@ -12,7 +12,17 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://api.coze.cn"
+      "default": "https://api.coze.cn",
+      "presets": [
+        {
+          "label": "国内站 coze.cn",
+          "value": "https://api.coze.cn"
+        },
+        {
+          "label": "国际站 coze.com",
+          "value": "https://api.coze.com"
+        }
+      ]
     },
     {
       "key": "api_key",

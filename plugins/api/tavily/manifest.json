@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://api.tavily.com"
+      "default": "https://api.tavily.com",
+      "presets": [
+        {
+          "label": "Tavily 官方",
+          "value": "https://api.tavily.com"
+        }
+      ]
     },
     {
       "key": "api_key",

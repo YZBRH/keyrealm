@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://api.deepseek.com/v1"
+      "default": "https://api.deepseek.com/v1",
+      "presets": [
+        {
+          "label": "DeepSeek 官方",
+          "value": "https://api.deepseek.com/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

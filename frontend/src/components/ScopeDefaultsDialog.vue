@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { api } from '@/api'
-import { normalizeOptions, visibleFields } from '@/utils/format'
+import { matchPresets, normalizeOptions, visibleFields } from '@/utils/format'
 import ProxySelect from '@/components/ProxySelect.vue'
 import TlsSelect from '@/components/TlsSelect.vue'
 
@@ -37,6 +37,11 @@ const tlsVersions = ref(['auto', '1.0', '1.1', '1.2', '1.3'])
 
 // 条件显隐：预设表单里也按 show_if 只显示当前模式需要的字段
 const visibleFieldList = computed(() => visibleFields(fields.value, values.value))
+
+/** 端点字段的候选（manifest 的 presets）；输入本身不受限，候选只是补全。 */
+function fetchPresets(field, query, callback) {
+  callback(matchPresets(field, query))
+}
 
 const visible = computed({
   get: () => props.modelValue,
@@ -188,6 +193,22 @@ async function clearAll() {
               :value="option.value"
             />
           </el-select>
+          <el-autocomplete
+            v-else-if="field.presets?.length"
+            v-model="values[field.key]"
+            :fetch-suggestions="(query, cb) => fetchPresets(field, query, cb)"
+            :trigger-on-focus="true"
+            :placeholder="field.placeholder || ''"
+            clearable
+            class="full-width"
+          >
+            <template #default="{ item }">
+              <div style="display: flex; flex-direction: column; line-height: 1.3">
+                <span>{{ item.label }}</span>
+                <span style="font-size: 12px; color: var(--el-text-color-secondary); word-break: break-all">{{ item.value }}</span>
+              </div>
+            </template>
+          </el-autocomplete>
           <el-input
             v-else
             v-model="values[field.key]"

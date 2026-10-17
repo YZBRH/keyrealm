@@ -12,7 +12,21 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "hint": "留空走普通平台端点 /api/paas/v4；GLM Coding Plan 套餐请填 https://open.bigmodel.cn/api/coding/paas/v4。"
+      "hint": "留空走普通平台端点 /api/paas/v4；GLM Coding Plan 套餐请填 https://open.bigmodel.cn/api/coding/paas/v4。",
+      "presets": [
+        {
+          "label": "智谱开放平台",
+          "value": "https://open.bigmodel.cn/api/paas/v4"
+        },
+        {
+          "label": "智谱 GLM Coding Plan",
+          "value": "https://open.bigmodel.cn/api/coding/paas/v4"
+        },
+        {
+          "label": "Z.ai 国际站",
+          "value": "https://api.z.ai/api/paas/v4"
+        }
+      ]
     },
     {
       "key": "api_key",

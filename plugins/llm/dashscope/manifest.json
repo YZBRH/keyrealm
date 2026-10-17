@@ -12,7 +12,17 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      "default": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "presets": [
+        {
+          "label": "阿里云百炼 · 华北2（北京）",
+          "value": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        },
+        {
+          "label": "阿里云百炼 · 新加坡（国际）",
+          "value": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

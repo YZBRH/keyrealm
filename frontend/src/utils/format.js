@@ -110,6 +110,26 @@ export function normalizeOptions(options) {
 }
 
 /**
+ * Base URL / 端点字段的下拉候选（manifest 的 `presets`，形如 `[{label, value}]`）。
+ *
+ * 返回 Element Plus autocomplete 需要的 `[{value, label}]`：输入框始终可自由输入，
+ * 候选只是辅助。按 label 与 value 同时做不区分大小写的包含匹配；空查询返回全部。
+ */
+export function matchPresets(field, query) {
+  const list = Array.isArray(field && field.presets) ? field.presets : []
+  const q = String(query || '').trim().toLowerCase()
+  return list
+    .filter((preset) => preset && preset.value)
+    .map((preset) => ({
+      value: String(preset.value),
+      label: String(preset.label ?? preset.value),
+    }))
+    .filter((preset) => !q
+      || preset.label.toLowerCase().includes(q)
+      || preset.value.toLowerCase().includes(q))
+}
+
+/**
  * 单个字段此刻该不该显示（manifest 的 show_if 条件显隐）。
  *
  * `show_if` 形如 `{"auth_mode": "chatgpt"}` 或 `{"auth_mode": ["api_key","chatgpt"]}`：

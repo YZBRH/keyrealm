@@ -71,6 +71,9 @@ class FieldSchema:
     default: Any = None
     placeholder: str = ""
     options: list = field(default_factory=list)   # 字符串数组，或 {value,label} 对象数组
+    # 端点候选：`[{label, value}]`。供 Base URL / 服务端点这类字段做「可输入 + 下拉选择」，
+    # 候选值取自厂商官方文档（区域/国内外站/兼容路径）。留空则该字段保持普通输入框。
+    presets: list = field(default_factory=list)
     hint: str = ""             # 字段下方的补充说明（可选，用于解释开关/高级项）
     preset: Optional[bool] = None   # 是否允许作为「类别/插件默认设置」；None=允许（非敏感即可），False=排除
     # 条件显隐：{"另一个字段key": 值 或 [值, ...]}，仅当那个字段当前值命中时才渲染本字段。
@@ -93,6 +96,8 @@ class FieldSchema:
             d["placeholder"] = self.placeholder
         if self.options:
             d["options"] = self.options
+        if self.presets:
+            d["presets"] = self.presets
         if self.hint:
             d["hint"] = self.hint
         if self.preset is not None:
@@ -129,6 +134,7 @@ class PluginManifest:
                 default=f.get("default"),
                 placeholder=plain_text(f.get("placeholder", "")),
                 options=plain_text(f.get("options", [])),
+                presets=plain_text(f.get("presets", [])),
                 hint=plain_text(f.get("hint", "")),
                 preset=f.get("preset"),
                 show_if=f.get("show_if"),

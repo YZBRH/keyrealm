@@ -12,7 +12,13 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://api.anthropic.com/v1"
+      "default": "https://api.anthropic.com/v1",
+      "presets": [
+        {
+          "label": "Anthropic 官方",
+          "value": "https://api.anthropic.com/v1"
+        }
+      ]
     },
     {
       "key": "api_key",

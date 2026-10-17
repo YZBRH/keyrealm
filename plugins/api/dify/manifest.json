@@ -21,7 +21,13 @@
       "required": false,
       "default": "https://api.dify.ai/v1",
       "placeholder": "https://api.dify.ai/v1",
-      "hint": "官方云填 https://api.dify.ai/v1；自建实例填自己的地址（含版本前缀，如 http://host/v1）。"
+      "hint": "官方云填 https://api.dify.ai/v1；自建实例填自己的地址（含版本前缀，如 http://host/v1）。",
+      "presets": [
+        {
+          "label": "Dify Cloud",
+          "value": "https://api.dify.ai/v1"
+        }
+      ]
     },
     {
       "key": "notes",

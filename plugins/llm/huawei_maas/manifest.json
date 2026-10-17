@@ -12,7 +12,25 @@
       "type": "url",
       "required": false,
       "placeholder": "留空使用默认地址",
-      "default": "https://api-ap-southeast-1.modelarts-maas.com/v2"
+      "default": "https://api-ap-southeast-1.modelarts-maas.com/v2",
+      "presets": [
+        {
+          "label": "中国站 · 西南-贵阳一 · OpenAI 兼容",
+          "value": "https://api.modelarts-maas.com/openai/v1"
+        },
+        {
+          "label": "中国站 · 西南-贵阳一 · 标准 V2",
+          "value": "https://api.modelarts-maas.com/v2"
+        },
+        {
+          "label": "国际站 · 中国-香港 · OpenAI 兼容",
+          "value": "https://api-ap-southeast-1.modelarts-maas.com/openai/v1"
+        },
+        {
+          "label": "国际站 · 中国-香港 · 标准 V2",
+          "value": "https://api-ap-southeast-1.modelarts-maas.com/v2"
+        }
+      ]
     },
     {
       "key": "api_key",
