@@ -540,6 +540,84 @@ onBeforeUnmount(() => {
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
+          <span>定时验证计划</span>
+          <el-button type="primary" size="small" :icon="Plus" @click="openCreate">新建计划</el-button>
+        </div>
+      </template>
+
+      <!-- 锁定期提示：写到计划表格上方，用户建/看计划时先看到这条前提 -->
+      <el-alert
+        class="lock-hint"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="数据库锁定期间，定时任务将不会实际执行验证"
+        description="保险库锁定时，到点的计划整轮跳过——不逐条验证、不发起任何网络请求，凭据状态也不会变化。"
+      />
+
+      <el-table v-loading="schedulesLoading" :data="schedules" empty-text="暂无定时计划" style="width: 100%">
+        <el-table-column label="名称" min-width="160">
+          <template #default="{ row }">
+            <span class="plan-name">{{ row.name }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="触发规则" width="180">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain" :icon="Timer">{{ describeTrigger(row) }}</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="验证范围" min-width="150">
+          <template #default="{ row }">
+            <span class="text-muted">{{ describeTarget(row) }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="启用" width="90">
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.enabled"
+              size="small"
+              :loading="togglingId === row.id"
+              @change="(value) => toggleSchedule(row, value)"
+            />
+          </template>
+        </el-table-column>
+
+        <el-table-column label="上次运行" width="130">
+          <template #default="{ row }">
+            <span class="text-muted">{{ formatRelative(row.last_run_at, '从未运行') }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="下次运行" width="170">
+          <template #default="{ row }">
+            <span v-if="row.next_run_at" class="text-muted">{{ formatDateTime(row.next_run_at) }}</span>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="220" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              size="small"
+              :icon="VideoPlay"
+              :loading="runningId === row.id"
+              @click="runScheduleNow(row)"
+            >
+              立即运行
+            </el-button>
+            <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="danger" plain :icon="Delete" @click="removeSchedule(row)" />
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-header">
           <span>后台任务</span>
           <span class="text-muted header-hint">记录会保留到下次启动</span>
           <div class="spacer" />
@@ -614,84 +692,6 @@ onBeforeUnmount(() => {
 
         <el-empty v-else description="暂无任务" :image-size="60" />
       </div>
-    </el-card>
-
-    <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>定时验证计划</span>
-          <el-button type="primary" size="small" :icon="Plus" @click="openCreate">新建计划</el-button>
-        </div>
-      </template>
-
-      <!-- 锁定期提示：写到计划表格上方，用户建/看计划时先看到这条前提 -->
-      <el-alert
-        class="lock-hint"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="数据库锁定期间，定时任务将不会实际执行验证"
-        description="保险库锁定时，到点的计划整轮跳过——不逐条验证、不发起任何网络请求，凭据状态也不会变化。"
-      />
-
-      <el-table v-loading="schedulesLoading" :data="schedules" empty-text="暂无定时计划" style="width: 100%">
-        <el-table-column label="名称" min-width="160">
-          <template #default="{ row }">
-            <span class="plan-name">{{ row.name }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="触发规则" width="180">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain" :icon="Timer">{{ describeTrigger(row) }}</el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="验证范围" min-width="150">
-          <template #default="{ row }">
-            <span class="text-muted">{{ describeTarget(row) }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="启用" width="90">
-          <template #default="{ row }">
-            <el-switch
-              :model-value="row.enabled"
-              size="small"
-              :loading="togglingId === row.id"
-              @change="(value) => toggleSchedule(row, value)"
-            />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="上次运行" width="130">
-          <template #default="{ row }">
-            <span class="text-muted">{{ formatRelative(row.last_run_at, '从未运行') }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="下次运行" width="170">
-          <template #default="{ row }">
-            <span v-if="row.next_run_at" class="text-muted">{{ formatDateTime(row.next_run_at) }}</span>
-            <span v-else class="text-muted">—</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="操作" width="220" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              size="small"
-              :icon="VideoPlay"
-              :loading="runningId === row.id"
-              @click="runScheduleNow(row)"
-            >
-              立即运行
-            </el-button>
-            <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" plain :icon="Delete" @click="removeSchedule(row)" />
-          </template>
-        </el-table-column>
-      </el-table>
     </el-card>
 
     <!-- 新建 / 编辑计划 -->
