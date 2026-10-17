@@ -1731,6 +1731,98 @@ const pagedCredentials = computed(() => {
   return sortedCredentials.value.slice(start, start + pageSize.value)
 })
 
+// ── 列宽自适应：按**当前页实际内容**测量，夹在 [MIN_COL_WIDTH, 原定义宽度] ──
+// Element Plus 没有「内容自适应 + 上限」的列宽能力，这里量一遍 DOM 再把宽度写死。
+// 关键：测量后给**所有**列都传数字 width，EP 才会把表宽收缩到列宽之和（否则会按容器拉伸）。
+// 另一头还要满足「下限」：总宽不足容器时按比例摊回余量，保证铺满、操作列右侧不留大空白。
+const MIN_COL_WIDTH = 84
+const measuredWidths = ref({})
+
+/** 读一个 .cell 的自然内容宽度（含 box-sizing 下的左右内边距），读完立即还原样式。 */
+function naturalCellWidth(cell) {
+  const prevWhiteSpace = cell.style.whiteSpace
+  const prevWidth = cell.style.width
+  cell.style.whiteSpace = 'nowrap'
+  cell.style.width = 'max-content'
+  const width = cell.getBoundingClientRect().width
+  cell.style.whiteSpace = prevWhiteSpace
+  cell.style.width = prevWidth
+  return width
+}
+
+async function measureColumnWidths() {
+  await nextTick()
+  const root = tableRef.value && tableRef.value.$el
+  if (!root) return
+  const cols = orderedColumns.value
+  if (!cols.length) {
+    measuredWidths.value = {}
+    return
+  }
+  const headerCells = root.querySelectorAll('.el-table__header-wrapper thead th .cell')
+  const rows = root.querySelectorAll('.el-table__body-wrapper tbody tr')
+  const widths = {}
+  cols.forEach((col, index) => {
+    const cap = Number(col.width || col.minWidth || 200)
+    let max = 0
+    const headerCell = headerCells[index]
+    if (headerCell) max = Math.max(max, naturalCellWidth(headerCell))
+    rows.forEach((tr) => {
+      const cell = tr.children[index] && tr.children[index].querySelector('.cell')
+      if (cell) max = Math.max(max, naturalCellWidth(cell))
+    })
+    widths[col.key] = Math.min(cap, Math.max(MIN_COL_WIDTH, Math.ceil(max)))
+  })
+
+  // 下限：总宽不足容器时按现有宽度比例摊回，刚好铺满一屏（内容偏长则不改动，交给横向滚动）
+  const bodyWrapper = root.querySelector('.el-table__body-wrapper')
+  const container = (bodyWrapper && bodyWrapper.clientWidth) || root.clientWidth || 0
+  const sum = cols.reduce((acc, col) => acc + widths[col.key], 0)
+  if (container > sum) {
+    const extra = container - sum
+    let allocated = 0
+    cols.forEach((col, index) => {
+      if (index === cols.length - 1) {
+        widths[col.key] += extra - allocated
+      } else {
+        const add = Math.floor((extra * widths[col.key]) / (sum || 1))
+        widths[col.key] += add
+        allocated += add
+      }
+    })
+  }
+  measuredWidths.value = widths
+}
+
+// 合并同一帧内的测量请求：ResizeObserver 可能因行高变化连续触发
+let measureScheduled = false
+function scheduleMeasure() {
+  if (measureScheduled) return
+  measureScheduled = true
+  requestAnimationFrame(() => {
+    measureScheduled = false
+    measureColumnWidths()
+  })
+}
+
+// 数据 / 分页 / 列显隐与顺序变化后重测（内容变了，宽度要跟着变）
+watch([orderedColumns, pagedCredentials], scheduleMeasure)
+
+// 容器宽度变化（窗口缩放、侧栏收起/展开）时同样重测，保证始终铺满
+let tableResizeObserver = null
+onMounted(() => {
+  measureColumnWidths()
+  const root = tableRef.value && tableRef.value.$el
+  if (root && typeof ResizeObserver !== 'undefined') {
+    tableResizeObserver = new ResizeObserver(scheduleMeasure)
+    tableResizeObserver.observe(root)
+  }
+})
+onBeforeUnmount(() => {
+  if (tableResizeObserver) tableResizeObserver.disconnect()
+  tableResizeObserver = null
+})
+
 // ── 数据加载与操作 ────────────────────────────────────────
 
 async function load() {
@@ -2065,8 +2157,8 @@ onMounted(async () => {
             v-for="col in orderedColumns"
             :key="col.key"
             :label="col.label"
-            :width="col.width"
-            :min-width="col.minWidth"
+            :width="measuredWidths[col.key] || col.width"
+            :min-width="measuredWidths[col.key] ? undefined : col.minWidth"
             :label-class-name="`vault-th-${col.key}`"
           >
             <template v-if="col.key === 'credential'" #default="{ row }">
