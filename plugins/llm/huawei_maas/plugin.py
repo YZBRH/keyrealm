@@ -7,8 +7,19 @@
 from __future__ import annotations
 
 from backend.plugin_sdk import VerifyResult, guarded
-from llm_common import make_quota_probe
-from llm_protocols import probe_openai_models, chat_completion, fetch_models, chat_completion_stream, resolve_chat_model
+from llm_common import (
+    probe_requested,
+    probe_model,
+    quota_unknown,
+)
+from llm_protocols import (
+    probe_openai_models,
+    chat_completion,
+    fetch_models,
+    chat_completion_stream,
+    resolve_chat_model,
+    quota_chat_probe,
+)
 
 NAME = "华为云 ModelArts MaaS"
 DEFAULT_BASE_URL = "https://api-ap-southeast-1.modelarts-maas.com/v2"
@@ -17,7 +28,55 @@ PROTOCOL = "openai_models"
 # 余额不可获取时，可选用最小对话请求判断额度状态，默认关闭。
 # `max_tokens` 仅限制正文，不包含思维链，且不能与 `max_completion_tokens` 同时设置。
 # 正文为空不必然表示调用失败；`chat_completion` 依据完整响应信封设置 `reached_model`。
-quota_probe = make_quota_probe(DEFAULT_BASE_URL, "openai")
+
+# 华为云「Key 认证通过、但没有开通任何预置模型服务」时，对话接口返回
+# 403 `ModelArts.81004`（官方错误码文档：尚未开通调用的预置服务）。
+# 通用 `quota_chat_probe` 只认 402/欠费关键词，会把这类 403 当成「该模型不可用」
+# 逐个换候选，最后只剩含糊的「异常」；这里补一次读错误码的请求，把原因说清楚。
+_ACCESS_DENIED_HINTS = ("81004", "do not have access")
+
+
+def quota_probe(data: dict):
+    """余额未知时的实测：在通用探测之外补一条「未开通预置服务」的判定。
+
+    通用 `quota_chat_probe` 只认 402/欠费关键词，会把 403 `ModelArts.81004`
+    当成「该模型不可用」逐个换候选，最后只剩含糊的「异常」。这里保留完整的
+    候选遍历（部分模型可用时仍可能得出「可用」），只有**全部候选都给不出结论**
+    时才补一次读错误码的请求，把真实原因说出来。
+    """
+    data = data or {}
+    if not probe_requested(data):
+        return None
+    base_url = (data.get("base_url") or "").strip() or DEFAULT_BASE_URL
+    api_key = (data.get("api_key") or "").strip()
+    if not base_url or not api_key:
+        return None
+
+    verdict = quota_chat_probe(base_url, api_key, "openai", probe_model(data))
+    if verdict:
+        return verdict
+
+    model = probe_model(data)
+    if not model:
+        try:
+            models = fetch_models("openai", base_url, api_key)
+        except Exception:  # noqa: BLE001 - 取列表失败按「没拿到」处理
+            models = []
+        model = models[0] if models else ""
+
+    if model:
+        resp = chat_completion(
+            base_url, api_key, model,
+            [{"role": "user", "content": "hi"}],
+            protocol="openai", max_tokens=1,
+        )
+        error = str(resp.get("error") or "")
+        if any(hint in error.lower() for hint in _ACCESS_DENIED_HINTS):
+            return {
+                "account_info": {"chat_probe": "未开通"},
+                "message": "凭证有效，但未开通调用的预置服务（ModelArts.81004）",
+            }
+    return quota_unknown()
 
 
 def validate(data: dict) -> list[str]:
