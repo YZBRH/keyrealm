@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Lock as LockIcon, Unlock as UnlockIcon } from '@element-plus/icons-vue'
+import { Unlock as UnlockIcon } from '@element-plus/icons-vue'
 
 import { useAppStore } from '@/stores/app'
 
@@ -58,7 +58,7 @@ onMounted(() => {
       <div class="auth-brand">
         <span class="auth-mark">
           <span class="auth-ring" aria-hidden="true" />
-          <el-icon class="auth-mark-icon"><LockIcon /></el-icon>
+          <img src="/favicon.svg" class="auth-mark-img" alt="Keyrealm" />
         </span>
         <h1 class="v-grad-text">Keyrealm</h1>
         <p class="auth-subtitle">保险库已锁定，请输入主密码解锁</p>
@@ -161,14 +161,13 @@ onMounted(() => {
   place-items: center;
   width: 56px;
   height: 56px;
-  border-radius: 18px;
-  background: var(--v-grad-brand);
-  color: var(--v-primary-ink);
-  box-shadow: var(--v-glow);
 }
 
-.auth-mark-icon {
-  font-size: 26px;
+.auth-mark-img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  filter: drop-shadow(0 8px 18px rgba(6, 10, 22, 0.35));
 }
 
 /* 绕在徽标外的一圈描边，**静态**。
@@ -182,7 +181,7 @@ onMounted(() => {
 .auth-ring {
   position: absolute;
   inset: -6px;
-  border-radius: 24px;
+  border-radius: 15px;
   border: 2px solid color-mix(in srgb, var(--v-accent) 40%, transparent);
   opacity: 0.85;
   pointer-events: none;

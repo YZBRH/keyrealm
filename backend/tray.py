@@ -14,9 +14,10 @@ import threading
 from typing import Callable, Optional
 
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from . import logger
+from .paths import resource_dir
 
 _log = logger.get_logger(__name__)
 
@@ -27,35 +28,70 @@ _lock_vault_cb: Optional[Callable] = None
 _quit_cb: Optional[Callable] = None
 _get_status_cb: Optional[Callable] = None
 
+# 托盘图标：新品牌图按状态色着色。状态色必须占满整块底色，
+# 才能在 16~24px 的系统托盘里一眼分辨（角标小圆点在这个尺寸下会糊成噪点）。
+_ICON_SIZE = 64
+_TRAY_COLORS = {
+    "green": (34, 197, 94),
+    "blue": (59, 130, 246),
+    "red": (239, 68, 68),
+    "gray": (156, 163, 175),
+}
+_base_icon: Optional[Image.Image] = None
+_base_icon_loaded = False
+_icon_cache: dict[str, Image.Image] = {}
 
-def _make_icon_image(color: str) -> Image.Image:
-    """生成 64x64 托盘图标：品牌几何（圆角方块 + 保险库门圆环 + 钥匙孔），
-    用状态色填充以便一眼判别服务状态。"""
-    s = 64
+
+def _load_base_icon() -> Optional[Image.Image]:
+    """读取随包品牌图（assets/icon.png），缺失时返回 None 走兜底绘制。"""
+    global _base_icon, _base_icon_loaded
+    if not _base_icon_loaded:
+        _base_icon_loaded = True
+        path = resource_dir() / "assets" / "icon.png"
+        try:
+            _base_icon = Image.open(path).convert("RGBA")
+        except OSError:
+            _log.warning("托盘图标母版不可用，改用兜底图形：%s", path)
+    return _base_icon
+
+
+def _tint_icon(base: Image.Image, color: tuple[int, int, int]) -> Image.Image:
+    """背景按亮度映射为状态色，白笔画与星光保持白色（三通道均 ≥246 视为白）。"""
+    rgb = base.convert("RGB")
+    tinted = ImageOps.colorize(
+        rgb.convert("L"), black=(12, 12, 20), white=color
+    ).convert("RGB")
+
+    def _white(channel: Image.Image) -> Image.Image:
+        return channel.point(lambda v: 255 if v >= 246 else 0)
+
+    r, g, b = rgb.split()
+    white_mask = ImageChops.multiply(ImageChops.multiply(_white(r), _white(g)), _white(b))
+    tinted = Image.composite(
+        Image.new("RGB", rgb.size, (255, 255, 255)), tinted, white_mask
+    )
+
+    out = tinted.convert("RGBA")
+    out.putalpha(base.getchannel("A"))
+    return out.resize((_ICON_SIZE, _ICON_SIZE), Image.LANCZOS)
+
+
+def _fallback_icon(color: tuple[int, int, int]) -> Image.Image:
+    """母版缺失时绘制兜底图标：状态色圆角方块 + 白色保险库门/钥匙孔。"""
+    s = _ICON_SIZE
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    colors = {
-        "green":  (34, 197, 94, 255),
-        "blue":   (59, 130, 246, 255),
-        "red":    (239, 68, 68, 255),
-        "gray":   (156, 163, 175, 255),
-    }
-    c = colors.get(color, colors["gray"])
+    c = (*color, 255)
 
-    # 圆角方块底（状态色）
     draw.rounded_rectangle([0, 0, s - 1, s - 1], radius=int(s * 0.22), fill=c)
 
     cx = cy = s / 2
-
-    # 保险库门：白色圆环
     ring_r = s * 0.34
     draw.ellipse(
         [cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r],
         outline=(255, 255, 255, 235),
         width=max(2, int(s * 0.055)),
     )
-
-    # 钥匙孔：上方圆 + 下方梯形柄
     head_r = s * 0.10
     head_cy = cy - s * 0.05
     draw.ellipse(
@@ -76,6 +112,19 @@ def _make_icon_image(color: str) -> Image.Image:
         fill=(255, 255, 255, 255),
     )
     return img
+
+
+def _make_icon_image(color: str) -> Image.Image:
+    """生成 64x64 托盘图标：新品牌图按状态色着色，一眼判别服务状态。"""
+    key = color if color in _TRAY_COLORS else "gray"
+    if key not in _icon_cache:
+        base = _load_base_icon()
+        _icon_cache[key] = (
+            _tint_icon(base, _TRAY_COLORS[key])
+            if base is not None
+            else _fallback_icon(_TRAY_COLORS[key])
+        )
+    return _icon_cache[key]
 
 
 def _get_icon_color() -> str:
