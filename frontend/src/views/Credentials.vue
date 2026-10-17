@@ -1716,6 +1716,15 @@ watch(totalPages, () => {
   if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
 })
 
+/** 页码输入框提交（回车 / 失焦）：空值或非法值夹回 1，超界夹回总页数。 */
+function onPageJump(value) {
+  const total = totalPages.value || 1
+  const n = Number(value)
+  currentPage.value = Number.isFinite(n)
+    ? Math.min(total, Math.max(1, Math.trunc(n)))
+    : 1
+}
+
 /** 当前页要展示的行。总条数 ≤ 每页条数时就是全部行（1 页）。 */
 const pagedCredentials = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
@@ -1931,7 +1940,20 @@ onMounted(async () => {
           </el-select>
           <span class="pager-unit">条</span>
           <el-button :icon="ArrowLeft" :disabled="currentPage <= 1" title="上一页" @click="currentPage--" />
-          <span class="pager-page">{{ currentPage }} / {{ totalPages }}</span>
+          <!-- 页码可直接输入：回车或失焦后跳转，越界（空 / 负数 / 超过总页数）自动收敛 -->
+          <el-input-number
+            v-model="currentPage"
+            class="pager-page-input"
+            :min="1"
+            :max="totalPages"
+            :controls="false"
+            :step="1"
+            step-strictly
+            size="small"
+            title="输入页码后回车或失焦即可跳转"
+            @change="onPageJump"
+          />
+          <span class="pager-page">/ {{ totalPages }}</span>
           <el-button :icon="ArrowRight" :disabled="currentPage >= totalPages" title="下一页" @click="currentPage++" />
         </div>
       </div>
@@ -3215,6 +3237,15 @@ onMounted(async () => {
   text-align: center;
   font-size: 13px;
   color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pager-page-input {
+  width: 64px;   /* 只放页码数字：去掉上下箭头后无需更宽 */
+}
+
+.pager-page-input :deep(.el-input__inner) {
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
