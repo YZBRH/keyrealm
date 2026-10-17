@@ -203,9 +203,10 @@ async function clearAll() {
             class="full-width"
           >
             <template #default="{ item }">
-              <div style="display: flex; flex-direction: column; line-height: 1.3">
-                <span>{{ item.label }}</span>
-                <span style="font-size: 12px; color: var(--el-text-color-secondary); word-break: break-all">{{ item.value }}</span>
+              <!-- URL 是主信息，说明文字弱化并放在下方；上下留白把相邻候选拉开 -->
+              <div style="display: flex; flex-direction: column; gap: 2px; padding: 4px 0; line-height: 1.35">
+                <span style="font-size: 14px; color: var(--el-text-color-primary); word-break: break-all">{{ item.value }}</span>
+                <span style="font-size: 12px; color: var(--el-text-color-secondary)">{{ item.label }}</span>
               </div>
             </template>
           </el-autocomplete>
