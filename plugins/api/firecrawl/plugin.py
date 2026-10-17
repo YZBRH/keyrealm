@@ -3,9 +3,20 @@
 自带完整的校验与展示逻辑，只复用框架层 backend.plugin_sdk 的通用工具；
 复制本目录即可派生出新的服务插件。
 
+- **account_info**：验证通过后 best-effort 查额度（`GET /v1/team/credit-usage`；v1 字段是
+  snake_case，拿不到再退 v2 的 camelCase），展示**剩余额度**（单位 credits）；有 `plan_credits`
+  时一并给出使用率。查不到就不显示——不猜。
+- **actions**：`scrape`（form）抓取网页并输出 markdown。
+
 参考文档：https://docs.firecrawl.dev/api-reference
 """
+from __future__ import annotations
+
+import logging
+
 from backend.plugin_sdk import VerifyResult, body_snippet, guarded, make_client, safe_json
+
+_log = logging.getLogger("plugin")
 
 NAME = "Firecrawl"
 DEFAULT_BASE_URL = "https://api.firecrawl.dev"
@@ -16,6 +27,55 @@ def _unconfirmed(status: int, snippet: str) -> VerifyResult:
     if snippet:
         message = f"{message}: {snippet}"
     return VerifyResult(status="error", message=message)
+
+
+def _fetch_credit_usage(base_url: str, api_key: str) -> dict | None:
+    """查剩余额度（best-effort，失败返回 None）。
+
+    Firecrawl 两代 API 的路径与字段名不同：v1 是 ``remaining_credits`` / ``plan_credits``
+    （snake_case），v2 是 ``remainingCredits`` / ``planCredits``（camelCase）。先试 v1，
+    再退 v2；都拿不到就返回 None——**不猜、不编**。
+    """
+    base = base_url.rstrip("/")
+    for path in ("/v1/team/credit-usage", "/v2/team/credit-usage"):
+        try:
+            with make_client() as client:
+                resp = client.get(
+                    base + path,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+        except Exception as exc:  # noqa: BLE001 - 余额只是附加信息，失败不影响验证结论
+            _log.debug("Firecrawl 额度查询异常 %s: %s", path, type(exc).__name__)
+            return None
+        if resp.status_code != 200:
+            _log.debug("Firecrawl 额度查询 %s → HTTP %s", path, resp.status_code)
+            continue
+        payload = safe_json(resp) or {}
+        # 文档里 200 响应带 success=true；这里不强制该字段，只要 data 里能取到额度就算数
+        if not isinstance(payload, dict) or payload.get("success") is False:
+            _log.debug("Firecrawl 额度查询 %s → 响应异常: %s", path, body_snippet(resp))
+            continue
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            continue
+        remaining = data.get("remaining_credits", data.get("remainingCredits"))
+        plan = data.get("plan_credits", data.get("planCredits"))
+        try:
+            remaining_f = float(remaining)
+        except (TypeError, ValueError):
+            continue
+        if remaining_f < 0:
+            continue
+        info: dict = {"balance": remaining_f, "currency": "credits"}
+        try:
+            plan_f = float(plan)
+        except (TypeError, ValueError):
+            plan_f = 0.0
+        if plan_f > 0:
+            used = max(0.0, plan_f - remaining_f)
+            info["usage_rate"] = round(min(1.0, used / plan_f), 6)
+        return info
+    return None
 
 
 def _verify_firecrawl(base_url: str, api_key: str) -> VerifyResult:
@@ -30,7 +90,11 @@ def _verify_firecrawl(base_url: str, api_key: str) -> VerifyResult:
     payload = safe_json(resp)
     if status == 200:
         if isinstance(payload, dict) and payload.get("success"):
-            return VerifyResult(status="valid", message="凭证有效")
+            return VerifyResult(
+                status="valid",
+                message="凭证有效",
+                account_info=_fetch_credit_usage(base_url, api_key),
+            )
         return VerifyResult(status="error", message=f"响应异常: {body_snippet(resp)}")
     if status in (401, 403):
         return VerifyResult(status="invalid", message=f"凭证无效 (HTTP {status})")
