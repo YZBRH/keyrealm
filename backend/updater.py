@@ -929,11 +929,16 @@ def check_update(kind: str = "formal", *, branch: str = DEFAULT_BRANCH,
         ver = rel["version"]
         has = _semver_gt(ver, local["version"])
         reason = (f"远端正式版更高（{local['version']} → {ver}）" if has else "已是最新正式版")
+        prep = prepared_ready(kind, root=root)
+        # 只认与「当前最新 Release」同版本、且确实比本机新的准备产物；否则界面会出现
+        # 「已是最新版本」却同时提示「本地已准备好」的自相矛盾。
+        prep = prep if has and str(prep.get("version") or "") == ver else {}
         return _attach_notes({
             "ok": True, "kind": kind, "has_update": has, "reason": reason,
             "current": local,
             "latest": {"version": ver, "commit": "", "schema_version": ""},
             "asset": release_asset_name(ver), "platform": platform_pkg(),
+            "prepared": prepared_info(prep),
             "db_change": bool(dbst.get("needs_migration")), "db_chain": dbst.get("chain", []),
             "source_ok": local["source_ok"], "proxy": proxy,
         }, kind, local)
@@ -944,13 +949,21 @@ def check_update(kind: str = "formal", *, branch: str = DEFAULT_BRANCH,
         return {"ok": False, "kind": kind, "current": local,
                 "error": remote.get("error"), "message": remote.get("message"), "proxy": proxy}
     cmp = compare(kind, local, remote)
+    prep = prepared_ready(kind, root=root)
+    # 测试版准备阶段会**先把源码拉到目标 commit**，所以下次检查时 compare 往往已经是
+    # 「与远端一致」；只有准备产物仍指向远端同一提交，才把它当作「待安装的更新」。
+    if prep and str(prep.get("commit") or "") != str(remote.get("commit") or ""):
+        prep = {}
+    has = bool(cmp["has_update"] or prep)
+    reason = cmp["reason"] if cmp["has_update"] or not prep else "本地已有准备完成但未安装的更新"
     return _attach_notes({
         "ok": True, "kind": kind,
-        "has_update": cmp["has_update"], "reason": cmp["reason"],
+        "has_update": has, "reason": reason,
         "current": local,
         "latest": {"version": remote.get("version", ""), "commit": remote.get("commit", ""),
                    "commit_full": remote.get("commit_full", ""),
                    "schema_version": remote.get("schema_version", "")},
+        "prepared": prepared_info(prep),
         "db_change": bool(dbst.get("needs_migration")), "db_chain": dbst.get("chain", []),
         "source_ok": local["source_ok"], "proxy": proxy,
     }, kind, local)
@@ -1624,7 +1637,7 @@ def write_last_check(result: dict, *, root: Optional[Any] = None) -> None:
     """把一次检查结果落盘（只挑界面要用的字段）。"""
     keys = ("ok", "kind", "has_update", "reason", "current", "latest",
             "db_change", "db_chain", "asset", "platform", "source_ok", "proxy",
-            "error", "message")
+            "prepared", "error", "message")
     payload = {k: result.get(k) for k in keys if k in result}
     payload["checked_at"] = _now()
     _write_json_atomic(check_file(root), payload)
@@ -1634,7 +1647,10 @@ def write_last_check(result: dict, *, root: Optional[Any] = None) -> None:
 # 交棒进程据此走「快路径」：校验 sha256 后跳过已完成的下载 / 拉源码 / 构建。
 # 陈旧（超 TTL）或校验失败一律视为无效 → 回落完整流程（CLI 走的正是这条）。
 PREPARED_SCHEMA = 1
-_PREPARED_TTL = 24 * 3600     # 准备产物有效期（秒）
+# 准备产物有效期（秒）。比交棒请求（24h）长：用户在「是否立即重启」里选「稍后」后，
+# 产物要留到下次更新时复用（用户可能隔几天才再点更新）。真正落盘前仍会重新校验
+# 版本（正式版 = 仍是最新 Release）或 commit（测试版 = 仍是远端同一提交）。
+_PREPARED_TTL = 7 * 24 * 3600
 _REQUEST_TTL = 24 * 3600      # 请求文件有效期（秒）——顺带修「陈旧请求覆盖 CLI --kind」的老坑
 
 
@@ -1693,9 +1709,36 @@ def _validate_prepared(root: Optional[Any], prepared: dict) -> bool:
     elif kind == "test":
         if not (repo_root(root) / "main.py").is_file():
             return False
+        # 复用（以及「稍后」之后的手动交棒）必须能真的装上：构建产物还在才算数。
+        staging = Path(str(prepared.get("staging_dir") or ""))
+        if not staging.is_dir() or not (staging / _exe_name()).is_file():
+            return False
     else:
         return False
     return True
+
+
+def prepared_ready(kind: Optional[str] = None, *, root: Optional[Any] = None,
+                   prepared: Optional[dict] = None) -> dict:
+    """返回仍可信的准备产物清单（无效 / 渠道不符返回空 dict）。
+
+    供三处使用：检查更新时提示「本地已有未安装的更新」、准备阶段复用（跳过重复下载 /
+    构建）、以及用户在「稍后」之后点「立即重启」时交棒。
+    """
+    payload = prepared if isinstance(prepared, dict) else read_prepared(root)
+    if not _validate_prepared(root, payload):
+        return {}
+    if kind and str(payload.get("kind") or "") != kind:
+        return {}
+    return payload
+
+
+def prepared_info(prepared: Optional[dict]) -> Optional[dict]:
+    """准备产物的**界面摘要**（不含本机路径等内部字段）。"""
+    if not prepared:
+        return None
+    keys = ("kind", "version", "commit", "asset_name", "asset_bytes", "prepared_at")
+    return {k: prepared.get(k) for k in keys if prepared.get(k) not in (None, "")}
 
 
 # ── 编排：更新主流程 ──────────────────────────────────────
@@ -1824,14 +1867,19 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
 
     产物写 ``prepared_file``，交棒进程据此走快路径。``progress_cb(current, total, text)`` 报进度；
     ``should_cancel()`` 为真则尽快中止（下载按块、步骤之间）——但**源码一旦更新即不再接受取消**
-    （工作区已前进，取消会让源码领先于数据库）。返回 ``{ok, has_update, kind, prepared, ...}``；
-    无更新时 ``has_update=False`` 且不写清单。
+    （工作区已前进，取消会让源码领先于数据库）。返回 ``{ok, has_update, kind, prepared, reused, ...}``；
+    无更新时 ``has_update=False`` 且不写清单。若本地已有同渠道、仍匹配目标版本的产物（上次选了
+    「稍后」），复用该产物并跳过下载 / 构建，``reused=True``。
     """
     root = repo_root(root)
     kind = kind if kind in CHANNELS else "formal"
     stages = _prep_stages(kind)
     done: list[str] = []
-    _clear_prepared(root)
+
+    # 换渠道时旧产物没有意义（交棒会按请求里的渠道走），直接清掉。
+    existing = read_prepared(root)
+    if existing and str(existing.get("kind") or "") != kind:
+        _clear_prepared(root)
 
     def _cancelled() -> bool:
         return bool(should_cancel and should_cancel())
@@ -1841,24 +1889,43 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
             progress_cb(cur, total, text)
 
     local = local_info(root)
+    reuse: dict = {}
     if kind == "formal":
         rel = latest_release_tag()
         if not rel.get("ok"):
             return {"ok": False, "kind": kind, "message": rel.get("message") or "查询最新正式版失败"}
         to_ver, commit, to_schema = rel["version"], "", ""
         if not _semver_gt(to_ver, local["version"]):
+            # 已经装上（或 Release 回退）→ 同渠道的旧产物留着只会让下次检查误报
+            if str(read_prepared(root).get("kind") or "") == kind:
+                _clear_prepared(root)
             return {"ok": True, "has_update": False, "kind": kind, "to_version": local["version"],
                     "message": f"已是最新正式版（{local['version']}）"}
+        reuse = prepared_ready(kind, root=root)
+        # 只有「当前最新 Release」的包才能复用；Release 已前进就重新下载
+        if str(reuse.get("version") or "") != str(to_ver):
+            reuse = {}
     else:
         remote = remote_info(root=root)
         if not remote.get("ok"):
             return {"ok": False, "kind": kind, "message": remote.get("message") or "获取远端源码信息失败"}
         cmp = compare(kind, local, remote)
-        if not cmp["has_update"]:
+        reuse = prepared_ready(kind, root=root)
+        # 上次准备已把源码拉到目标 commit，故 compare 可能已是「无更新」；
+        # 只要产物仍指向远端同一 commit，就把它当作待安装的更新（跳过重复构建）。
+        if str(reuse.get("commit") or "") != str(remote.get("commit") or ""):
+            reuse = {}
+        if not cmp["has_update"] and not reuse:
             return {"ok": True, "has_update": False, "kind": kind, "remote": remote,
                     "to_version": remote.get("version") or local["version"], "message": cmp["reason"]}
         to_ver = remote.get("version") or local["version"]
         commit, to_schema = remote.get("commit", ""), remote.get("schema_version", "")
+
+    if not reuse:
+        _clear_prepared(root)
+    else:
+        log(f"复用本地已准备产物（{reuse.get('version') or reuse.get('commit') or ''}），"
+            f"跳过{'下载' if kind == 'formal' else '拉源码与构建'}")
 
     if _cancelled():
         return {"ok": False, "canceled": True, "kind": kind, "message": "已取消"}
@@ -1874,69 +1941,75 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
             return {"ok": False, "canceled": True, "kind": kind, "message": "已取消"}
     done.append("backup")
 
-    # 「更新前的版本 / 提交」必须**在拉源码之前**定下来并写进清单：test 渠道一旦对齐到新源码，
-    # 现查 git（version.build_id 源码运行时是实时 git）拿到的就是**新** commit 了，事后无法还原。
-    prepared = {"kind": kind, "version": to_ver, "commit": commit,
-                "from_version": local["version"], "from_commit": local["commit"]}
-
-    if kind == "formal":
-        name = release_asset_name(to_ver)
-        _status_stage(root, kind, stages, "download", f"下载预编译包 {name}…", done)
-        dest = backups_dir(root) / f"_asset-{to_ver}.zip"
-        dl = download_release_asset(to_ver, dest,
-                                    progress_cb=lambda d, t: _prog(d, t, f"下载 {name}…"),
-                                    should_cancel=should_cancel)
-        if not dl.get("ok"):
-            return {"ok": False, "canceled": bool(dl.get("canceled")), "kind": kind,
-                    "message": dl.get("message", "下载失败")}
-        done.append("download")
-        prepared.update({
-            "asset_name": name, "asset_path": str(dest),
-            "asset_bytes": dl.get("bytes"), "asset_sha256": dl.get("sha256"),
-            "schema_version": _zip_schema(dest) or to_schema or local["schema_version"],
-        })
-        log(f"已下载（{(dl.get('bytes') or 0) // 1024} KB）")
+    if reuse:
+        # 复用上次「稍后」留下的产物：包已通过 sha256 校验 / 构建目录仍在，直接进入交棒。
+        prepared = dict(reuse)
+        done.extend(["download"] if kind == "formal" else ["source", "deps", "build"])
+        _prog(0, 0, "复用本地已准备产物…")
     else:
-        _status_stage(root, kind, stages, "source", "获取最新源码…", done)
-        _prog(0, 0, "获取源码…")
-        src = ensure_source(root=root, force=force)
-        if not src.get("ok"):
-            return {"ok": False, "kind": kind, "message": src.get("message", "获取源码失败")}
-        log(src.get("message", "源码已就绪"))
-        done.append("source")
-        should_cancel = None      # 提交点：源码已更新，此后不再接受取消
-        _status_stage(root, kind, stages, "deps", "准备构建环境（虚拟环境 + 依赖）…", done)
-        _prog(0, 0, "准备构建环境…")
-        vn = ensure_venv(root=root)
-        if not vn.get("ok"):
-            return {"ok": False, "kind": kind, "message": vn.get("message")}
-        py = vn["python"]
-        dp = ensure_deps(root=root, python=py)
-        if not dp.get("ok"):
-            return {"ok": False, "kind": kind, "message": dp.get("message")}
-        log(dp.get("message", "依赖已就绪"))
-        done.append("deps")
-        _status_stage(root, kind, stages, "build", "从源码构建到临时目录（scripts/build.py --frontend）…", done)
-        _prog(0, 0, "构建中（可能需要几分钟）…")
-        out = staging_dir(root)
-        bd = run_build(root=root, frontend=frontend, python=py, output=out)
-        if not bd.get("ok"):
-            return {"ok": False, "kind": kind, "message": bd.get("message", "构建失败"),
-                    "log": bd.get("log")}
-        log(bd.get("message", "构建完成"))
-        done.append("build")
-        meta = source_meta(root)
-        prepared.update({
-            "staging_dir": str(out), "venv_python": py,
-            "asset_path": "", "asset_sha256": "", "asset_bytes": None,
-            "schema_version": meta.get("schema_version") or to_schema or local["schema_version"],
-        })
+        # 「更新前的版本 / 提交」必须**在拉源码之前**定下来并写进清单：test 渠道一旦对齐到新源码，
+        # 现查 git（version.build_id 源码运行时是实时 git）拿到的就是**新** commit 了，事后无法还原。
+        prepared = {"kind": kind, "version": to_ver, "commit": commit,
+                    "from_version": local["version"], "from_commit": local["commit"]}
 
-    _write_prepared(root, prepared)
+        if kind == "formal":
+            name = release_asset_name(to_ver)
+            _status_stage(root, kind, stages, "download", f"下载预编译包 {name}…", done)
+            dest = backups_dir(root) / f"_asset-{to_ver}.zip"
+            dl = download_release_asset(to_ver, dest,
+                                        progress_cb=lambda d, t: _prog(d, t, f"下载 {name}…"),
+                                        should_cancel=should_cancel)
+            if not dl.get("ok"):
+                return {"ok": False, "canceled": bool(dl.get("canceled")), "kind": kind,
+                        "message": dl.get("message", "下载失败")}
+            done.append("download")
+            prepared.update({
+                "asset_name": name, "asset_path": str(dest),
+                "asset_bytes": dl.get("bytes"), "asset_sha256": dl.get("sha256"),
+                "schema_version": _zip_schema(dest) or to_schema or local["schema_version"],
+            })
+            log(f"已下载（{(dl.get('bytes') or 0) // 1024} KB）")
+        else:
+            _status_stage(root, kind, stages, "source", "获取最新源码…", done)
+            _prog(0, 0, "获取源码…")
+            src = ensure_source(root=root, force=force)
+            if not src.get("ok"):
+                return {"ok": False, "kind": kind, "message": src.get("message", "获取源码失败")}
+            log(src.get("message", "源码已就绪"))
+            done.append("source")
+            should_cancel = None      # 提交点：源码已更新，此后不再接受取消
+            _status_stage(root, kind, stages, "deps", "准备构建环境（虚拟环境 + 依赖）…", done)
+            _prog(0, 0, "准备构建环境…")
+            vn = ensure_venv(root=root)
+            if not vn.get("ok"):
+                return {"ok": False, "kind": kind, "message": vn.get("message")}
+            py = vn["python"]
+            dp = ensure_deps(root=root, python=py)
+            if not dp.get("ok"):
+                return {"ok": False, "kind": kind, "message": dp.get("message")}
+            log(dp.get("message", "依赖已就绪"))
+            done.append("deps")
+            _status_stage(root, kind, stages, "build", "从源码构建到临时目录（scripts/build.py --frontend）…", done)
+            _prog(0, 0, "构建中（可能需要几分钟）…")
+            out = staging_dir(root)
+            bd = run_build(root=root, frontend=frontend, python=py, output=out)
+            if not bd.get("ok"):
+                return {"ok": False, "kind": kind, "message": bd.get("message", "构建失败"),
+                        "log": bd.get("log")}
+            log(bd.get("message", "构建完成"))
+            done.append("build")
+            meta = source_meta(root)
+            prepared.update({
+                "staging_dir": str(out), "venv_python": py,
+                "asset_path": "", "asset_sha256": "", "asset_bytes": None,
+                "schema_version": meta.get("schema_version") or to_schema or local["schema_version"],
+            })
+
+    _write_prepared(root, prepared)   # 复用也会刷新 prepared_at（相当于给产物续期）
     _write_status(root, {"phase": "prepared", "ok": True, "kind": kind, "stages": stages,
                          "done_stages": done, "percent": 100, "message": "准备完成"})
     return {"ok": True, "has_update": True, "kind": kind, "to_version": to_ver,
-            "commit": commit, "prepared": prepared, "stages": stages}
+            "commit": commit, "prepared": prepared, "reused": bool(reuse), "stages": stages}
 
 
 def _latest_update_log(root: Optional[Any] = None) -> str:
@@ -1964,8 +2037,8 @@ def apply_update(kind: str = "formal", *, root: Optional[Any] = None, frontend: 
     stages = _stages_for(kind)
 
     prepared = read_prepared(root)
-    if not _validate_prepared(root, prepared):
-        prepared = {}          # 缺失 / 过期 / sha256 不符 → 回落完整流程
+    if not _validate_prepared(root, prepared) or str(prepared.get("kind") or "") != kind:
+        prepared = {}          # 缺失 / 过期 / 渠道不符 / sha256 不符 → 回落完整流程
 
     # 交棒进程**没有窗口**，全程只能靠这份日志让人看懂「跑到哪、为什么停」——
     # 每个里程碑都打一行，失败原因更不能只写状态文件。

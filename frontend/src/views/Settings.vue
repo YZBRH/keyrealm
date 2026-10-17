@@ -337,7 +337,7 @@ async function applyAutostart(value) {
 /* ── 程序内更新 ────────────────────────────────────────────
    检查只读：后端用 git 浅克隆读远端版本，不改本机工作区。
    「立即更新」= 应用内先「准备」（备份 + 下载/拉源码/装依赖/构建，带进度、可取消），
-   准备成功后再「交棒」给脱离进程（替换/迁移/重启）并自动关闭程序。 */
+   准备完成后由全局弹窗询问是否立即重启；确认后才交棒给脱离进程（替换/迁移/重启）。 */
 const updateChannel = ref('formal')
 const updateChecking = ref(false)
 const updateResult = ref(null)     // check_update 的结果
@@ -583,12 +583,14 @@ async function loadUpdateCheckResult() {
 async function doUpdate() {
   const isFormal = updateChannel.value === 'formal'
   const what = isFormal ? '下载预编译包' : '拉取源码并重新构建'
+  const reuse = !!(updateResult.value && updateResult.value.prepared)
+  const intro = reuse
+    ? '本地已有准备好的更新，将直接复用（跳过下载/构建）；准备完成后会询问是否立即重启。是否继续？'
+    : `将先在程序内${what}（这一步有进度、可取消）；准备完成后会询问是否立即重启。是否继续？`
   try {
-    await ElMessageBox.confirm(
-      `将先在程序内${what}（这一步有进度、可取消）；准备完成后程序会自动关闭以完成替换/迁移，然后重启。是否继续？`,
-      '立即更新',
-      { type: 'warning', confirmButtonText: '立即更新', cancelButtonText: '取消' },
-    )
+    await ElMessageBox.confirm(intro, '立即更新', {
+      type: 'warning', confirmButtonText: '立即更新', cancelButtonText: '取消',
+    })
   } catch {
     return
   }
@@ -619,6 +621,7 @@ async function cancelUpdate() {
 // 订阅后台任务：只认「更新」这一条，用它驱动准备进度与状态
 let _offTasks = null
 let _offUpdateFailed = null
+let _offUpdateReady = null
 let _offChecked = null
 onMounted(() => {
   _offTasks = onEvent(EVENTS.tasksChanged, (snapshot) => {
@@ -634,7 +637,8 @@ onMounted(() => {
       updating.value = true
       updateFailed.value = ''
     } else if (snapshot.status === 'done') {
-      // 完成 = 即将交棒关闭（程序随即退）；保留 `updating` 让提示停在「即将关闭」态
+      // 完成 = 已准备就绪；是否交棒由根组件的全局弹窗询问（vault:update_ready）
+      updating.value = false
       if (snapshot.output) ElMessage.success(snapshot.output)
     } else if (snapshot.status === 'canceled') {
       updating.value = false
@@ -649,6 +653,17 @@ onMounted(() => {
     updating.value = false
     updateFailed.value = (d && d.message) || '更新失败'
   })
+  // 更新准备完成（全局弹窗负责询问是否重启）→ 卡片同步成「本地已有准备产物」态，
+  // 用户选「稍后」后按钮变成「安装已准备好的更新」，不必重新检查一次才看得到。
+  _offUpdateReady = onEvent(EVENTS.updateReady, (d) => {
+    if (!d) return
+    updateResult.value = {
+      ...(updateResult.value || {}),
+      ok: true,
+      has_update: true,
+      prepared: { kind: d.kind, version: d.version || '' },
+    }
+  })
   // 检查结束（手动或自动）→ 收口按钮状态并刷新卡片上的结果
   _offChecked = onEvent(EVENTS.updateChecked, (d) => {
     updateChecking.value = false
@@ -658,6 +673,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (_offTasks) _offTasks()
   if (_offUpdateFailed) _offUpdateFailed()
+  if (_offUpdateReady) _offUpdateReady()
   if (_offChecked) _offChecked()
 })
 
@@ -1106,6 +1122,9 @@ onMounted(() => refreshAll(false))
       >
         <template v-if="updateResult.ok">
           <div>{{ updateResult.reason }}</div>
+          <div v-if="updateResult.prepared">
+            本地已准备好{{ updateResult.prepared.version ? ` v${updateResult.prepared.version}` : '更新产物' }}，安装时无需重新下载/构建
+          </div>
           <div v-if="updateResult.kind === 'test' && updateResult.latest && updateResult.latest.commit">
             远端提交：{{ updateResult.latest.commit }}
             <span v-if="updateResult.current && updateResult.current.commit">
@@ -1157,7 +1176,9 @@ onMounted(() => refreshAll(false))
             </div>
           </div>
           <div v-if="updateResult.has_update" class="update-action">
-            <el-button type="primary" :loading="updating" @click="doUpdate">立即更新</el-button>
+            <el-button type="primary" :loading="updating" @click="doUpdate">
+              {{ updateResult.prepared ? '安装已准备好的更新' : '立即更新' }}
+            </el-button>
           </div>
         </template>
       </el-alert>
@@ -1167,8 +1188,8 @@ onMounted(() => refreshAll(false))
         class="update-alert"
         type="warning"
         :title="!updatePrepareTask || updatePrepareTask.status === 'running'
-          ? '正在准备更新（准备好后程序会自动关闭并重启）'
-          : '准备完成，程序即将关闭以完成安装/构建…'"
+          ? '正在准备更新（准备好后会询问是否立即重启）'
+          : '更新准备完成'"
         :closable="false"
         show-icon
       >

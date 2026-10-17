@@ -427,6 +427,9 @@ class VaultApi:
     def start_update(self, kind: str = "formal", restart: bool = True, terminal: str = "auto"):
         return api.start_update(kind, restart, terminal)
 
+    def apply_prepared_update(self, restart: bool = True, terminal: str = "auto"):
+        return api.apply_prepared_update(restart, terminal)
+
 
 # ── 窗口与托盘 ────────────────────────────────────────────
 

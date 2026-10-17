@@ -123,6 +123,8 @@ export const EVENTS = {
   tasksChanged: 'vault:tasks',
   // 更新准备/交棒失败（准备阶段在应用内跑，失败时**不退出**）。detail={kind,message}。
   updateFailed: 'vault:update_failed',
+  // 准备完成、等待用户确认是否立即重启。detail={kind,version,reused,message}。
+  updateReady: 'vault:update_ready',
   // 「自动检测更新」在启动/解锁后查到了新版本（detail 与 check_update 结果同形）。
   updateAvailable: 'vault:update_available',
   // （手动或自动）检查更新结束，detail 即检查结果。界面据此刷新「检查更新」卡片。
@@ -346,10 +348,14 @@ export const api = {
   updateStatus: () => call('update_status'),
   // 磁盘数据库结构版本与源码版本的差异：{ok, disk, app, needs_migration, chain}
   dbMigrationStatus: () => call('db_migration_status'),
-  // 立即更新：**应用内先准备**（备份+下载/拉源码/装依赖/构建，带进度、可取消），准备成功后交棒并自动关闭程序。
+  // 立即更新：**应用内先准备**（备份+下载/拉源码/装依赖/构建，带进度、可取消），
+  // 准备完成后推 vault:update_ready，由弹窗确认是否立即重启（确认后走 applyPreparedUpdate）。
   // 返回 {ok, task_id, preparing}；准备进度经 vault:tasks（kind==='update'）推送。
   startUpdate: (kind = 'formal', restart = true, terminal = 'auto') =>
     call('start_update', kind, restart, terminal),
+  // 准备完成、用户确认「立即重启」后调用：只交棒，不重新下载/构建。
+  applyPreparedUpdate: (restart = true, terminal = 'auto') =>
+    call('apply_prepared_update', restart, terminal),
 }
 
 export default api

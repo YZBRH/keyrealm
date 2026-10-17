@@ -657,7 +657,12 @@ pywebview 没有「再次显示」事件可挂（`Form.Shown` 只触发一次，
 **两段式**：应用内「立即更新」拆成 **准备**（`prepare_update()`，应用进程内、带进度、可取消：
 备份 + 下载预编译包 / 拉源码 + 装依赖 + 构建到 `.update-staged/`，写 `data/.update-prepared.json`）
 与 **交棒**（`begin_handoff()` 发请求 + 起脱离进程；脱离进程 `apply_update()` 用准备产物走**快路径**，
-无产物则**回落完整流程**）。**构建 / 迁移 / 替换必须留在交棒阶段**——`build.py::assemble_release`
+无产物则**回落完整流程**）。**准备完成后不再自动退出**：后端推 `vault:update_ready`，由前端弹窗询问
+「立即重启 / 稍后」；选「立即重启」才调 `api.apply_prepared_update()` → `begin_handoff()`。选「稍后」
+则保留产物，下次 `prepare_update()` 先按「正式版版本仍是最新 Release / 测试版 commit 仍是远端同一
+提交」校验，命中就**跳过下载与构建**（测试版准备阶段已推进源码，`check_update` 会依据本地产物把
+结果标成「本地已有准备完成但未安装的更新」）。产物有效期 7 天。
+**构建 / 迁移 / 替换必须留在交棒阶段**——`build.py::assemble_release`
 会 `copy2` 覆盖运行中的可执行文件、`run_migrations` 要独占数据库，两者都要求应用已退出。
 交棒顺序不可颠倒：**先起更新进程、再关闭应用**。
 
@@ -687,7 +692,8 @@ pywebview 没有「再次显示」事件可挂（`Form.Shown` 只触发一次，
 `fetch_latest()`（`git fetch --depth 1` + `merge --ff-only`；脏工作区默认拒绝，`--force` 才先
 `stash`）。
 
-**交棒时序（顺序不可颠倒）**：应用内 `start_update()` → 写 `data/.update-request.json` →
+**交棒时序（顺序不可颠倒）**：应用内 `start_update()` 完成准备并推 `vault:update_ready` → 用户确认
+「立即重启」→ `apply_prepared_update()` → 写 `data/.update-request.json` →
 `spawn_detached()` 把**自更新进程**起成**脱离进程**（冻结 exe 用 `Keyrealm --self-update <渠道>`、
 源码运行用 `python main.py --self-update <渠道>`；**两平台都用脱离进程 + 日志文件，不弹控制台窗口**，
 POSIX 走 `start_new_session`）→ **确认子进程起来之后**才调 `_close_quit_cb()`（= `main._quit_app`）退出。

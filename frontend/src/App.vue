@@ -1,7 +1,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElNotification } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 // 按需引入后不再有 app.use(ElementPlus, { locale })，中文语言包改由根级
 // <el-config-provider> 提供（ElConfigProvider 用 renderSlot 渲染，不产生额外 DOM）。
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
@@ -39,6 +39,47 @@ async function handleCloseChoice(action) {
 
 function guard(promise) {
   if (promise && typeof promise.catch === 'function') promise.catch(() => {})
+}
+
+// 更新准备完成 → 全局询问是否立即重启。
+// 放在根组件而不是设置页：用户可能在准备期间切到别的页面，弹窗照样要出现。
+let updateReadyBusy = false
+async function promptUpdateReady(detail) {
+  if (updateReadyBusy) return
+  updateReadyBusy = true
+  const info = detail || {}
+  const version = info.version ? `（v${info.version}）` : ''
+  const reused = info.reused ? '将直接使用上次已准备好的本地产物。' : ''
+  try {
+    await ElMessageBox.confirm(
+      `更新已准备完成${version}。${reused}是否立即重启完成安装？`
+      + '选择「稍后」不会重新下载，下次更新会直接复用本地准备产物。',
+      '更新已就绪',
+      {
+        type: 'success',
+        confirmButtonText: '立即重启',
+        cancelButtonText: '稍后',
+        distinguishCancelAndClose: true,
+        closeOnClickModal: false,
+      },
+    )
+  } catch {
+    ElMessage.info('已暂缓更新；下次更新将复用本地准备产物')
+    updateReadyBusy = false
+    return
+  }
+  try {
+    const res = await api.applyPreparedUpdate(true)
+    if (res && res.ok === false) {
+      ElMessage.error(res.message || '无法开始安装更新')
+    } else {
+      ElMessage.success('正在重启完成更新…')
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '无法开始安装更新')
+  } finally {
+    updateReadyBusy = false
+  }
 }
 
 /** 窗口重新获得焦点/可见时刷新数据（覆盖后台 MCP 操作后前台未实时更新的场景） */
@@ -138,6 +179,8 @@ onMounted(() => {
       closeDialog.value = true
     }),
   )
+  // 更新准备完成（后端不再自动退出）→ 询问是否立即重启。
+  disposers.push(onEvent(EVENTS.updateReady, (detail) => { promptUpdateReady(detail) }))
   // 后端加锁（界面按钮 / 托盘 / 空闲自动锁）都会广播此事件，统一在这里清空明文。
   // 随后的 watch(appStore.unlocked) 会把路由推回 /unlock。
   disposers.push(onEvent(EVENTS.vaultLocked, () => appStore.applyLocked()))

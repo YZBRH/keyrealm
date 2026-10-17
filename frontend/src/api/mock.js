@@ -1057,6 +1057,7 @@ export function createMockApi() {
         db_change: false,
         db_chain: [],
         source_ok: true,
+        prepared: null,
       }
     },
     async update_status() {
@@ -1070,6 +1071,10 @@ export function createMockApi() {
     async start_update() {
       await delay(120)
       return { ok: true, message: 'dev mock：已模拟发起更新（不会真的关闭程序）' }
+    },
+    async apply_prepared_update() {
+      await delay(120)
+      return { ok: true, message: 'dev mock：已模拟交棒安装（不会真的关闭程序）' }
     },
   }
 }

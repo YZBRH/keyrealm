@@ -1784,6 +1784,9 @@ def set_update_token(token: str) -> dict:
 
 # 「立即更新」的准备任务 id（同一时刻只允许一个在跑）
 _update_task_id: Optional[str] = None
+# 「准备完成 → 用户点立即重启」的交棒闸门：防止连点/并发起两次交棒进程。
+_handoff_lock = threading.Lock()
+_handoff_started = False
 
 
 # ── 自动检测更新（启动时查一次）───────────────────────────
@@ -1925,12 +1928,13 @@ def _full_export_doc() -> Optional[dict]:
 
 
 def start_update(kind: str = "formal", restart: bool = True, terminal: str = "auto") -> dict:
-    """「立即更新」：**应用内先准备**（备份 + 下载 / 拉源码 / 装依赖 / 构建，带进度、可取消），
-    准备成功后再**交棒**给脱离进程（替换 / 迁移 / 重启）并退出程序。
+    """「立即更新」：**应用内先准备**（备份 + 下载 / 拉源码 / 装依赖 / 构建，带进度、可取消）。
 
-    与旧实现的关键区别：**不再一点就退**——最耗时的准备阶段留在应用内，用户看得到进度。
-    准备失败 / 取消 / 无更新一律**不退出应用**。退出走 `_close_quit_cb`（= main._quit_app），
-    与「关闭窗口 → 直接退出」同一条路径。
+    准备成功后**不自动退出**：推 ``vault:update_ready`` 让界面弹窗询问是否立即重启；
+    用户确认后由 ``apply_prepared_update()`` 交棒（替换 / 迁移 / 重启）并退出。
+    选择「稍后」时准备产物留在本地，下次 ``prepare_update()`` 会复用、跳过重复下载 / 构建。
+    准备失败 / 取消 / 无更新一律**不退出应用**。
+    ``restart`` / ``terminal`` 保留给确认后的 ``apply_prepared_update()`` 使用。
     """
     global _update_task_id
     kind = kind if kind in updater.CHANNELS else "formal"
@@ -1973,21 +1977,48 @@ def start_update(kind: str = "formal", restart: bool = True, terminal: str = "au
             tasks.finish(tid, ok=True, output=res.get("message", "已是最新"))
             return
 
-        # 准备成功 → 交棒（起脱离进程 + 关闭应用）
-        hs = updater.begin_handoff(kind, restart=restart, terminal=terminal,
-                                   quit_cb=_close_quit_cb, prepared=res.get("prepared"))
-        if hs.get("ok"):
-            tasks.finish(tid, ok=True, output=hs.get("message", "已开始更新"))
-            _log.info("已发起程序内更新（渠道=%s，已准备）", kind)
-        else:
-            msg = hs.get("message", "交棒失败")
-            tasks.finish(tid, ok=False, error=msg)
-            push_event("vault:update_failed", {"kind": kind, "message": msg})
-            _log.warning("交棒失败：%s", msg)
+        # 准备成功 → **先问用户是否现在重启**（不再自动交棒退出）。
+        # 用户点「立即重启」走 apply_prepared_update()；选「稍后」则产物留在本地，
+        # 下次更新时 prepare_update() 会复用它、跳过下载 / 构建。
+        payload = {
+            "kind": kind,
+            "version": res.get("to_version") or "",
+            "reused": bool(res.get("reused")),
+            "message": "更新已准备完成，是否立即重启？",
+        }
+        tasks.finish(tid, ok=True, output="更新准备完成，等待确认重启")
+        push_event("vault:update_ready", payload)
+        _log.info("更新准备完成，等待用户确认重启（渠道=%s，复用=%s）", kind, payload["reused"])
 
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True, "task_id": tid, "preparing": True,
-            "message": "已开始准备更新（准备完成后程序将自动关闭并重启）"}
+            "message": "已开始准备更新（准备完成后会询问是否立即重启）"}
+
+
+def apply_prepared_update(restart: bool = True, terminal: str = "auto") -> dict:
+    """用户确认「立即重启」：用本地准备产物交棒（替换 / 迁移 / 重启）。
+
+    与 ``start_update`` 的准备阶段分离：这里**不重新下载/构建**，只校验产物然后起脱离进程。
+    产物过期或渠道不符会返回失败，界面会提示重新检查更新。
+    """
+    global _handoff_started
+    with _handoff_lock:
+        if _handoff_started:
+            return {"ok": False, "message": "更新交棒已开始，请稍候"}
+        prepared = updater.prepared_ready()
+        if not prepared:
+            return {"ok": False, "message": "本地没有可用的准备产物，请重新检查并准备更新"}
+        kind = str(prepared.get("kind") or "formal")
+        hs = updater.begin_handoff(kind, restart=bool(restart), terminal=terminal,
+                                   quit_cb=_close_quit_cb, prepared=prepared)
+        if hs.get("ok"):
+            _handoff_started = True
+            _log.info("用户确认立即重启，已发起交棒（渠道=%s）", kind)
+        else:
+            push_event("vault:update_failed",
+                       {"kind": kind, "message": hs.get("message", "交棒失败")})
+            _log.warning("交棒失败：%s", hs.get("message"))
+        return hs
 
 
 # ── Logging ───────────────────────────────────────────────
