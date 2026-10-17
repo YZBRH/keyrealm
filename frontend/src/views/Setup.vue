@@ -81,7 +81,6 @@ async function submit() {
     <el-card class="auth-card" shadow="never">
       <div class="auth-brand">
         <span class="auth-mark">
-          <span class="auth-ring" aria-hidden="true" />
           <img src="/favicon.svg" class="auth-mark-img" alt="Keyrealm" />
         </span>
         <h1 class="v-grad-text">Keyrealm</h1>
@@ -187,29 +186,20 @@ async function submit() {
   margin-bottom: 20px;
 }
 
+/* 与 Unlock.vue 同：描边做在容器自身（padding + border），不用绝对定位兄弟元素。 */
 .auth-mark {
-  position: relative;
   display: inline-grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  padding: 6px;
+  border: 2px solid color-mix(in srgb, var(--v-accent) 40%, transparent);
+  border-radius: 17px;
+  filter: drop-shadow(0 8px 18px rgba(6, 10, 22, 0.35));
 }
 
 .auth-mark-img {
   display: block;
   width: 56px;
   height: 56px;
-  filter: drop-shadow(0 8px 18px rgba(6, 10, 22, 0.35));
-}
-
-/* 与 Unlock.vue 同：不做旋转、也不做扩散，就一圈静态描边（理由见那边的注释）。 */
-.auth-ring {
-  position: absolute;
-  inset: -6px;
-  border-radius: 15px;
-  border: 2px solid color-mix(in srgb, var(--v-accent) 40%, transparent);
-  opacity: 0.85;
-  pointer-events: none;
 }
 
 .auth-brand h1 {

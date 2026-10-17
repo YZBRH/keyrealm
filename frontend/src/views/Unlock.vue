@@ -57,7 +57,6 @@ onMounted(() => {
     <el-card class="auth-card" shadow="never">
       <div class="auth-brand">
         <span class="auth-mark">
-          <span class="auth-ring" aria-hidden="true" />
           <img src="/favicon.svg" class="auth-mark-img" alt="Keyrealm" />
         </span>
         <h1 class="v-grad-text">Keyrealm</h1>
@@ -155,36 +154,23 @@ onMounted(() => {
   margin-bottom: 22px;
 }
 
+/* 描边直接做在容器上：图标 56px + 6px 留白 + 2px 描边，
+   外圆角 17px = 图标自身圆角 9px + 留白 6px + 描边 2px，三者同心。
+   不要再用绝对定位的兄弟元素画环——负 inset 叠上图片的 filter 阴影后，
+   部分 WebView 内核会按层叠上下文把顶部那段描边绘制到阴影之下，看起来像缺了一条边。 */
 .auth-mark {
-  position: relative;
   display: inline-grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  padding: 6px;
+  border: 2px solid color-mix(in srgb, var(--v-accent) 40%, transparent);
+  border-radius: 17px;
+  filter: drop-shadow(0 8px 18px rgba(6, 10, 22, 0.35));
 }
 
 .auth-mark-img {
   display: block;
   width: 56px;
   height: 56px;
-  filter: drop-shadow(0 8px 18px rgba(6, 10, 22, 0.35));
-}
-
-/* 绕在徽标外的一圈描边，**静态**。
-   最初这里是 conic-gradient + 圆形遮罩做的旋转描边，两处几何都不成立：
-   圆形遮罩切在圆角方块的四角上，只能切出一道横穿角部的彩边（实测就是一圈色散花边，
-   看着像渲染瑕疵而不是设计元素）；而且元素一旦 rotate，轮廓本身也跟着转，45° 时
-   圆角方块会变成菱形。后来改成同形状的描边扩散（只缩放不旋转），几何是对的，但
-   挂的是 3.2s 无限动画 —— 一个每次进来都静静扩散的环，信息量为零，只是让这一页
-   永远在重绘。现在只留静态描边：圆角半径与外框同心，天然对齐，也不依赖
-   mask-composite / @property，任何内核都稳。 */
-.auth-ring {
-  position: absolute;
-  inset: -6px;
-  border-radius: 15px;
-  border: 2px solid color-mix(in srgb, var(--v-accent) 40%, transparent);
-  opacity: 0.85;
-  pointer-events: none;
 }
 
 .auth-brand h1 {
