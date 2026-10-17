@@ -23,6 +23,9 @@
 
 参考文档：https://cloud.tencent.com/document/api/213/30654
 参考文档：https://cloud.tencent.com/document/product/436/7778
+
+``account_info``：验证通过后 best-effort 查余额（Billing ``DescribeAccountBalance``，单位分 → 元），
+展示 ``余额 <x> CNY``；查不到就只显示账号 ID。
 """
 from __future__ import annotations
 
@@ -521,6 +524,33 @@ def validate(data):
     return errors
 
 
+def _fetch_balance(secret_id: str, secret_key: str) -> dict | None:
+    """查账户余额（best-effort，失败返回 None）：Billing ``DescribeAccountBalance``。
+
+    返回 ``{"balance": float, "currency": "CNY"}``；接口金额单位是**分**，这里换算成元。
+    查不到就不显示——不猜。
+    """
+    try:
+        with make_client() as client:
+            resp = _tc3_call(
+                client, "billing.tencentcloudapi.com", "billing", "DescribeAccountBalance",
+                "2018-07-09", "", {}, secret_id, secret_key,
+            )
+        if resp.status_code != 200:
+            return None
+        payload = safe_json(resp) or {}
+        body = payload.get("Response") if isinstance(payload, dict) else None
+        if not isinstance(body, dict) or body.get("Error"):
+            return None
+        cents = body.get("RealBalance", body.get("Balance"))
+        value = float(cents) / 100.0
+        if value < 0:
+            return None
+        return {"balance": round(value, 2), "currency": "CNY"}
+    except Exception:  # noqa: BLE001 - 余额只是附加信息，失败不影响验证结论
+        return None
+
+
 @guarded
 def verify(data):
     secret_id = _field(data, "secret_id")
@@ -559,14 +589,14 @@ def verify(data):
         return VerifyResult(status="error", message=f"无法确认凭证状态: {code or message}")
 
     if status == 200:
-        # 附加信息只用来说明「这是哪个账号」——ARN / PrincipalId 属于「这个凭据是谁」，
-        # 那是 whoami 动作的活（那里三项都在展示），列表里堆着反而挤掉了真正有用的区分信息。
+        # 附加信息：账号 ID 说明「这是哪个账号」，再尽量补一项余额（前端按「余额 x CNY」展示）。
+        # ARN / PrincipalId 属于「这个凭据是谁」，那是 whoami 动作的活（那里三项都在展示）。
         account_id = response_body.get("AccountId")
-        return VerifyResult(
-            status="valid",
-            message="凭证有效",
-            account_info={"account_id": account_id} if account_id else None,
-        )
+        info: dict = {}
+        if account_id:
+            info["account_id"] = account_id
+        info.update(_fetch_balance(secret_id, secret_key) or {})
+        return VerifyResult(status="valid", message="凭证有效", account_info=info or None)
 
     if status in (401, 403):
         return VerifyResult(status="invalid", message=f"凭证无效 (HTTP {status})")

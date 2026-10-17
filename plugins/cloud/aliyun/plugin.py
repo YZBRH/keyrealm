@@ -24,6 +24,9 @@
 
 参考文档：https://help.aliyun.com/zh/ram/developer-reference/api-sts-2015-04-01-getcalleridentity
 参考文档：https://help.aliyun.com/zh/oss/developer-reference/include-signatures-in-the-authorization-header
+
+``account_info``：验证通过后 best-effort 查余额（BSS ``QueryAccountBalance``），
+展示 ``余额 <AvailableAmount> <Currency>``；查不到就只显示账号 ID。
 """
 from __future__ import annotations
 
@@ -63,6 +66,10 @@ ECS_VERSION = "2014-05-26"
 
 # OSS（对象存储）全局端点：ListBuckets 走这里
 OSS_GLOBAL_ENDPOINT = "https://oss.aliyuncs.com"
+
+# BSS OpenAPI：查账户余额（与 STS 同一套 RPC 签名 v1）
+BSS_ENDPOINT = "https://business.aliyuncs.com"
+BSS_VERSION = "2017-12-14"
 
 # 默认地域（ECS / OSS 均先按此探测）
 DEFAULT_REGION = "cn-hangzhou"
@@ -378,6 +385,35 @@ def validate(data):
     return errors
 
 
+def _fetch_balance(access_key_id: str, access_key_secret: str) -> dict | None:
+    """查账户余额（best-effort，失败返回 None）：BSS ``QueryAccountBalance``。
+
+    返回 ``{"balance": float, "currency": str}``（``Data.AvailableAmount`` / ``Currency``）。
+    查不到就不显示——不猜。
+    """
+    try:
+        with make_client() as client:
+            resp = _rpc_get(
+                client, BSS_ENDPOINT, "QueryAccountBalance", BSS_VERSION, {},
+                access_key_id, access_key_secret,
+            )
+        if resp.status_code != 200:
+            return None
+        payload = safe_json(resp) or {}
+        if not isinstance(payload, dict) or not payload.get("Success"):
+            return None
+        data = payload.get("Data")
+        if not isinstance(data, dict):
+            return None
+        amount = float(data.get("AvailableAmount"))
+        currency = str(data.get("Currency") or "CNY").strip() or "CNY"
+        if amount < 0:
+            return None
+        return {"balance": amount, "currency": currency}
+    except Exception:  # noqa: BLE001 - 余额只是附加信息，失败不影响验证结论
+        return None
+
+
 @guarded
 def verify(data):
     access_key_id = _field(data, "access_key_id")
@@ -397,14 +433,14 @@ def verify(data):
     code = str(payload.get("Code") or "").strip()
 
     if status == 200 and not code:
-        # 附加信息只用来说明「这是哪个账号」——ARN / UserId 属于「这个凭据是谁」，
-        # 那是 whoami 动作的活（那里三项都在展示），列表里堆着反而挤掉了真正有用的区分信息。
+        # 附加信息：账号 ID 说明「这是哪个账号」，再尽量补一项余额（前端按「余额 x CNY」展示）。
+        # ARN / UserId 属于「这个凭据是谁」，那是 whoami 动作的活（那里三项都在展示）。
         account_id = payload.get("AccountId")
-        return VerifyResult(
-            status="valid",
-            message="凭证有效",
-            account_info={"account_id": account_id} if account_id else None,
-        )
+        info: dict = {}
+        if account_id:
+            info["account_id"] = account_id
+        info.update(_fetch_balance(access_key_id, access_key_secret) or {})
+        return VerifyResult(status="valid", message="凭证有效", account_info=info or None)
 
     if code in _INVALID_CODES or code.startswith("InvalidAccessKeyId") or code == "SignatureDoesNotMatch":
         detail = payload.get("Message") or code

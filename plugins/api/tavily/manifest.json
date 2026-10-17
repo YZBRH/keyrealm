@@ -1,6 +1,6 @@
 {
   "name": "Tavily",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "api_tavily",
   "author": "Keyrealm",
   "description": "验证 Tavily API Key 有效性",

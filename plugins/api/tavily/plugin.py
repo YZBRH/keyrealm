@@ -3,8 +3,12 @@
 自带完整的校验与展示逻辑，只复用框架层 backend.plugin_sdk 的通用工具；
 复制本目录即可派生出新的服务插件。
 
+- **account_info**：验证通过后 best-effort 查用量（`GET /usage`），展示套餐与使用率
+  （`account.plan_usage / plan_limit`）。查不到就不显示——不猜。
+
 参考文档：https://docs.tavily.com/documentation/api-reference/endpoint/search
 """
+
 from backend.plugin_sdk import VerifyResult, body_snippet, guarded, make_client, safe_json
 
 NAME = "Tavily"
@@ -18,6 +22,41 @@ def _unconfirmed(status: int, snippet: str) -> VerifyResult:
     return VerifyResult(status="error", message=message)
 
 
+def _fetch_usage(base_url: str, api_key: str) -> dict | None:
+    """查用量（best-effort，失败返回 None）。
+
+    响应里 ``key`` 是当前 Key 的用量、``account`` 是账号维度；这里用 ``account`` 的
+    ``plan_usage / plan_limit`` 算使用率，并带上 ``current_plan``（套餐）。
+    """
+    try:
+        with make_client() as client:
+            resp = client.get(
+                base_url.rstrip("/") + "/usage",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+        if resp.status_code != 200:
+            return None
+        payload = safe_json(resp) or {}
+        if not isinstance(payload, dict):
+            return None
+        acct = payload.get("account")
+        acct = acct if isinstance(acct, dict) else {}
+        info: dict = {}
+        plan = str(acct.get("current_plan") or "").strip()
+        if plan:
+            info["plan"] = plan
+        try:
+            used = float(acct.get("plan_usage"))
+            limit = float(acct.get("plan_limit"))
+        except (TypeError, ValueError):
+            used = limit = 0.0
+        if limit > 0:
+            info["usage_rate"] = round(min(1.0, max(0.0, used / limit)), 6)
+        return info or None
+    except Exception:  # noqa: BLE001 - 用量只是附加信息，失败不影响验证结论
+        return None
+
+
 def _verify_tavily(base_url: str, api_key: str) -> VerifyResult:
     url = base_url.rstrip("/") + "/search"
     with make_client() as client:
@@ -28,7 +67,11 @@ def _verify_tavily(base_url: str, api_key: str) -> VerifyResult:
         )
     status = resp.status_code
     if status == 200:
-        return VerifyResult(status="valid", message="凭证有效")
+        return VerifyResult(
+            status="valid",
+            message="凭证有效",
+            account_info=_fetch_usage(base_url, api_key),
+        )
     if status in (401, 403):
         return VerifyResult(status="invalid", message=f"凭证无效 (HTTP {status})")
     if status == 429:
