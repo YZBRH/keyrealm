@@ -1,6 +1,6 @@
 {
   "name": "百度地图",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "map_baidu",
   "author": "Keyrealm",
   "description": "验证 百度地图 服务端 AK 有效性，支持地理编码/逆地理编码/地点检索/IP 定位/天气；AK 开启 SN 校验时可补填私钥 SK 自动签名",

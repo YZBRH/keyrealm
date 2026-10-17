@@ -524,18 +524,10 @@ def verify(data) -> VerifyResult:
         payload, error, verdict = _call(client, "/location/ip", ak, sk, coor="bd09ll")
 
     if payload is not None:
-        content = payload.get("content") if isinstance(payload.get("content"), dict) else {}
-        detail = content.get("address_detail") if isinstance(content.get("address_detail"), dict) else {}
-        account = {}
-        province = _scalar(detail.get("province"))
-        city = _scalar(detail.get("city"))
-        if province != "—":
-            account["省"] = province
-        if city != "—":
-            account["市"] = city
-        if sk:
-            account["SN 签名"] = "已启用"
-        return VerifyResult(status="valid", message="凭证有效", account_info=account or None)
+        # 附加信息只放凭据自身能确认的属性：调用成功即说明这是「服务端 AK」；
+        # 签名状态按是否填了 sk 如实展示（不再展示请求方 IP 的省市——那与 AK 无关）。
+        account = {"AK 类型": "服务端", "SN 签名": "已启用" if sk else "未填"}
+        return VerifyResult(status="valid", message="凭证有效", account_info=account)
 
     return VerifyResult(status=verdict or "error", message=error)
 

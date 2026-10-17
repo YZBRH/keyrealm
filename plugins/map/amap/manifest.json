@@ -1,6 +1,6 @@
 {
   "name": "高德地图",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "credential_type": "map_amap",
   "author": "Keyrealm",
   "description": "验证 高德地图 Key：Web 服务 Key 实调校验；JS API / iOS / Android / 小程序等平台按「Key 是否存在」判定",
@@ -21,12 +21,30 @@
       "required": false,
       "default": "web_service",
       "options": [
-        {"value": "web_service", "label": "Web 服务（服务端可用，本插件实调验证）"},
-        {"value": "jsapi", "label": "Web 端（JS API）"},
-        {"value": "ios", "label": "iOS"},
-        {"value": "android", "label": "Android"},
-        {"value": "wechat_mini", "label": "微信小程序"},
-        {"value": "other", "label": "其它 / 不确定"}
+        {
+          "value": "web_service",
+          "label": "Web 服务（服务端可用，本插件实调验证）"
+        },
+        {
+          "value": "jsapi",
+          "label": "Web 端（JS API）"
+        },
+        {
+          "value": "ios",
+          "label": "iOS"
+        },
+        {
+          "value": "android",
+          "label": "Android"
+        },
+        {
+          "value": "wechat_mini",
+          "label": "微信小程序"
+        },
+        {
+          "value": "other",
+          "label": "其它 / 不确定"
+        }
       ],
       "hint": "高德 Key 按平台绑定，只有「Web 服务」能在服务端调 REST。选其它类型时改用「Key 是否存在」判定（错误码 10009 恰恰说明 Key 有效）。"
     },

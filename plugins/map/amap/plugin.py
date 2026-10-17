@@ -554,25 +554,22 @@ def verify(data) -> VerifyResult:
         payload, error, info = _probe(client, key)
 
     if payload is not None:
-        account = {}
-        province = _scalar(payload.get("province"))
-        city = _scalar(payload.get("city"))
-        if province != "—":
-            account["省"] = province
-        if city != "—":
-            account["市"] = city
+        # 附加信息只放**凭据自身**能确认的类型，不再展示请求方的 IP 归属
+        # （那是验证出口的位置，与 Key 无关，走代理还会变）。
+        # 调用既然成功，就说明它是「Web 服务」平台。
+        account = {"Key 类型": "Web 服务"}
         if kt != "web_service":
             return VerifyResult(
-                status="valid", account_info=account or None,
+                status="valid", account_info=account,
                 message=(f"凭证有效——而且它是一个可用的「Web 服务」Key；"
                          f"你选的「{_KEY_TYPES[kt]}」可能记错了（该类型本该在客户端 SDK 里用）"))
-        return VerifyResult(status="valid", message="凭证有效", account_info=account or None)
+        return VerifyResult(status="valid", message="凭证有效", account_info=account)
 
     if info == "USERKEY_PLAT_NOMATCH":
         # 平台不符 ⇒ Key **存在**。这正是「其它平台」判有效的依据：服务端替它做不了真实调用。
         if kt != "web_service":
             return VerifyResult(
-                status="valid", account_info={"平台": _KEY_TYPES[kt]},
+                status="valid", account_info={"Key 类型": _KEY_TYPES[kt]},
                 message=(f"该 Key 有效（存在），绑定的是「{_KEY_TYPES[kt]}」平台。它不能在服务端"
                          "调用 Web 服务接口，本插件只能确认它存在、无法替它做真实调用验证。"))
         return VerifyResult(

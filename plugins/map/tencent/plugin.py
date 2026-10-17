@@ -638,18 +638,10 @@ def verify(data) -> VerifyResult:
         payload, error, verdict = _call(client, "/ws/location/v1/ip", key, sk)
 
     if payload is not None:
-        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-        ad = result.get("ad_info") if isinstance(result.get("ad_info"), dict) else {}
-        account = {}
-        province = _scalar(ad.get("province"))
-        city = _scalar(ad.get("city"))
-        if province != "—":
-            account["省"] = province
-        if city != "—":
-            account["市"] = city
-        if sk:
-            account["签名校验"] = "已启用"
-        return VerifyResult(status="valid", message="凭证有效", account_info=account or None)
+        # 附加信息只放凭据自身能确认的属性：调用成功即说明该 Key 启用了 WebServiceAPI；
+        # 签名状态按是否填了 sk 如实展示（不再展示请求方 IP 的省市——那与 Key 无关）。
+        account = {"Key 类型": "WebService", "签名校验": "已启用" if sk else "未填"}
+        return VerifyResult(status="valid", message="凭证有效", account_info=account)
 
     return VerifyResult(status=verdict or "error", message=error)
 

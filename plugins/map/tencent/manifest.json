@@ -1,6 +1,6 @@
 {
   "name": "腾讯地图",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "map_tencent",
   "author": "Keyrealm",
   "description": "验证 腾讯位置服务（腾讯地图）WebService Key 有效性，支持地理编码/逆地址解析/地点搜索/行政区划/距离计算/IP 定位/天气；开启签名校验时可补填 SK 自动签名",
