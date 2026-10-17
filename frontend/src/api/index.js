@@ -310,6 +310,7 @@ export const api = {
   // 用系统默认程序打开 data/logs/ 下的日志文件（导入失败后的一键打开）。
   // 后端只认单个文件名，路径拼接由它自己完成。
   openLogFile: (name) => call('open_log_file', name),
+  openExternalUrl: (url) => call('open_external_url', url),
 
   // ── 后台任务 ────────────────────────────────────────────
   // 长操作（下载/打包等）跑在后台线程，关掉弹窗也在继续。listTasks 返回的数组

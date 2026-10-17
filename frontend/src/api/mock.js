@@ -633,6 +633,7 @@ export function createMockApi() {
       await delay(40)
       return {
         mcp_running: state.mcpRunning,
+        mcp_host: '127.0.0.1',
         mcp_port: state.mcpPort,
         active_tokens: state.mcpToken ? 1 : 0,
         is_locked: !state.unlocked,
@@ -953,6 +954,16 @@ export function createMockApi() {
     async open_log_file(name) {
       await delay(60)
       return { ok: true, path: `/mock/logs/${name}` }
+    },
+
+    async open_external_url(url) {
+      await delay(60)
+      // 开发模式没有 pywebview，退回浏览器新标签页；白名单与后端保持一致
+      if (url === 'https://github.com/YZBRH/keyrealm') {
+        window.open(url, '_blank', 'noopener')
+        return { ok: true }
+      }
+      return { ok: false, message: '不允许打开该链接' }
     },
 
     async set_log_level(level) {

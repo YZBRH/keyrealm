@@ -16,6 +16,7 @@ export const useAppStore = defineStore('app', {
     unlocked: false,
     tray: {
       mcp_running: false,
+      mcp_host: '127.0.0.1',
       mcp_port: 8765,
       active_tokens: 0,
       is_locked: true,
@@ -115,6 +116,7 @@ export const useAppStore = defineStore('app', {
         if (status) {
           this.tray = {
             mcp_running: !!status.mcp_running,
+            mcp_host: status.mcp_host || '127.0.0.1',
             mcp_port: status.mcp_port ?? 8765,
             active_tokens: status.active_tokens ?? 0,
             is_locked: !!status.is_locked,

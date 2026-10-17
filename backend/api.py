@@ -120,6 +120,7 @@ def push_event(event_name: str, detail: Any = None):
 def get_tray_status() -> dict:
     return {
         "mcp_running": mcp_server.is_running(),
+        "mcp_host": mcp_server.get_host(),
         "mcp_port": mcp_server.get_port(),
         "active_tokens": 1 if db.get_mcp_token_record() else 0,
         "is_locked": _get_key() is None,
@@ -2035,6 +2036,32 @@ def clear_logs() -> dict:
     logger.clear_logs()
     _log.info("日志已清空")
     return {"ok": True, "message": "日志已清空"}
+
+
+# 「关于」页允许用**系统浏览器**打开的外部链接（白名单）。
+# 前端能传什么完全由我们决定；白名单挡掉被注入的任意 URL（避免变成「点一下打开任意地址」）。
+_EXTERNAL_URLS = frozenset({
+    "https://github.com/YZBRH/keyrealm",
+})
+
+
+def open_external_url(url: str) -> dict:
+    """用系统默认浏览器打开一个**白名单内**的外部链接（「关于」页的项目主页）。"""
+    url = (url or "").strip()
+    if url not in _EXTERNAL_URLS:
+        return {"ok": False, "message": "不允许打开该链接"}
+    try:
+        if sys.platform == "win32":
+            os.startfile(url)  # type: ignore[attr-defined]  # 仅 Windows 存在
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", url])
+        else:
+            subprocess.Popen(["xdg-open", url])
+    except Exception as e:  # noqa: BLE001 - 打不开是环境问题，如实回报即可
+        _log.warning("打开外部链接失败 %s: %s", url, e)
+        return {"ok": False, "message": f"打开失败：{e}"}
+    _log.info("已用系统浏览器打开 %s", url)
+    return {"ok": True}
 
 
 def open_log_file(name: str) -> dict:

@@ -1,9 +1,13 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useVaultStore } from '@/stores/vault'
+
+// 项目主页：点击后交给后端用**系统浏览器**打开（pywebview 内直接跳转会顶掉应用界面）
+const PROJECT_URL = 'https://github.com/YZBRH/keyrealm'
 
 // 版本号与「构建版本」（commit 短 hash）都从**后端**取——前端不再写死，
 // 免得界面显示的和正在跑的 exe 对不上。格式：1.0.0 (fe15e3b)
@@ -19,6 +23,14 @@ const runtimeLabel = computed(() =>
 const categoryCount = computed(
   () => new Set(vaultStore.plugins.map((p) => p.category).filter(Boolean)).size,
 )
+
+async function openProject() {
+  try {
+    await api.openExternalUrl(PROJECT_URL)
+  } catch (err) {
+    ElMessage.error(err.message || '打开链接失败')
+  }
+}
 
 onMounted(() => {
   if (!vaultStore.plugins.length) vaultStore.fetchPlugins().catch(() => {})
@@ -47,6 +59,10 @@ onMounted(() => {
       </div>
 
       <el-descriptions :column="2" border size="small" class="about-desc">
+        <el-descriptions-item label="作者">BR</el-descriptions-item>
+        <el-descriptions-item label="项目主页">
+          <el-link type="primary" :underline="false" @click="openProject">{{ PROJECT_URL }}</el-link>
+        </el-descriptions-item>
         <el-descriptions-item label="版本号">v{{ versionInfo.display }}</el-descriptions-item>
         <el-descriptions-item label="数据库结构版本">v{{ versionInfo.schemaVersion || '—' }}</el-descriptions-item>
         <el-descriptions-item label="运行环境">{{ runtimeLabel }}</el-descriptions-item>
@@ -57,7 +73,7 @@ onMounted(() => {
           {{ vaultStore.plugins.length }} 个 · {{ categoryCount }} 个类别
         </el-descriptions-item>
         <el-descriptions-item label="MCP 服务">
-          {{ appStore.tray.mcp_running ? `运行中 · 端口 ${appStore.tray.mcp_port}` : '已停止' }}
+          {{ appStore.tray.mcp_running ? `运行中 · ${appStore.tray.mcp_host}:${appStore.tray.mcp_port}` : '已停止' }}
         </el-descriptions-item>
         <el-descriptions-item label="前端技术栈">
           Vue 3 · Element Plus · Pinia · Vite
