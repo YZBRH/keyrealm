@@ -2948,9 +2948,17 @@ onMounted(async () => {
    绝不能提到 .page：el-dialog 渲染在 .page 内部，会连带改掉操作弹窗里表格的行高。
    变量的语义是「该行能容纳的文字行数」，绑定时写成 rowLines + 1（档位 1/2/3 → 2/3/4）：
    「名称」列天生占两行（名称 + 下面的子行），第一档必须等于现状，故最低就是 2 行。
-   min-height 让**所有行等高**；line-clamp 用同一个变量，把超出档位的内容截断（悬停看 title 全文）。 */
-.cred-table :deep(.cell) {
+   min-height 让**数据行**等高；只作用于 body，表头另有固定高度（见下），别再把它撑高。
+   line-clamp 用同一个变量，把超出档位的内容截断（悬停看 title 全文）。 */
+.cred-table :deep(.el-table__body-wrapper .cell) {
   min-height: calc(1.5em * var(--cred-row-lines, 3));
+}
+
+/* 表头固定 38px 单行高度：不参与行高变量，padding 归零后由 vertical-align 居中。 */
+.cred-table :deep(.el-table__header-wrapper th.el-table__cell) {
+  height: 38px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .cred-table .cell-ellipsis {
