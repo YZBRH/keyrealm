@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowRight, Back, Check, CircleClose, Delete, Edit, Expand, Fold, Plus, Refresh, Search, SetUp, Sort } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Back, Check, CircleClose, Delete, Edit, Expand, Fold, Operation, Plus, Refresh, Search, SetUp, Sort } from '@element-plus/icons-vue'
 
 import CredentialForm from '@/components/CredentialForm.vue'
 import ScopeDefaultsDialog from '@/components/ScopeDefaultsDialog.vue'
@@ -2238,6 +2238,7 @@ onMounted(async () => {
                          免得同一列里按钮忽有忽无、每行的按钮位置都对不齐 -->
                     <el-button
                       size="small"
+                      :icon="Operation"
                       :disabled="!canOpenActions(row)"
                       @click="openActions(row, $event)"
                     >
@@ -2257,6 +2258,7 @@ onMounted(async () => {
                       size="small"
                       type="primary"
                       plain
+                      :icon="Check"
                       :loading="verifyingIds.includes(row.id) || isBatchVerifying(row.id)"
                       :disabled="isBatchVerifying(row.id) || !isPluginEnabled(row.credential_type)"
                       @click="verifyRow(row)"
@@ -2266,7 +2268,7 @@ onMounted(async () => {
                   </span>
                 </el-tooltip>
                 <el-button size="small" :icon="Edit" :disabled="batchLocked" @click="openEdit(row)">编辑</el-button>
-                <el-button size="small" type="danger" plain :icon="Delete" :disabled="batchLocked" @click="removeRow(row)" />
+                <el-button size="small" type="danger" plain :icon="Delete" :disabled="batchLocked" @click="removeRow(row)">删除</el-button>
               </div>
             </template>
           </el-table-column>
@@ -3173,9 +3175,12 @@ onMounted(async () => {
 }
 
 /* 操作列按钮：flex 布局对齐，清除 Element Plus 相邻按钮的默认左间距 */
+/* 四个按钮按 2×2 排布（两两一行）：单行横排会把操作列拉得很宽 */
 .action-cell {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
   align-items: center;
+  justify-content: start;
   gap: 6px;
   white-space: nowrap;
 }
