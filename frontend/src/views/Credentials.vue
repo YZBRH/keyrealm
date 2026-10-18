@@ -1027,6 +1027,7 @@ const ACCOUNT_INFO_LABELS = {
   plan: '套餐',
   chat_probe: '实测',
   accountType: '账户类型',
+  account_type: '账户类型',
   canTrade: '可交易',
   canWithdraw: '可提现',
   canDeposit: '可充值',

@@ -27,7 +27,7 @@
 
 ### 插件化
 
-- 一个服务一个插件，现目前共有 **64 个插件、10 个类别**（见[支持的服务](#支持的服务)）。
+- 一个服务一个插件，现目前共有 **65 个插件、10 个类别**（见[支持的服务](#支持的服务)）。
 - 插件放在程序目录的 `plugins/` 下，**放入即加载、删除即卸载**，无需安装器；临时停用无需删目录，在界面里禁用即可（状态记在 `plugins/.state.json`）。
 - 禁用**不动磁盘目录**：名下凭据照常显示、可编辑、可导出，只是「操作」「验证」置灰、批量验证自动跳过，禁用≠删除，快速找回插件。
 
@@ -93,7 +93,7 @@
 
 | 类别 | 数量 | 服务 |
 |---|---:|---|
-| LLM 模型 | 18 | OpenAI（含 Codex / ChatGPT 登录态）、Anthropic、Gemini、DeepSeek、Moonshot、智谱 GLM、阿里百炼、火山方舟、文心、MiniMax、NVIDIA、OpenRouter、硅基流动、华为云 MaaS、商汤日日新、CodeBuddy、OpenAI 兼容、New API |
+| LLM 模型 | 19 | OpenAI（含 Codex / ChatGPT 登录态）、Anthropic、Gemini、DeepSeek、Moonshot、智谱 GLM、阿里百炼、火山方舟、文心、MiniMax、NVIDIA、OpenRouter、硅基流动、华为云 MaaS、商汤日日新、小米 MiMo、CodeBuddy、OpenAI 兼容、New API |
 | API 服务 | 8 | Firecrawl、Tavily、秘塔 AI 搜索、Coze（扣子）、Dify、FOFA、Google API、百度人脸 |
 | 即时通讯 | 10 | 飞书、钉钉、企业微信、Telegram（Bot / api_id+hash）、Discord、QQ 频道机器人、微信 iLink Bot、微信公众号、微信小程序 |
 | 云服务商 | 12 | 阿里云、腾讯云、AWS、GCP、华为云、Firebase、京东云、UCloud、百度智能云、火山引擎、天翼云、Cloudflare |

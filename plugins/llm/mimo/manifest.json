@@ -1,0 +1,69 @@
+{
+  "name": "小米 MiMo",
+  "version": "1.0.0",
+  "credential_type": "llm_mimo",
+  "author": "Keyrealm",
+  "description": "验证 小米 MiMo API Key 有效性（按量付费 / Token Plan）",
+  "icon": "logo.png",
+  "fields": [
+    {
+      "key": "base_url",
+      "label": "Base URL",
+      "type": "url",
+      "required": false,
+      "placeholder": "留空使用默认地址",
+      "default": "https://api.xiaomimimo.com/v1",
+      "presets": [
+        {
+          "label": "按量付费 · OpenAI 兼容",
+          "value": "https://api.xiaomimimo.com/v1"
+        },
+        {
+          "label": "Token Plan · 中国 · OpenAI 兼容",
+          "value": "https://token-plan-cn.xiaomimimo.com/v1"
+        },
+        {
+          "label": "Token Plan · 新加坡 · OpenAI 兼容",
+          "value": "https://token-plan-sgp.xiaomimimo.com/v1"
+        },
+        {
+          "label": "Token Plan · 阿姆斯特丹 · OpenAI 兼容",
+          "value": "https://token-plan-ams.xiaomimimo.com/v1"
+        },
+        {
+          "label": "批量推理 · 中国",
+          "value": "https://batch-api-cn.xiaomimimo.com/v1"
+        }
+      ]
+    },
+    {
+      "key": "api_key",
+      "label": "API Key",
+      "type": "password",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "sk-... / tp-... / ttp-..."
+    },
+    {
+      "key": "probe_chat",
+      "label": "余额未知时发一次对话探测",
+      "type": "checkbox",
+      "required": false,
+      "hint": "官方没有公开的额度查询接口；开启后验证会额外发一次 max_tokens=1 的对话请求实测账户是否可用（会消耗极少量额度）。默认关闭。"
+    },
+    {
+      "key": "probe_model",
+      "label": "探测使用的模型",
+      "type": "model",
+      "required": false,
+      "placeholder": "留空自动选择",
+      "hint": "留空 = 自动从该凭据的模型列表里挑一个便宜的（优先 flash / lite / mini 等）。"
+    },
+    {
+      "key": "notes",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}
