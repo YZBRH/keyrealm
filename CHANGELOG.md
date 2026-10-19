@@ -6,6 +6,28 @@
 - **每次提升版本号，必须在本文件留一条记录**（新增 / 修复 / 变更 / 数据库）。
 - **数据库结构有变动时**，除了写记录，还必须在 `scripts/` 附一份迁移脚本（见 README「版本规则」）。
 
+## [1.4.7] - 2026-10-19
+
+### 新增
+
+- **小米 MiMo 插件**：支持按量付费（`sk-`，默认 `api.xiaomimimo.com/v1`）与 Token Plan
+  （`tp-` / `ttp-`，中国 / 新加坡 / 阿姆斯特丹专属地址），内置对应 Base URL 预设。验证走
+  OpenAI 兼容路径，按 Key 前缀在附加信息标注计费方式；模型列表自动过滤 ASR / TTS 等非对话模型。
+- **LiteLLM API 插件**：验证 LiteLLM Proxy 的虚拟 Key，并在验证通过后查询 `/key/info`，展示
+  该 Key 的累计消费（`spend`）、预算上限（`max_budget`）与剩余额度；`max_budget` 为 null 时显示
+  「无上限」。Base URL 只填域名时自动补 `/v1`，避免命中站点首页造成误判；余额查询失败不影响验证结论。
+- **README 顶部添加项目 logo**。
+
+### 变更
+
+- **中转类插件统一命名**：`LiteLLM 中转` → **LiteLLM API**、`New API 中转站` → **New API**、
+  `第三方中转` → **兼容接口**。`credential_type` 保持不变，已有凭据无需迁移。
+
+### 修复
+
+- **LiteLLM 插件加载失败**：模块级 `quota_probe` 引用了尚未定义的 `_api_base`，导致插件加载时报
+  `NameError`；已调整定义顺序。
+
 ## [1.4.6] - 2026-10-18
 
 ### 新增
