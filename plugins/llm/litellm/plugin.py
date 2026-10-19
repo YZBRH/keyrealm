@@ -23,7 +23,7 @@ from llm_protocols import (
     resolve_chat_model,
 )
 
-NAME = "LiteLLM 中转"
+NAME = "LiteLLM API"
 DEFAULT_BASE_URL = ""
 PROTOCOL = "openai_models"
 

@@ -1,9 +1,9 @@
 {
-  "name": "第三方中转",
+  "name": "兼容接口",
   "version": "1.1.0",
   "credential_type": "llm_openai_compatible",
   "author": "Keyrealm",
-  "description": "验证第三方中转站的 API Key 有效性（OpenAI / Anthropic 两种接口格式）",
+  "description": "验证兼容接口的 API Key 有效性（OpenAI / Anthropic 两种接口格式）",
   "icon": "logo.png",
   "fields": [
     {

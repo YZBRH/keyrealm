@@ -1,5 +1,5 @@
 {
-  "name": "LiteLLM 中转",
+  "name": "LiteLLM API",
   "version": "1.0.0",
   "credential_type": "llm_litellm",
   "author": "Keyrealm",

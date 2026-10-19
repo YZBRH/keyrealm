@@ -93,7 +93,7 @@
 
 | 类别 | 数量 | 服务 |
 |---|---:|---|
-| LLM 模型 | 20 | OpenAI（含 Codex / ChatGPT 登录态）、Anthropic、Gemini、DeepSeek、Moonshot、智谱 GLM、阿里百炼、火山方舟、文心、MiniMax、NVIDIA、OpenRouter、硅基流动、华为云 MaaS、商汤日日新、小米 MiMo、LiteLLM 中转、CodeBuddy、OpenAI 兼容、New API |
+| LLM 模型 | 20 | OpenAI（含 Codex / ChatGPT 登录态）、Anthropic、Gemini、DeepSeek、Moonshot、智谱 GLM、阿里百炼、火山方舟、文心、MiniMax、NVIDIA、OpenRouter、硅基流动、华为云 MaaS、商汤日日新、小米 MiMo、LiteLLM API、CodeBuddy、兼容接口、New API |
 | API 服务 | 8 | Firecrawl、Tavily、秘塔 AI 搜索、Coze（扣子）、Dify、FOFA、Google API、百度人脸 |
 | 即时通讯 | 10 | 飞书、钉钉、企业微信、Telegram（Bot / api_id+hash）、Discord、QQ 频道机器人、微信 iLink Bot、微信公众号、微信小程序 |
 | 云服务商 | 12 | 阿里云、腾讯云、AWS、GCP、华为云、Firebase、京东云、UCloud、百度智能云、火山引擎、天翼云、Cloudflare |

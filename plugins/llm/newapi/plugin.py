@@ -1,4 +1,4 @@
-"""New API 中转站 API Key 验证插件（plugins/llm/ 类别下的独立子插件）。
+"""New API（one-api 衍生）API Key 验证插件（plugins/llm/ 类别下的独立子插件）。
 
 New API（one-api 的衍生版）自建中转站的专用校验：
 
@@ -32,7 +32,7 @@ from backend.plugin_sdk import VerifyResult, guarded, make_client, safe_json
 from llm_common import make_quota_probe, plausible_amount
 from llm_protocols import probe_openai_models, chat_completion, fetch_models, chat_completion_stream, resolve_chat_model
 
-NAME = "New API 中转站"
+NAME = "New API"
 DEFAULT_BASE_URL = ""
 PROTOCOL = "openai_models"
 

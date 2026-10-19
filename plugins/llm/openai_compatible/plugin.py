@@ -1,4 +1,4 @@
-"""第三方中转 API Key 验证插件（plugins/llm/ 类别下的独立子插件）。
+"""兼容接口 API Key 验证插件（plugins/llm/ 类别下的独立子插件）。
 
 支持两种接口格式，由凭据字段 ``api_style`` 选择：
 
@@ -25,7 +25,7 @@ from llm_protocols import (
     resolve_chat_model,
 )
 
-NAME = "第三方中转"
+NAME = "兼容接口"
 DEFAULT_BASE_URL = ""
 STYLES = ("openai", "anthropic")
 DEFAULT_STYLE = "openai"
