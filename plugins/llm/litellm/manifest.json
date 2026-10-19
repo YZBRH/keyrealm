@@ -1,0 +1,47 @@
+{
+  "name": "LiteLLM 中转",
+  "version": "1.0.0",
+  "credential_type": "llm_litellm",
+  "author": "Keyrealm",
+  "description": "验证 LiteLLM Proxy 的 API Key，并展示 Key 的累计消费与预算",
+  "icon": "🔀",
+  "fields": [
+    {
+      "key": "base_url",
+      "label": "Base URL",
+      "type": "url",
+      "required": true,
+      "placeholder": "https://gateway.example.com/v1",
+      "hint": "填到 /v1（例如 https://gateway.example.com/v1）；只填域名时会自动补成 /v1。消费/预算查询使用同一主机的 /key/info。"
+    },
+    {
+      "key": "api_key",
+      "label": "API Key",
+      "type": "password",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "sk-..."
+    },
+    {
+      "key": "probe_chat",
+      "label": "额外发一次对话探测",
+      "type": "checkbox",
+      "required": false,
+      "hint": "部分 LiteLLM 部署的 /models 不校验 Key，开启后会额外发一次 max_tokens=1 的对话请求实测 Key 是否真的可用（会消耗极少量额度）。默认关闭。"
+    },
+    {
+      "key": "probe_model",
+      "label": "探测使用的模型",
+      "type": "model",
+      "required": false,
+      "placeholder": "留空自动选择",
+      "hint": "留空 = 自动从该凭据的模型列表里挑一个便宜的（优先 flash / lite / mini 等）。"
+    },
+    {
+      "key": "notes",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}
