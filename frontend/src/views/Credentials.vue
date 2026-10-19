@@ -1091,6 +1091,8 @@ function extraLines(row) {
   const info = row.status_detail && row.status_detail.account_info
   if (!info || typeof info !== 'object') return []
   const lines = []
+  // 插件预格式化的一行（如 LiteLLM 的「已消耗 x / ∞」），优先展示且不再重复拆字段
+  if (info.usage_label) lines.push(String(info.usage_label))
   if (info.balance !== undefined && info.balance !== null && info.balance !== '') {
     const num = Number(info.balance)
     const shown = Number.isFinite(num) ? num.toFixed(2) : String(info.balance)

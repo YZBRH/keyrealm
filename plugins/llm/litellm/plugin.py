@@ -3,11 +3,11 @@
 参考文档：https://docs.litellm.ai/docs/proxy/virtual_keys
 
 LiteLLM 是开源的 LLM 网关（OpenAI 兼容）。验证走 `GET {base}/models`；
-验证通过后再 best-effort 查 `GET {root}/key/info`，展示该 Key 的累计消费与预算：
+验证通过后再 best-effort 查 `GET {root}/key/info`，展示该 Key 的消费情况：
 
-- `spend`：累计消费（LiteLLM 没有「预充值余额」概念，只有消费额）
-- `max_budget`：Key 的预算上限；为 null 表示不限额度
-- 有预算时换算出剩余额度（余额）；过期/无权限/接口不存在时不显示，不影响验证结论
+- 展示格式：`已消耗 $<spend> / $<max_budget>`（LiteLLM 的 spend 以美元计）；`max_budget` 为 null（不限额度）时只显示消耗，不显示总额
+- LiteLLM 没有「预充值余额」概念，只有累计消费额
+- 过期/无权限/接口不存在时不显示，不影响验证结论
 """
 from __future__ import annotations
 
@@ -89,15 +89,11 @@ def _fetch_key_info(base_url: str, api_key: str) -> Optional[dict]:
     budget = _num(info.get("max_budget"))
     out: dict = {}
     if spend is not None:
-        out["spend"] = round(spend, 2)
-    if budget is not None:
-        out["budget"] = round(budget, 2)
-        if spend is not None:
-            out["balance"] = round(max(0.0, budget - spend), 2)
-        out["currency"] = "USD"
-    else:
-        # LiteLLM 的 max_budget=null 是「不限额度」，不是「余额为 0」
-        out["budget"] = "无上限"
+        # 有预算 → 「已消耗 / 总额」；无预算（max_budget=null）→ 只显示消耗，不编造总额
+        if budget is not None:
+            out["usage_label"] = f"已消耗 ${spend:.2f} / ${budget:.2f}"
+        else:
+            out["usage_label"] = f"已消耗 ${spend:.2f}"
     for key in ("key_name", "budget_duration", "budget_reset_at"):
         value = info.get(key)
         if value not in (None, ""):
