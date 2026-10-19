@@ -4,7 +4,7 @@
   "credential_type": "llm_litellm",
   "author": "Keyrealm",
   "description": "验证 LiteLLM Proxy 的 API Key，并展示 Key 的累计消费与预算",
-  "icon": "🔀",
+  "icon": "logo.png",
   "fields": [
     {
       "key": "base_url",
