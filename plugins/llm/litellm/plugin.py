@@ -27,8 +27,6 @@ NAME = "LiteLLM 中转"
 DEFAULT_BASE_URL = ""
 PROTOCOL = "openai_models"
 
-quota_probe = make_quota_probe(_api_base, "openai")
-
 
 def _base_url(data: dict) -> str:
     return ((data or {}).get("base_url") or "").strip() or DEFAULT_BASE_URL
@@ -43,6 +41,10 @@ def _api_base(data: dict) -> str:
     if base and not base.endswith("/v1"):
         base += "/v1"
     return base
+
+
+# 欠费探测的默认地址与验证保持一致（含 /v1 归一化）；必须在 _api_base 定义之后
+quota_probe = make_quota_probe(_api_base, "openai")
 
 
 def _root(base_url: str) -> str:
