@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" width="120" height="120" alt="Keyrealm logo">
+</p>
+
 # 凭域 Keyrealm 
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
