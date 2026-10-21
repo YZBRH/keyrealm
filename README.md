@@ -375,3 +375,10 @@ Keyrealm 内置一个 **MCP Server**，Agent 可以直接查询、创建、验�
 商标归各自权利人所有，本项目与这些厂商**无隶属或背书关系**。
 
 图标的逐个来源与选取标准见 [插件开发指南](docs/PLUGIN_GUIDE.md) 的 logo 小节。
+
+
+
+## 404星链计划
+<img src="https://github.com/knownsec/404StarLink/raw/master/Images/logo.png" width="30%">
+
+凭域 (keyrealm) 现已加入 [404星链计划](https://github.com/knownsec/404StarLink)
