@@ -166,6 +166,15 @@ class VaultApi:
     def check_duplicate_credential(self, credential_type: str, data: dict):
         return api.check_duplicate_credential(credential_type, data)
 
+    def find_duplicate_credentials(self, credential_ids=None, group_id=None,
+                                   credential_type=None, credential_types=None, search=None):
+        return api.find_duplicate_credentials(
+            credential_ids, group_id, credential_type, credential_types, search,
+        )
+
+    def resolve_duplicate_group(self, keep_id: int, remove_ids: list, merge_notes: bool = False):
+        return api.resolve_duplicate_group(keep_id, remove_ids, merge_notes)
+
     # ── Groups ────────────────────────────────────────────
     def list_groups(self):
         return api.list_groups()

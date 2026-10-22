@@ -459,6 +459,75 @@ export function createMockApi() {
         .map((item) => ({ id: item.id, name: item.name, credential_type: item.credential_type }))
     },
 
+    async find_duplicate_credentials(credentialIds = null, groupId = null,
+      credentialType = null, credentialTypes = null, search = null) {
+      await delay(200)
+      requireUnlocked()
+      const wanted = Array.isArray(credentialIds) && credentialIds.length
+        ? new Set(credentialIds.map(Number)) : null
+      const typeSet = Array.isArray(credentialTypes) && credentialTypes.length
+        ? new Set(credentialTypes) : null
+      const rows = state.credentials.filter((c) => {
+        if (wanted && !wanted.has(Number(c.id))) return false
+        if (groupId != null && c.group_id !== Number(groupId)) return false
+        if (credentialType && c.credential_type !== credentialType) return false
+        if (typeSet && !typeSet.has(c.credential_type)) return false
+        if (search) {
+          const q = String(search).toLowerCase()
+          if (!`${c.name} ${c.credential_type}`.toLowerCase().includes(q)) return false
+        }
+        return Boolean(c.secret)
+      })
+      const buckets = new Map()
+      for (const c of rows) {
+        const k = `${c.credential_type} ${c.secret}`
+        if (!buckets.has(k)) buckets.set(k, [])
+        buckets.get(k).push(c)
+      }
+      const groups = []
+      for (const items of buckets.values()) {
+        if (items.length < 2) continue
+        const ctype = items[0].credential_type
+        const plugin = pluginOf(ctype)
+        groups.push({
+          credential_type: ctype,
+          plugin_name: plugin ? plugin.name : ctype,
+          match: [{ key: 'api_key', label: 'API Key', masked: maskSecret(items[0].secret) }],
+          items: items.map((c) => ({
+            id: c.id, name: c.name, credential_type: c.credential_type,
+            group_id: c.group_id, group_name: groupName(c.group_id),
+            notes: (c.data_plain && c.data_plain.notes) || '',
+            status: c.status, created_at: c.created_at, updated_at: c.updated_at,
+            last_verified_at: c.last_verified_at,
+          })),
+        })
+      }
+      groups.sort((a, b) => b.items.length - a.items.length)
+      return {
+        ok: true, scanned: rows.length, groups,
+        group_count: groups.length,
+        duplicate_count: groups.reduce((n, g) => n + g.items.length, 0),
+      }
+    },
+
+    async resolve_duplicate_group(keepId, removeIds = [], mergeNotes = false) {
+      await delay(150)
+      requireUnlocked()
+      const keep = state.credentials.find((c) => c.id === Number(keepId))
+      if (!keep) throw new Error('保留项不存在')
+      const ids = (removeIds || []).map(Number).filter((id) => id !== Number(keepId))
+      if (mergeNotes) {
+        const notes = [keep]
+          .concat(state.credentials.filter((c) => ids.includes(c.id)))
+          .map((c) => ((c.data_plain && c.data_plain.notes) || '').trim())
+          .filter(Boolean)
+        keep.data_plain = { ...(keep.data_plain || {}), notes: [...new Set(notes)].join('\n') }
+      }
+      state.credentials = state.credentials.filter((c) => !ids.includes(c.id))
+      emit('vault:credentials_changed', {})
+      return { ok: true, kept: Number(keepId), deleted: ids.length, merged_notes: Boolean(mergeNotes) }
+    },
+
     // ── 分组 ──────────────────────────────────────────────
     async list_groups() {
       await delay()

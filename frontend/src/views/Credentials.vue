@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowRight, Back, Check, CircleClose, Delete, Edit, Expand, Fold, Operation, Plus, Refresh, Search, SetUp, Sort } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Back, Check, CircleClose, CopyDocument, Delete, Edit, Expand, Fold, Operation, Plus, Refresh, Search, SetUp, Sort } from '@element-plus/icons-vue'
 
 import CredentialForm from '@/components/CredentialForm.vue'
 import ScopeDefaultsDialog from '@/components/ScopeDefaultsDialog.vue'
@@ -188,6 +188,109 @@ async function startBatchDelete() {
     ElMessage.error(err.message || '批量删除失败')
   } finally {
     deleteStarting.value = false
+  }
+}
+
+// ── 去重：先选扫描范围（默认全选），检测后逐组选择保留项 ──
+const dedupeVisible = ref(false)
+const dedupeScopeIds = ref([])
+const dedupeScanning = ref(false)
+const dedupeScanned = ref(false)
+const dedupeGroups = ref([])
+const dedupeResolving = ref(false)
+const dedupeKeep = ref({})          // 组下标 → 保留的凭据 id
+const dedupeMergeNotes = ref({})    // 组下标 → 是否合并描述/备注
+
+const dedupeAllChecked = computed(
+  () =>
+    vaultStore.credentials.length > 0 &&
+    dedupeScopeIds.value.length === vaultStore.credentials.length,
+)
+const dedupeIndeterminate = computed(
+  () =>
+    dedupeScopeIds.value.length > 0 &&
+    dedupeScopeIds.value.length < vaultStore.credentials.length,
+)
+const dedupeDuplicateCount = computed(
+  () => dedupeGroups.value.reduce((n, g) => n + g.items.length, 0),
+)
+
+function openDedupe() {
+  if (batchRunning.value) return
+  // 默认全选当前列表（受目录树 / 筛选影响），与批量验证、批量删除同源
+  dedupeScopeIds.value = vaultStore.credentials.map((c) => c.id)
+  dedupeGroups.value = []
+  dedupeScanned.value = false
+  dedupeKeep.value = {}
+  dedupeMergeNotes.value = {}
+  dedupeVisible.value = true
+}
+
+function onDedupePickAll(checked) {
+  dedupeScopeIds.value = checked ? vaultStore.credentials.map((c) => c.id) : []
+}
+
+async function scanDuplicates() {
+  if (!dedupeScopeIds.value.length) return
+  dedupeScanning.value = true
+  try {
+    const res = await api.findDuplicateCredentials([...dedupeScopeIds.value])
+    if (res && res.ok === false) {
+      ElMessage.error(res.message || '去重扫描失败')
+      return
+    }
+    dedupeGroups.value = (res && res.groups) || []
+    dedupeScanned.value = true
+    const keep = {}
+    const merge = {}
+    dedupeGroups.value.forEach((group, index) => {
+      keep[index] = group.items[0] ? group.items[0].id : null
+      merge[index] = false
+    })
+    dedupeKeep.value = keep
+    dedupeMergeNotes.value = merge
+    if (!dedupeGroups.value.length) {
+      ElMessage.success('未发现重复凭据')
+    } else {
+      ElMessage.warning(
+        `发现 ${dedupeGroups.value.length} 组重复，共 ${dedupeDuplicateCount.value} 条凭据`,
+      )
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '去重扫描失败')
+  } finally {
+    dedupeScanning.value = false
+  }
+}
+
+async function applyDedupe() {
+  if (!dedupeGroups.value.length) return
+  dedupeResolving.value = true
+  let kept = 0
+  let deleted = 0
+  try {
+    for (let index = 0; index < dedupeGroups.value.length; index += 1) {
+      const group = dedupeGroups.value[index]
+      const keepId = dedupeKeep.value[index]
+      if (!keepId) continue
+      const removeIds = group.items.map((item) => item.id).filter((id) => id !== keepId)
+      if (!removeIds.length) continue
+      const res = await api.resolveDuplicateGroup(
+        keepId, removeIds, Boolean(dedupeMergeNotes.value[index]),
+      )
+      if (res && res.ok === false) {
+        throw new Error(res.message || '去重失败')
+      }
+      kept += 1
+      deleted += (res && res.deleted != null) ? res.deleted : removeIds.length
+    }
+    await vaultStore.fetchCredentials()
+    ElMessage.success(`去重完成：保留 ${kept} 组，删除 ${deleted} 条重复凭据`)
+    dedupeVisible.value = false
+  } catch (err) {
+    ElMessage.error(err.message || '去重失败')
+  } finally {
+    dedupeResolving.value = false
   }
 }
 
@@ -1997,6 +2100,7 @@ onMounted(async () => {
         @click="load"
       >刷新</el-button>
       <el-button :icon="Refresh" :loading="batchStarting" :disabled="batchRunning" @click="openBatchPick">批量验证</el-button>
+      <el-button :icon="CopyDocument" :disabled="batchLocked" @click="openDedupe">去重</el-button>
       <el-button type="danger" plain :icon="Delete" :disabled="batchLocked" @click="openBatchDelete">批量删除</el-button>
       <el-button type="primary" :icon="Plus" :disabled="batchLocked" @click="openCreate">添加凭据</el-button>
     </div>
@@ -2410,6 +2514,99 @@ onMounted(async () => {
         >
           删除 {{ deletePickIds.length }} 条
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="dedupeVisible"
+      title="凭据去重"
+      width="760px"
+      :close-on-click-modal="false"
+      :show-close="!dedupeResolving"
+    >
+      <div class="pick-toolbar">
+        <el-checkbox
+          :model-value="dedupeAllChecked"
+          :indeterminate="dedupeIndeterminate"
+          :disabled="dedupeScanning || dedupeResolving"
+          @change="onDedupePickAll"
+        >全选</el-checkbox>
+        <span class="pick-count text-muted">
+          扫描范围 {{ dedupeScopeIds.length }} / {{ vaultStore.credentials.length }}
+        </span>
+        <el-button
+          size="small"
+          type="primary"
+          :loading="dedupeScanning"
+          :disabled="!dedupeScopeIds.length || dedupeResolving"
+          @click="scanDuplicates"
+        >检测重复</el-button>
+      </div>
+
+      <div v-if="!dedupeScanned" class="pick-list">
+        <el-checkbox-group v-model="dedupeScopeIds">
+          <div v-for="row in vaultStore.credentials" :key="row.id" class="pick-row">
+            <el-checkbox :value="row.id" :disabled="dedupeScanning">
+              <span class="pick-name">{{ row.name }}</span>
+              <span class="pick-type text-muted">{{ typeLabel(row.credential_type) }}</span>
+            </el-checkbox>
+          </div>
+        </el-checkbox-group>
+        <el-empty
+          v-if="!vaultStore.credentials.length"
+          description="暂无可去重的凭据"
+          :image-size="60"
+        />
+      </div>
+
+      <div v-else class="dedupe-results">
+        <el-empty
+          v-if="!dedupeGroups.length"
+          description="未发现重复凭据"
+          :image-size="60"
+        />
+        <div v-for="(group, gi) in dedupeGroups" :key="gi" class="dedupe-group">
+          <div class="dedupe-head">
+            <strong>{{ group.plugin_name }}</strong>
+            <span class="dedupe-match text-muted">
+              重复依据：
+              <template v-if="group.match && group.match.length">
+                <template v-for="(m, mi) in group.match" :key="m.key">
+                  <span v-if="mi">、</span>{{ m.label }} {{ m.masked }}
+                </template>
+              </template>
+              <template v-else>敏感字段值重合</template>
+            </span>
+          </div>
+          <el-radio-group
+            v-model="dedupeKeep[gi]"
+            class="dedupe-items"
+            :disabled="dedupeResolving"
+          >
+            <el-radio v-for="item in group.items" :key="item.id" :value="item.id" class="dedupe-item">
+              <span class="dedupe-name">{{ item.name }}</span>
+              <span class="dedupe-meta text-muted">
+                {{ item.group_name || '未分组' }} · {{ item.notes || '无备注' }} ·
+                更新于 {{ formatDateTimeFull(item.updated_at) }}
+              </span>
+            </el-radio>
+          </el-radio-group>
+          <el-checkbox
+            v-model="dedupeMergeNotes[gi]"
+            :disabled="dedupeResolving"
+          >把其他项的「描述 / 备注」合并到保留项</el-checkbox>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button :disabled="dedupeResolving" @click="dedupeVisible = false">取消</el-button>
+        <el-button v-if="dedupeScanned" :disabled="dedupeResolving" @click="dedupeScanned = false">重新选择范围</el-button>
+        <el-button
+          type="primary"
+          :loading="dedupeResolving"
+          :disabled="!dedupeScanned || !dedupeGroups.length"
+          @click="applyDedupe"
+        >应用去重</el-button>
       </template>
     </el-dialog>
 
@@ -3064,6 +3261,60 @@ onMounted(async () => {
 .pick-type {
   margin-left: 8px;
   font-size: 12px;
+}
+
+.dedupe-results {
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.dedupe-group {
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+}
+
+.dedupe-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.dedupe-match {
+  font-size: 12px;
+}
+
+.dedupe-items {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.dedupe-item {
+  height: auto;
+  margin-right: 0;
+  padding: 4px 0;
+}
+
+.dedupe-item :deep(.el-radio__label) {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.dedupe-name {
+  font-weight: 500;
+}
+
+.dedupe-meta {
+  font-size: 12px;
+  word-break: break-all;
 }
 
 .ctx-mask {

@@ -567,7 +567,168 @@ def check_duplicate_credential(credential_type: str, data: dict) -> list:
     return matches
 
 
-# ── Groups ────────────────────────────────────────────────
+# ── 去重 ──────────────────────────────────────────────────
+
+# 去重时可合并的「描述类」字段（按 manifest 里常见的字段名）。
+_DEDUPE_TEXT_KEYS = ("notes", "description", "remark")
+
+
+def find_duplicate_credentials(
+    credential_ids: Optional[list] = None,
+    group_id: Optional[int] = None,
+    credential_type: Optional[str] = None,
+    credential_types: Optional[list] = None,
+    search: Optional[str] = None,
+) -> dict:
+    """在指定范围内查找「同类型 + 敏感字段值完全相同」的凭据组。
+
+    与新增时的 ``check_duplicate_credential``（任一敏感值重合即提示）不同，去重按**完整
+    敏感字段组合**判定：只有全部非空敏感字段都相同才算同一把凭据，避免把「同一个 Access
+    Key ID、不同 Secret」这类条目误删。只在同一 ``credential_type`` 内比对。
+    """
+    key = _get_key()
+    if key is None:
+        return {"ok": False, "message": "保险库已锁定"}
+
+    creds = db.list_credentials(group_id=group_id, credential_type=credential_type,
+                                search=search, credential_types=credential_types or None)
+    if credential_ids:
+        wanted = {int(i) for i in credential_ids}
+        creds = [c for c in creds if int(c["id"]) in wanted]
+
+    plugins = {p["credential_type"]: p for p in db.list_plugins()}
+    data_cache: dict[int, dict] = {}
+    schema_cache: dict[str, list[tuple[str, str]]] = {}
+    grouped: dict[tuple, list[int]] = {}
+
+    for idx, cred in enumerate(creds):
+        ctype = cred["credential_type"]
+        record = plugins.get(ctype)
+        if not record:
+            continue
+        sens = schema_cache.get(ctype)
+        if sens is None:
+            sens = [(f["key"], f.get("label") or f["key"])
+                    for f in record.get("fields_schema", []) if f.get("sensitive")]
+            schema_cache[ctype] = sens
+        if not sens:
+            continue
+        try:
+            data = decrypt_dict(key, cred["data_encrypted"])
+        except Exception:  # noqa: BLE001 - 单条解不开就跳过，不影响整体扫描
+            continue
+        values = {}
+        for fkey, _flabel in sens:
+            value = data.get(fkey)
+            if isinstance(value, str) and value.strip():
+                values[fkey] = value.strip()
+        if not values:
+            continue
+        data_cache[idx] = data
+        grouped.setdefault((ctype, tuple(sorted(values.items()))), []).append(idx)
+
+    groups = []
+    for (ctype, values), members in grouped.items():
+        if len(members) < 2:
+            continue
+        record = plugins.get(ctype) or {}
+        label_map = dict(schema_cache.get(ctype) or [])
+        match = [
+            {"key": fkey, "label": label_map.get(fkey, fkey), "masked": mask_secret(value)}
+            for fkey, value in values
+        ]
+        items = []
+        for idx in members:
+            cred = creds[idx]
+            data = data_cache[idx]
+            items.append({
+                "id": cred["id"],
+                "name": cred["name"],
+                "credential_type": ctype,
+                "group_id": cred.get("group_id"),
+                "group_name": cred.get("group_name"),
+                "notes": str(data.get("notes") or ""),
+                "status": cred.get("status") or "unknown",
+                "created_at": cred.get("created_at"),
+                "updated_at": cred.get("updated_at"),
+                "last_verified_at": cred.get("last_verified_at"),
+            })
+        items.sort(key=lambda x: (x.get("created_at") or "", x["id"]))
+        groups.append({
+            "credential_type": ctype,
+            "plugin_name": record.get("name") or ctype,
+            "match": match,
+            "items": items,
+        })
+
+    groups.sort(key=lambda g: (-len(g["items"]), g["plugin_name"]))
+    return {
+        "ok": True,
+        "scanned": len(creds),
+        "groups": groups,
+        "group_count": len(groups),
+        "duplicate_count": sum(len(g["items"]) for g in groups),
+    }
+
+
+def resolve_duplicate_group(keep_id: int, remove_ids: list, merge_notes: bool = False) -> dict:
+    """去重：保留 ``keep_id``，删除 ``remove_ids``；可选把描述/备注合并到保留项。
+
+    合并只动 ``notes`` / ``description`` / ``remark`` 这类描述字段，保留项的其他字段
+    （Base URL 等）以保留项自身为准。删除与更新都在解锁态下进行。
+    """
+    key = _get_key()
+    if key is None:
+        return {"ok": False, "message": "保险库已锁定"}
+
+    keep_id = int(keep_id)
+    keep = db.get_credential(keep_id)
+    if not keep:
+        return {"ok": False, "message": "保留项不存在"}
+    remove_ids = [int(i) for i in (remove_ids or []) if int(i) != keep_id]
+    if not remove_ids:
+        return {"ok": True, "kept": keep_id, "deleted": 0}
+
+    removed = []
+    for rid in remove_ids:
+        cred = db.get_credential(rid)
+        if not cred:
+            continue
+        if cred["credential_type"] != keep["credential_type"]:
+            return {"ok": False, "message": "只能合并同一插件类型的凭据"}
+        removed.append(cred)
+    if not removed:
+        return {"ok": True, "kept": keep_id, "deleted": 0}
+
+    if merge_notes:
+        try:
+            keep_data = decrypt_dict(key, keep["data_encrypted"])
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "message": "保留项数据解密失败，未做任何修改"}
+        plugin_record = db.get_plugin_by_type(keep["credential_type"]) or {}
+        schema_keys = {f["key"] for f in plugin_record.get("fields_schema", [])}
+        # 只合并插件确实声明过的描述字段；插件已被删除时退回常见字段名
+        merge_fields = [f for f in _DEDUPE_TEXT_KEYS if not schema_keys or f in schema_keys]
+        for field in merge_fields:
+            values = []
+            for cred in [keep, *removed]:
+                try:
+                    data = decrypt_dict(key, cred["data_encrypted"])
+                except Exception:  # noqa: BLE001
+                    continue
+                value = data.get(field)
+                if isinstance(value, str) and value.strip():
+                    values.append(value.strip())
+            unique = list(dict.fromkeys(values))
+            if unique:
+                keep_data[field] = "\n".join(unique)
+        updated = update_credential(keep_id, data=keep_data)
+        if isinstance(updated, dict) and updated.get("error"):
+            return {"ok": False, "message": updated.get("message") or "更新保留项失败，未删除任何条目"}
+
+    deleted = db.delete_credentials([c["id"] for c in removed])
+    push_event("vault:credentials_changed")
+    return {"ok": True, "kept": keep_id, "deleted": deleted, "merged_notes": bool(merge_notes)}
 
 def list_groups() -> list:
     return db.list_groups()

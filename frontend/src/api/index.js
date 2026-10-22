@@ -193,6 +193,12 @@ export const api = {
   getBatchOptions: () => call('get_batch_options'),
   checkDuplicateCredential: (credentialType, data) =>
     call('check_duplicate_credential', credentialType, data),
+  findDuplicateCredentials: (credentialIds = null, groupId = null, credentialType = null,
+    credentialTypes = null, search = null) =>
+    call('find_duplicate_credentials', credentialIds, groupId, credentialType,
+      credentialTypes, search),
+  resolveDuplicateGroup: (keepId, removeIds, mergeNotes = false) =>
+    call('resolve_duplicate_group', keepId, removeIds, mergeNotes),
 
   // ── 分组 ────────────────────────────────────────────────
   listGroups: () => call('list_groups'),
