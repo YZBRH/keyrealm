@@ -480,7 +480,7 @@ export function createMockApi() {
       })
       const buckets = new Map()
       for (const c of rows) {
-        const k = `${c.credential_type} ${c.secret}`
+        const k = `${c.credential_type}\u0000${c.secret}`
         if (!buckets.has(k)) buckets.set(k, [])
         buckets.get(k).push(c)
       }
