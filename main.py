@@ -968,11 +968,23 @@ def main():
     webview_dir.mkdir(parents=True, exist_ok=True)
     _icon_file = resource_dir() / "assets" / "icon.ico"
     _icon = str(_icon_file) if _icon_file.is_file() else None
+    # pywebview 在 private_mode=False 时固定用 42001 端口托管前端。同一台机器上若已有一份
+    # Keyrealm（例如 Windows 侧的程序）占着该端口，本进程会绑定失败，但窗口仍会访问
+    # 127.0.0.1:42001——加载到**另一份程序的旧前端**（窗口是本进程的，内容却是别人的）。
+    # 用 KEYREALM_HTTP_PORT 可显式换端口规避；不设置时保持原有默认行为。
+    _http_port = 0
     try:
-        webview.start(
-            debug=False, private_mode=False, storage_path=str(webview_dir), icon=_icon,
-            gui=_preferred_gui(),
-        )
+        _http_port = int(os.environ.get("KEYREALM_HTTP_PORT", "0") or 0)
+    except ValueError:
+        _http_port = 0
+    _start_kwargs = dict(
+        debug=False, private_mode=False, storage_path=str(webview_dir), icon=_icon,
+        gui=_preferred_gui(),
+    )
+    if _http_port:
+        _start_kwargs["http_port"] = _http_port
+    try:
+        webview.start(**_start_kwargs)
     except Exception as exc:  # noqa: BLE001
         # 缺 libxcb-cursor、或没有 GUI 后端：先把服务收干净，再给一段能照着做的指引、
         # 干净退出——不甩 traceback（对用户毫无用处，尤其对预编译包）。
