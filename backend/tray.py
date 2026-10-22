@@ -144,7 +144,12 @@ def _get_icon_color() -> str:
 
 
 def _update_icon():
-    if _tray_icon:
+    if not _tray_icon:
+        return
+    # 托盘是辅助功能：X11 下 pystray 用 latin-1 写 WM_NAME，中文标题会抛
+    # UnicodeEncodeError；托盘未挂载时更新也会失败。任何异常都不能冒泡到
+    # unlock / 验证等主流程（否则 WSLg 这类没有系统托盘的桌面会连解锁都失败）。
+    try:
         color = _get_icon_color()
         _tray_icon.icon = _make_icon_image(color)
         status = {}
@@ -153,11 +158,14 @@ def _update_icon():
                 status = _get_status_cb()
             except Exception:
                 pass
-        mcp = "运行中" if status.get("mcp_running") else "已停止"
+        # 标题保持 ASCII：X11 的 pystray 后端按 latin-1 编码 WM_NAME
+        mcp = "running" if status.get("mcp_running") else "stopped"
         port = status.get("mcp_port", 8765)
         tokens = status.get("active_tokens", 0)
-        locked = "已锁定" if status.get("is_locked") else "已解锁"
-        _tray_icon.title = f"Keyrealm | MCP: {mcp} :{port} | Token: {tokens} | {locked}"
+        locked = "locked" if status.get("is_locked") else "unlocked"
+        _tray_icon.title = f"Keyrealm | MCP: {mcp} :{port} | Tokens: {tokens} | {locked}"
+    except Exception as exc:  # noqa: BLE001 - 托盘刷新失败不影响主流程
+        _log.debug("刷新托盘状态失败：%s", exc)
 
 
 def _on_show(icon, item):
