@@ -390,6 +390,9 @@ class VaultApi:
     def open_log_file(self, name: str):
         return api.open_log_file(name)
 
+    def open_external_url(self, url: str):
+        return api.open_external_url(url)
+
     # ── 程序内更新 ────────────────────────────────────────
     def update_check(self, kind: str = "formal"):
         return api.update_check(kind)
