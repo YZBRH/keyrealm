@@ -22,6 +22,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 CONFIG_FILENAME = "keyrealm.conf.json"
+# onedir 发行布局：启动器在入口目录，应用本体在 `<入口>/runtime/`。
+RUNTIME_DIR_NAME = "runtime"
+APP_DIR_ENV = "KEYREALM_APP_DIR"
 
 # 解析结果（由 configure_data_dir 在进程启动早期写入）
 _data_dir_override: Optional[Path] = None
@@ -36,12 +39,29 @@ def is_frozen() -> bool:
 
 def _entry_dir() -> Path:
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        # onedir 布局：应用在 `<入口>/runtime/`，用户内容（plugins/data/配置）在入口目录。
+        # 启动器会显式传 KEYREALM_APP_DIR；直接运行 runtime 里的 exe 时按父目录名回退。
+        override = os.environ.get(APP_DIR_ENV, "").strip()
+        if override:
+            try:
+                return Path(override).resolve()
+            except OSError:
+                pass
+        exe = Path(sys.executable).resolve()
+        # 只认 PyInstaller 6 的 onedir 布局（runtime/ 下有 _internal/）；否则一个碰巧
+        # 叫 runtime 的旧 onefile 目录会被误判成上了两层。
+        if exe.parent.name == RUNTIME_DIR_NAME and (exe.parent / "_internal").is_dir():
+            return exe.parent.parent
+        return exe.parent
     return Path(__file__).resolve().parent.parent
 
 
 def resource_dir() -> Path:
-    """随包只读资源根目录（frontend/dist 等）。冻结时指向 _MEIPASS 解压目录。"""
+    """随包只读资源根目录（frontend/dist 等）。
+
+    onefile 指向临时解压目录；onedir 指向 ``runtime/_internal``（PyInstaller 同样通过
+    ``sys._MEIPASS`` 暴露）。源码运行指向项目根。
+    """
     if is_frozen():
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:

@@ -58,10 +58,21 @@ class AutostartError(RuntimeError):
 def launch_argv() -> list[str]:
     """推导开机启动时执行的命令行。
 
-    - **冻结**（PyInstaller）：直接执行可执行文件本身；
+    - **冻结**（启动器 + onedir）：优先执行**入口目录的启动器**（应用自己跑在 ``runtime/`` 里，
+      启动器才是稳定入口；用户改过名时用 ``KEYREALM_LAUNCHER``）；
     - **源码运行**：``<python> <项目根>/main.py --gui``（源码模式必须显式指定 --gui）。
     """
     if is_frozen():
+        override = os.environ.get("KEYREALM_LAUNCHER", "").strip()
+        if override:
+            try:
+                if Path(override).is_file():
+                    return [override]
+            except OSError:
+                pass
+        candidate = app_dir() / Path(sys.executable).name
+        if (app_dir() / "runtime").is_dir() and candidate.is_file():
+            return [str(candidate)]
         return [sys.executable]
     return [sys.executable, str(app_dir() / "main.py"), "--gui"]
 
