@@ -49,7 +49,7 @@ def _entry_dir() -> Path:
                 pass
         exe = Path(sys.executable).resolve()
         # 只认 PyInstaller 6 的 onedir 布局（runtime/ 下有 _internal/）；否则一个碰巧
-        # 叫 runtime 的旧 onefile 目录会被误判成上了两层。
+        # 一个碰巧叫 runtime 的普通目录会被误判成上了两层。
         if exe.parent.name == RUNTIME_DIR_NAME and (exe.parent / "_internal").is_dir():
             return exe.parent.parent
         return exe.parent

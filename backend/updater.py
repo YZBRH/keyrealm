@@ -331,8 +331,8 @@ def _exe_name() -> str:
 def _launcher_path(root: Optional[Any] = None) -> Optional[Path]:
     """当前发行布局里的启动器路径（``<入口>/Keyrealm``）；不是该布局返回 None。
 
-    只有「入口有启动器、且 ``runtime/<同名 exe>`` 存在」才算新布局。源码运行与旧版
-    onefile 部署都会回落到原来的自更新方式。启动器可被用户改名：它会把真实路径经
+    只有「入口有启动器、且 ``runtime/<同名 exe>`` 存在」才算新布局。源码运行会回落到
+    原来的自更新方式。启动器可被用户改名：它会把真实路径经
     ``KEYREALM_LAUNCHER`` 传给应用。
     """
     base = repo_root(root)
@@ -756,7 +756,7 @@ def install_bundle(src: Path, root: Path) -> dict:
     except OSError as exc:
         return {"ok": False, "message": f"安装配套文件失败：{exc}{_busy_hint(exc)}"}
 
-    # 非启动器路径（源码 / 旧版 onefile）没有「新应用存活」的判定者，旧运行时只能立即删除；
+    # 源码运行路径没有「新应用存活」的判定者，旧运行时只能立即删除；
     # 启动器路径在 ``launcher.install_bundle`` 中保留 runtime.old，待新应用正常启动后再清。
     shutil.rmtree(old, ignore_errors=True)
     return {"ok": True}
@@ -2634,7 +2634,7 @@ def _finish(root: Path, kind: str, frm: str, result: dict, stages: list,
 # ── 应用内入口：交棒 ──────────────────────────────────────
 
 def _self_update_argv(root: Path, kind: str) -> list[str]:
-    """「更新进程」的命令：新布局交给启动器安装；源码 / 旧版 onefile 仍由自身跑 updater。
+    """「更新进程」的命令：新布局交给启动器安装；源码运行仍由自身跑 updater。
 
     新布局（``<入口>/Keyrealm`` + ``runtime/``）下，运行中的应用无法替换自己所在的
     ``runtime/``，必须由启动器（独立进程、不在 runtime 里）来完成安装。

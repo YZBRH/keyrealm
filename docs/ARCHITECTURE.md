@@ -758,19 +758,19 @@ pywebview 没有「再次显示」事件可挂（`Form.Shown` 只触发一次，
 **交棒时序（顺序不可颠倒）**：应用内 `start_update()` 完成准备并推 `vault:update_ready` → 用户确认
 「立即重启」→ `apply_prepared_update()` → 写 `data/.update-request.json`（含 `relaunch` 参数）→
 `spawn_detached()` 把**启动器**起成**脱离进程**（冻结发行版用 `Keyrealm --apply-update <渠道>`；
-源码运行 / 旧版 onefile 仍用 `Keyrealm --self-update <渠道>` 或 `python main.py --self-update`，
+源码运行用 `python main.py --self-update`，
 都追加 `--data-dir <当前目录>`；**两平台都用脱离进程 + 日志文件，不弹控制台窗口**，
 POSIX 走 `start_new_session`）→ **确认子进程起来之后**才调 `_close_quit_cb()`（= `main._quit_app`）退出。
 
 **启动器安装**：启动器**抢应用的单实例锁**（拿到 = 应用已退出）并一直持有 → 把包解到
-`.update-new/` → 同步 `plugins/` 与 `.update-meta/` → 换启动器 → **最后**把 `runtime/` 改名为
-`runtime.old/`、新运行时 rename 到 `runtime/` → 以
+`.update-new/` → 合并 `plugins/` → 启动器写到 `.new` 暂存 → **把 `runtime/` 改名为 `runtime.old/`、
+新运行时 rename 到 `runtime/`（提交点）** → 原子换启动器 → 复制 `.update-meta/` → 以
 `runtime/Keyrealm --self-update finish <渠道> --no-lock --no-restart` 起**新运行时**收尾
 （`updater.finish_update`：只做数据库迁移；锁由启动器持有）。收尾成功后启动器**释放锁**、
-再经启动器拉起新应用；全程不会有第二个实例插进「应用已退出 → 替换 → 迁移」的窗口。
+再直接拉起新应用；全程不会有第二个实例插进「应用已退出 → 替换 → 迁移」的窗口。
 启动器不在 `runtime/` 里运行，所以能安全替换整个目录；应用本体从磁盘直接加载，不再每次启动解压整包。
 
-**旧路径**（源码 / 旧 onefile）：`main.py --self-update` 直接跑 `updater.apply_update()`，脚本首步
+**源码运行路径**：`main.py --self-update` 直接跑 `updater.apply_update()`，脚本首步
 `wait_for_app_exit()` 轮询 `single_instance.acquire()`（拿不到锁 = 应用还在跑）；它同时**占住锁**
 保证更新期间没人能启动应用，**重启新应用前必须 `single_instance.release()`**
 （`backend/single_instance.py` 为此新增了 `release()`）。重启沿用原启动参数（`_relaunch_spec`）：

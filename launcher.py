@@ -306,69 +306,6 @@ def _app_data_dir(root: Path, argv: list[str]) -> Path:
     return Path(root) / "data"
 
 
-def _materialize_symlinks(root: Path) -> None:
-    """把「兼容旧更新器」而按普通文件存储的符号链接还原成链接。
-
-    旧版 1.4.7 的更新器不认识 zip 符号链接，会把链接目标当文本写成普通文件（Qt 的
-    `.so` 版本链接因此变成坏文件）。所以 1.5+ 的发行包把链接**按目标内容**存一份普通
-    文件，同时在 ``.update-meta/symlinks.json`` 留清单；新版启动器装好/启动时据此还原，
-    收回重复的磁盘占用。只处理 ``runtime/`` 内、且目标仍在 runtime 内的条目。
-    """
-    root = Path(root)
-    manifest = root / ".update-meta" / "symlinks.json"
-    if not manifest.is_file():
-        return
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return
-    if not isinstance(data, dict):
-        return
-
-    runtime_root = (root / RUNTIME_DIR).resolve()
-    failed = False
-    for rel, target in data.items():
-        rel_path = Path(str(rel))
-        target_text = str(target or "")
-        target_path = Path(target_text)
-        if not rel_path.parts or rel_path.is_absolute() or ".." in rel_path.parts:
-            continue
-        if rel_path.parts[0] != RUNTIME_DIR or not target_text or target_path.is_absolute():
-            continue
-        path = root / rel_path
-        tmp = path.with_name(path.name + ".keyrealm-link")
-        try:
-            if path.is_symlink():
-                continue
-            if path.exists() and not path.is_file():
-                continue
-            resolved = (path.parent / target_path).resolve()
-            try:
-                resolved.relative_to(runtime_root)
-            except ValueError:
-                continue
-            if not resolved.exists():
-                continue
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-            os.symlink(target_text, tmp)     # 先建临时链接，再原子替换，失败不丢文件
-            os.replace(tmp, path)
-        except OSError:
-            failed = True
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-            continue
-    if not failed:
-        try:
-            manifest.unlink()
-        except OSError:
-            pass
-
-
 def run_app(root: Path, argv: list[str]) -> int:
     """启动 runtime 里的应用，透传退出码。"""
     root = Path(root)
@@ -380,7 +317,6 @@ def run_app(root: Path, argv: list[str]) -> int:
         _fatal(root, f"找不到应用程序：{target}\n请重新解压完整的发行包（不要单独移动文件）。")
         return 1
 
-    _materialize_symlinks(root)
     started = time.monotonic()
     try:
         # **不强制 cwd**：CLI 的相对路径（--data-dir、export/import 的文件名）必须按
@@ -428,7 +364,7 @@ def run_app(root: Path, argv: list[str]) -> int:
                 f"3) 重新启动 Keyrealm。"
             )
         elif old_launcher.is_file():
-            # 首次从 1.4.7 onefile 迁移时没有 runtime.old，旧程序被更新器改名为 <启动器>.old。
+            # 没有 runtime.old 时，上一版启动器仍以 <启动器>.old 保留。
             message = (
                 f"Keyrealm 启动失败（退出码 {rc}）。\n\n"
                 f"回滚到上一版本：关闭本窗口后——\n"
@@ -707,13 +643,9 @@ def install_bundle(src: Path, root: Path, *, running_exe: Optional[Path] = None)
                 pass
             raise
 
-    # 5) 新 runtime 已就位：落新的链接清单。旧清单先删——复制失败时宁可不物化，
-    #    也不能拿旧清单作用到新运行时上（链接目标可能已经不存在）。
+    # 5) 新 runtime 已就位：落新的更新元数据（version.json / migrations）。
+    #    复制失败只影响后续正式版更新的目标结构版本判断，不影响本次运行。
     meta_target = root / ".update-meta"
-    try:
-        (meta_target / "symlinks.json").unlink()
-    except OSError:
-        pass
     try:
         if (src / ".update-meta").is_dir():
             shutil.copytree(src / ".update-meta", meta_target, dirs_exist_ok=True)
@@ -728,7 +660,6 @@ def install_bundle(src: Path, root: Path, *, running_exe: Optional[Path] = None)
                 pass
     # 旧运行时（runtime.old）**先留着**：新应用正常跑起来后由启动器删除。启动失败时它是最直接的
     # 回滚副本（新运行时已在运行，不能删除自己所在的目录，但可以改名回来）。
-    _materialize_symlinks(root)
 
 
 def spawn_finish(root: Path, data_dir: Path, kind: str) -> tuple[subprocess.Popen, Path]:

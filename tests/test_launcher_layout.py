@@ -343,55 +343,6 @@ def test_restore_backup_honors_custom_data_dir():
         assert (root / "plugins" / "demo" / "plugin.py").exists()
 
 
-def test_materialize_symlinks_from_manifest():
-    """旧更新器把链接存成普通文件；新版启动器据清单还原为链接。"""
-    import json
-    with tempfile.TemporaryDirectory(prefix="kr-linkmanifest-") as tmp:
-        root = Path(tmp)
-        runtime_internal = root / "runtime" / "_internal"
-        runtime_internal.mkdir(parents=True)
-        (runtime_internal / "libreal.so.1").write_text("content", encoding="utf-8")
-        (runtime_internal / "libreal.so").write_text("content", encoding="utf-8")
-        (runtime_internal / "evil").write_text("copy", encoding="utf-8")
-        meta = root / ".update-meta"
-        meta.mkdir()
-        (meta / "symlinks.json").write_text(json.dumps({
-            "runtime/_internal/libreal.so": "libreal.so.1",
-            "runtime/_internal/evil": "../../etc/passwd",
-            "keyrealm.conf.json": "outside",            # 非 runtime 条目必须忽略
-        }), encoding="utf-8")
-
-        launcher._materialize_symlinks(root)
-
-        link = runtime_internal / "libreal.so"
-        assert link.is_symlink() and os.readlink(link) == "libreal.so.1"
-        assert not (runtime_internal / "evil").is_symlink(), "越界目标不能还原"
-        assert (runtime_internal / "evil").read_text(encoding="utf-8") == "copy"
-        assert not (root / "keyrealm.conf.json").exists()
-        assert not (meta / "symlinks.json").exists(), "处理完应删除清单"
-
-
-def test_install_bundle_materializes_symlink_manifest():
-    import json
-    with tempfile.TemporaryDirectory(prefix="kr-install-links-") as tmp:
-        base = Path(tmp)
-        root = _app_root(base)
-        src = _bundle(base, "links")
-        internal = src / "runtime" / "_internal"
-        (internal / "libreal.so.1").write_text("content", encoding="utf-8")
-        (internal / "libreal.so").write_text("content", encoding="utf-8")
-        meta = src / ".update-meta"
-        meta.mkdir()
-        (meta / "symlinks.json").write_text(json.dumps({
-            "runtime/_internal/libreal.so": "libreal.so.1",
-        }), encoding="utf-8")
-
-        launcher.install_bundle(src, root, running_exe=root / NAME)
-        link = root / "runtime" / "_internal" / "libreal.so"
-        assert link.is_symlink() and os.readlink(link) == "libreal.so.1"
-        assert not (root / ".update-meta" / "symlinks.json").exists()
-
-
 def test_update_lock_excludes_second_holder():
     with tempfile.TemporaryDirectory(prefix="kr-lock-") as tmp:
         root = Path(tmp)
@@ -421,12 +372,12 @@ def test_app_dir_env_and_runtime_fallback():
             (runtime_dir / "_internal").mkdir()
             paths.sys.executable = str(runtime_dir / NAME)
             assert paths.app_dir() == root.resolve()
-            # 旧 onefile 碰巧放在名为 runtime 的目录：不能误上跳
+            # 普通目录碰巧叫 runtime：不能误上跳
             legacy = root / "legacy" / "runtime"
             legacy.mkdir(parents=True)
             paths.sys.executable = str(legacy / NAME)
             assert paths.app_dir() == legacy.resolve()
-            # 旧 onefile：exe 同级
+            # 无 runtime/_internal 的冻结布局：exe 同级
             paths.sys.executable = str(root / NAME)
             assert paths.app_dir() == root.resolve()
     finally:

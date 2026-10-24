@@ -337,9 +337,8 @@ keyrealm/
   `plugins/` + `.update-meta/`）打成 `Keyrealm-<版本>-<平台>.zip`（顶层一个干净目录，不散落）→ 挂到 Release。
   > 包里的 `.update-meta/`（`version.json` 记 `schema_version`/`commit`，`migrations/` 是迁移脚本）
   > 让程序内「正式版更新」在**没有源码**的机器上也能知道目标结构版本并逐级迁移——所以它必须随包走。
-  > onedir 里的符号链接（Qt 的 `.so` 版本链接）在 zip 中按**目标文件内容**存储，并写
-  > `.update-meta/symlinks.json` 清单：1.4.7 的旧更新器不认识 zip 符号链接，1.5.0 启动器
-  > 装好后会按清单还原成链接。
+  > onedir 里的符号链接（Qt 的 `.so` 版本链接）按真实链接条目写入 zip，启动器/更新器解压时
+  > 还原为链接；不再为 1.4.7 的旧更新器做普通文件兼容。
 - **手动触发**（Actions → Release → Run workflow）只产出构建产物、不发 Release，可用于验证。
 - 目标机前提：**Windows** 需 WebView2 Runtime（Win10/11 通常自带）；**macOS** 产物**未签名**，
   首次打开会被 Gatekeeper 拦，需右键→「打开」或对**解压后的整个目录**执行 `xattr -dr com.apple.quarantine <解压目录>`（`runtime/` 内文件也要清除）。
