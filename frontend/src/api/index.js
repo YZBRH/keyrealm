@@ -348,8 +348,6 @@ export const api = {
   // 并持久化（getUpdateCheckResult 可随时取回，换页 / 重启后仍在，直到被新结果替换）。
   startUpdateCheck: () => call('start_update_check'),
   getUpdateCheckResult: () => call('get_update_check_result'),
-  // 检查更新：{ok, kind, has_update, reason, current, latest, db_change, db_chain, source_ok}
-  checkUpdate: (kind = 'formal') => call('update_check', kind),
   // 上一次更新的结果（读 data/.update-status.json；无则 {}）
   updateStatus: () => call('update_status'),
   // 磁盘数据库结构版本与源码版本的差异：{ok, disk, app, needs_migration, chain}
@@ -357,11 +355,11 @@ export const api = {
   // 立即更新：**应用内先准备**（备份+下载/拉源码/装依赖/构建，带进度、可取消），
   // 准备完成后推 vault:update_ready，由弹窗确认是否立即重启（确认后走 applyPreparedUpdate）。
   // 返回 {ok, task_id, preparing}；准备进度经 vault:tasks（kind==='update'）推送。
-  startUpdate: (kind = 'formal', restart = true, terminal = 'auto') =>
-    call('start_update', kind, restart, terminal),
+  startUpdate: (kind = 'formal') =>
+    call('start_update', kind),
   // 准备完成、用户确认「立即重启」后调用：只交棒，不重新下载/构建。
-  applyPreparedUpdate: (restart = true, terminal = 'auto') =>
-    call('apply_prepared_update', restart, terminal),
+  applyPreparedUpdate: (restart = true) =>
+    call('apply_prepared_update', restart),
 }
 
 export default api

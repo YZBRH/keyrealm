@@ -9,7 +9,7 @@ import ScopeDefaultsDialog from '@/components/ScopeDefaultsDialog.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { useVaultStore } from '@/stores/vault'
 import { STATUS_OPTIONS, formatDateTimeFull, normalizeOptions, visibleFields } from '@/utils/format'
-import api from '@/api'
+import api, { EVENTS } from '@/api'
 import { inlineIcon } from '@/utils/pluginIcon'
 
 const route = useRoute()
@@ -1699,7 +1699,7 @@ function setupHeaderDrag() {
 }
 
 onBeforeUnmount(() => {
-  window.removeEventListener('vault:action_stream', onActionStream)
+  window.removeEventListener(EVENTS.actionStream, onActionStream)
   dragCleanup.forEach((fn) => fn())
   dragCleanup = []
 })
@@ -2038,7 +2038,7 @@ watch(
 )
 
 onMounted(async () => {
-  window.addEventListener('vault:action_stream', onActionStream)
+  window.addEventListener(EVENTS.actionStream, onActionStream)
   await load()
   // 首次使用（无本地记录）时默认展开全部节点
   if (!expandedKeys.value.length) {

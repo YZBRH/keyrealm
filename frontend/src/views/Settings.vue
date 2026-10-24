@@ -601,7 +601,7 @@ async function doUpdate() {
   updatePrepareTask.value = null
   updating.value = true
   try {
-    const res = await api.startUpdate(updateChannel.value, true, 'auto')
+    const res = await api.startUpdate(updateChannel.value)
     if (res && res.ok === false) {
       updating.value = false
       ElMessage.error(res.message || '无法开始更新')
