@@ -1,13 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包规格：Keyrealm 单文件可执行程序。
+"""PyInstaller 打包规格：Keyrealm 应用运行时（**onedir**，由启动器拉起）。
 
 设计要点
 --------
-- **onefile**：产出单个可执行文件（Windows 为 Keyrealm.exe）。
+- **onedir**：产出 ``Keyrealm/Keyrealm(.exe)`` + ``_internal/``。启动时直接映射磁盘上的
+  文件，不再像 onefile 那样把整包解压到临时目录——这是启动速度的主要来源。
+- 发行目录由 ``scripts/build.py`` 组装：启动器（``Launcher.spec``，onefile）在根，
+  本产物放进 ``runtime/``。入口目录仍是发行根，plugins/ 与 data/ 留在根上。
 - **只打包代码 + frontend/dist**：前端产物作为只读资源随包（运行时从 sys._MEIPASS 取）。
 - **不打包 plugins/ 与 data/**：这两者是「用户可改 / 运行时可写」内容，由构建脚本
-  以外部目录形式放到 exe 同级（见 scripts/build.py）。这样用户能直接编辑插件、
-  数据也不会写进临时解压目录而丢失。
+  以外部目录形式放到入口目录（见 scripts/build.py）。这样用户能直接编辑插件、
+  数据也不会写进包内而丢失。
 
 console 开关
 ------------
@@ -362,9 +365,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name=_APP_NAME,
     icon=_icon,
     debug=False,
@@ -381,4 +383,15 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+# onedir：二进制与数据放进 `_internal/`，与可执行文件一起构成 runtime 目录。
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name=_APP_NAME,
 )

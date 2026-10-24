@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
-"""构建 Keyrealm 单文件可执行程序。
+"""构建 Keyrealm 可执行程序（**启动器 + onedir 运行时**）。
 
 **默认输出到仓库根（`.git` 同级）**；用 `--output DIR` 可指定别处（`--output release`
 即旧行为）。跨平台：Windows 上产出 `Keyrealm.exe`，Linux/macOS 上产出 `Keyrealm`。
 **要生成 Windows exe，必须在 Windows 上运行本脚本**（PyInstaller 不能跨平台交叉编译）。
 
+发行布局
+--------
+    Keyrealm(.exe)          启动器（onefile，只依赖标准库）
+    runtime/
+      Keyrealm(.exe)        应用（onedir）
+      _internal/            全部第三方依赖与前端产物
+    plugins/                外部可改插件源码
+    data/                   运行时自动创建
+
+启动器每次启动只需解压自身（几 MB），应用本体直接从磁盘加载，不再把整包解压到临时目录。
+
 打包边界
 --------
-- 进 exe：后端代码 + frontend/dist（只读资源）。
-- 不进 exe、以外部目录放在**输出目录**下：
+- 进 runtime：后端代码 + frontend/dist（只读资源）。
+- 不进 runtime、以外部目录放在**输出目录**下：
     · plugins/  —— 插件**唯一事实来源**，用户可直接编辑（改完重启即生效）；打包源码，
                    但**不带 `.state.json`（启用/禁用）与 `.model_cache.json`（模型清单缓存）**
                    ——都是本机运行时状态，不入分发包
@@ -55,11 +66,15 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "Keyrealm.spec"
+LAUNCHER_SPEC = ROOT / "Launcher.spec"
 REQUIREMENTS = ROOT / "requirements.txt"
 FRONTEND = ROOT / "frontend"
 FRONTEND_DIST = FRONTEND / "dist"
-DIST = ROOT / "dist"      # PyInstaller 产物中转（gitignored）
-WORK = ROOT / "build"     # PyInstaller 中间文件（gitignored）
+DIST = ROOT / "dist"                  # 应用 onedir 产物（gitignored）
+WORK = ROOT / "build"                 # 应用 PyInstaller 中间文件（gitignored）
+LAUNCHER_DIST = ROOT / "dist-launcher"
+LAUNCHER_WORK = ROOT / "build-launcher"
+RUNTIME_DIR = "runtime"
 
 IS_WINDOWS = platform.system() == "Windows"
 EXE_NAME = "Keyrealm.exe" if IS_WINDOWS else "Keyrealm"
@@ -333,13 +348,8 @@ def write_build_info(gui: str = "", cli: bool = False) -> None:
         print(f"发布包档   : {flavor}")
 
 
-def run_pyinstaller(console: bool, allow_missing: bool = False, cli: bool = False) -> None:
-    """调用当前解释器的 PyInstaller，按 spec 打包到 dist/。
-
-    ``--allow-missing-deps`` 必须**透传给 spec**：spec 自己也会对那几个「静态分析看不到」
-    的隐式依赖（socksio / PySocks / telethon / python-socks）做检查，缺了默认直接中止构建。
-    不透传的话，本脚本放行了、spec 照样会停，flag 等于白给。
-    """
+def run_pyinstaller(console: bool, allow_missing: bool = False, cli: bool = False) -> Path:
+    """按 spec 打包应用 onedir 到 ``dist/<名称>/``，返回运行时目录。"""
     if not FRONTEND_DIST.exists():
         sys.exit(
             "未找到 frontend/dist —— 前端尚未构建。\n"
@@ -381,22 +391,67 @@ def run_pyinstaller(console: bool, allow_missing: bool = False, cli: bool = Fals
     )
 
     built = DIST / EXE_NAME
-    if not built.exists():
-        sys.exit(f"PyInstaller 结束但未找到产物：{built}")
+    if not built.is_dir() or not (built / EXE_NAME).is_file():
+        sys.exit(f"PyInstaller 结束但未找到 onedir 产物：{built}")
+    return built
 
 
-def assemble_release(out_dir: Path) -> Path:
-    """把 dist/ 中的可执行文件与外部 plugins/ 组装进 ``out_dir``。
+def run_launcher_build(cli: bool = False) -> Path:
+    """打包启动器（onefile）到 ``dist-launcher/``，返回可执行文件路径。"""
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    if cli:
+        env["KEYREALM_CLI"] = "1"
+    else:
+        env.pop("KEYREALM_CLI", None)
+    env.pop("CV_CONSOLE", None)
 
-    ``out_dir`` 默认是**仓库根**（`.git` 同级）；``--output release`` 即旧行为。
+    _run(
+        [
+            sys.executable, "-m", "PyInstaller",
+            "--clean", "--noconfirm",
+            "--distpath", str(LAUNCHER_DIST),
+            "--workpath", str(LAUNCHER_WORK),
+            str(LAUNCHER_SPEC),
+        ],
+        cwd=ROOT,
+        env=env,
+    )
+
+    built = LAUNCHER_DIST / EXE_NAME
+    if not built.is_file():
+        sys.exit(f"PyInstaller 结束但未找到启动器：{built}")
+    return built
+
+
+def assemble_release(out_dir: Path, runtime_src: Path, launcher_src: Path) -> Path:
+    """把 onedir 运行时、启动器与外部 plugins/ 组装进 ``out_dir``。
+
+    ``out_dir`` 默认是**仓库根**（``.git`` 同级）；``--output release`` 即旧行为。
+    布局：``<out>/Keyrealm``（启动器）+ ``<out>/runtime/``（应用）+ ``<out>/plugins/``。
     """
-    built = DIST / EXE_NAME
-    if not built.exists():
-        sys.exit(f"未找到构建产物：{built}")
+    if not (runtime_src / EXE_NAME).is_file():
+        sys.exit(f"未找到运行时产物：{runtime_src / EXE_NAME}")
+    if not launcher_src.is_file():
+        sys.exit(f"未找到启动器产物：{launcher_src}")
 
     # 不整体清空 out_dir：保留其中已存在的 data/（运行时数据，备份在 data/backup/）等无关文件，
-    # 只替换本脚本负责的 exe（与、必要时、plugins/）。
+    # 只替换本脚本负责的启动器、runtime/ 与 plugins/。
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 先装 runtime/（整目录替换，避免旧版本残留）；随后再换启动器。
+    # 先复制到临时目录再整体换名：中途失败不会把正在使用的 runtime/ 删成半截。
+    runtime_dest = out_dir / RUNTIME_DIR
+    runtime_new = out_dir / ".runtime-new"
+    shutil.rmtree(runtime_new, ignore_errors=True)
+    shutil.copytree(runtime_src, runtime_new, symlinks=True)
+    # 先把旧运行时改名让位（而不是直接删除）：万一应用还在运行，Windows 上 rename 能成功、
+    # 删除会失败；失败时也保留旧目录，不会得到半截运行时。
+    runtime_old = out_dir / (RUNTIME_DIR + ".old")
+    shutil.rmtree(runtime_old, ignore_errors=True)
+    if runtime_dest.exists():
+        os.replace(runtime_dest, runtime_old)
+    os.replace(runtime_new, runtime_dest)
+    shutil.rmtree(runtime_old, ignore_errors=True)
 
     exe_dest = out_dir / EXE_NAME
     if exe_dest.exists():
@@ -408,7 +463,9 @@ def assemble_release(out_dir: Path) -> Path:
         except OSError:
             pass
         exe_dest.replace(old)
-    shutil.copy2(built, exe_dest)
+    shutil.copy2(launcher_src, exe_dest)
+    if not IS_WINDOWS:
+        exe_dest.chmod(exe_dest.stat().st_mode | 0o111)
 
     # 外部可改插件目录：复制源码形式的 plugins/（manifest.json + plugin.py）
     # 排除 __pycache__/*.pyc，避免把构建机的字节码带进分发包；
@@ -440,33 +497,34 @@ def assemble_release(out_dir: Path) -> Path:
             shutil.rmtree(stale_cache)
 
     # data/ 其余内容不预建，应用首次运行时自动创建
-    if not exe_dest.is_file():
-        sys.exit(f"装配后未找到产物：{exe_dest}（输出目录是否被清理/占用？）")
+    if not exe_dest.is_file() or not (runtime_dest / EXE_NAME).is_file():
+        sys.exit(f"装配后产物不完整：{exe_dest} / {runtime_dest / EXE_NAME}")
     return exe_dest
 
 
-def smoke_test(exe: Path, out_dir: Path) -> None:
-    """运行 exe --print-paths 校验冻结后的路径解析（需控制台构建）。"""
+def smoke_test(exe: Path, out_dir: Path) -> bool:
+    """运行启动器 --print-paths 校验冻结后的路径解析（需控制台构建）。"""
     print("\n=== 冒烟校验：--print-paths ===", flush=True)
     result = run_capture([str(exe), "--print-paths"], timeout=120)
     print(result.stdout, end="")
     if result.stderr:
         print("[stderr]", result.stderr, end="")
-    # 校验关键路径落在 out_dir 下、frontend 随包
-    ok = True
+    ok = result.returncode == 0
     out = result.stdout
     if str(out_dir) not in out:
         print(f"✗ app_dir / db / plugins 未指向输出目录（{out_dir}）")
         ok = False
-    if "frontend_index" in out and "_MEI" not in out.split("frontend_index", 1)[1].splitlines()[0]:
-        # 冻结后 frontend 应来自 _MEIPASS（临时解压目录，路径含 _MEI）
-        print("✗ frontend_index 未指向包内 _MEIPASS 资源")
+    # onedir：前端资源来自 runtime/_internal
+    frontend_line = next((ln for ln in out.splitlines() if ln.startswith("frontend_index")), "")
+    if frontend_line and RUNTIME_DIR not in frontend_line:
+        print("✗ frontend_index 未指向 runtime/_internal 内的包资源")
         ok = False
     print("冒烟校验：", "通过 ✓" if ok else "存在问题 ✗")
+    return ok
 
 
 def clean_intermediates() -> None:
-    for d in (DIST, WORK):
+    for d in (DIST, WORK, LAUNCHER_DIST, LAUNCHER_WORK):
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
 
@@ -480,7 +538,7 @@ def human_size(n: int) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="构建 Keyrealm 单文件可执行程序（默认输出到仓库根）")
+    ap = argparse.ArgumentParser(description="构建 Keyrealm（启动器 + onedir 运行时；默认输出到仓库根）")
     ap.add_argument("--frontend", action="store_true", help="构建前先执行 npm run build")
     ap.add_argument("--output", "-o", default=str(ROOT),
                     help="产物落点目录（默认：仓库根，即 .git 同级；传 release 即旧行为）")
@@ -525,7 +583,7 @@ def main() -> None:
     print(f"目标平台   : {platform.system()} {platform.machine()}")
     print(f"Python     : {sys.version.split()[0]}")
     print(f"解释器     : {sys.executable}")
-    print(f"产物名     : {EXE_NAME}")
+    print(f"产物名     : {EXE_NAME}（启动器）+ {RUNTIME_DIR}/（onedir 运行时）")
     print(f"输出目录   : {out_dir}")
     print(f"控制台模式 : {console}")
     print(f"构建形态   : {'CLI（无桌面窗口）' if args.cli else '桌面版（含窗口与托盘）'}")
@@ -539,17 +597,21 @@ def main() -> None:
 
     if args.frontend:
         build_frontend()
-    run_pyinstaller(console, args.allow_missing_deps, args.cli)
-    exe = assemble_release(out_dir)
+    runtime_src = run_pyinstaller(console, args.allow_missing_deps, args.cli)
+    launcher_src = run_launcher_build(args.cli)
+    exe = assemble_release(out_dir, runtime_src, launcher_src)
 
     if not args.keep_intermediates:
         clean_intermediates()
 
     if args.smoke:
         try:
-            smoke_test(exe, out_dir)
+            ok = smoke_test(exe, out_dir)
         except Exception as e:
-            print(f"冒烟校验执行失败（可忽略，多为无显示环境）：{e}", file=sys.stderr)
+            print(f"冒烟校验执行失败：{e}", file=sys.stderr)
+            ok = False
+        if not ok:
+            sys.exit(1)
 
     # 汇总产物
     at_root = out_dir == ROOT
@@ -557,11 +619,21 @@ def main() -> None:
     print(f"构建完成 → {out_dir}")
     print("=" * 60)
     if exe.is_file():
-        print(f"  {EXE_NAME:<20s} {human_size(exe.stat().st_size)}")
+        print(f"  {EXE_NAME:<20s} {human_size(exe.stat().st_size)}（启动器）")
     else:
         # 走到这里说明装配之后产物又被删了（例如把 output 指到了会被清理的目录）。
         # 明确报出来而不是在 stat() 上抛 FileNotFoundError。
         sys.exit(f"✗ 产物不见了：{exe}")
+    runtime_dir = out_dir / RUNTIME_DIR
+    if runtime_dir.is_dir():
+        runtime_size = 0
+        for item in runtime_dir.rglob("*"):
+            try:
+                if item.is_symlink() or item.is_file():
+                    runtime_size += item.lstat().st_size   # 链接算链接本身，别把目标文件重复算一遍
+            except OSError:
+                pass
+        print(f"  {'runtime/':<20s} {human_size(runtime_size)}（应用 onedir）")
     if at_root:
         print("  落点即仓库根：plugins/ 就是源码目录本身（未另存副本），data/ 为运行时数据目录。")
     else:

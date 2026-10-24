@@ -102,14 +102,14 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: 构建（前端 + PyInstaller）
+      - name: 构建（前端 + 启动器 + onedir 运行时）
         # --gui 只在 Linux 桌面上有意义；--cli 构建无窗口版本（不打包 pywebview/PySide6/托盘）。
-        # --output release：产物落到 release/（可执行文件 + plugins/），便于整目录打包。
+        # --output release：产物落到 release/（Keyrealm 启动器 + runtime/ + plugins/），便于整目录打包。
         run: python scripts/build.py --frontend --output release ${{ matrix.gui && format('--gui {0}', matrix.gui) || '' }} ${{ matrix.cli && '--cli' || '' }}
 
       - name: 冒烟（冻结包能否启动、能否加载界面后端）
         # 在**真正的构建系统**上验证产物自洽（顶层 import 会拉起 gi / WebKit2 等后端）——
-        # 这正是跨发行版跑不出来的结论。`--print-paths` 只做初始化、不开窗口，适合无头 runner。
+        # 这正是跨发行版跑不出来的结论。`--print-paths` 经启动器拉起 runtime，只做初始化、不开窗口。
         # CLI 包本身不含图形层，直接跑即可。
         if: runner.os == 'Linux'
         run: |
@@ -124,10 +124,15 @@ jobs:
         # 迁移脚本也随包分发，否则没源码的机器无法逐级迁移。
         shell: python
         run: |
-          import json, shutil, sys
+          import json, os, shutil, sys
           from pathlib import Path
           sys.path.insert(0, ".")
           from backend import version
+          ref = os.environ.get("GITHUB_REF_NAME", "")
+          if ref.startswith("v") and ref[1:] != version.APP_VERSION:
+              raise SystemExit(
+                  f"版本号不一致：tag={ref}，backend/version.py APP_VERSION={version.APP_VERSION}；"
+                  "请先提升版本号再打 tag。")
           meta = Path("release/.update-meta")
           (meta / "migrations").mkdir(parents=True, exist_ok=True)
           (meta / "version.json").write_text(json.dumps({
@@ -144,7 +149,7 @@ jobs:
         env:
           PKG_NAME: ${{ matrix.pkg }}
         run: |
-          import os, sys, zipfile
+          import json, os, sys, zipfile
           from pathlib import Path
           sys.path.insert(0, ".")
           ref = os.environ.get("GITHUB_REF_NAME", "")
@@ -159,11 +164,26 @@ jobs:
           top = f"Keyrealm-{ver}-{pkg}"          # 解压后是一个干净的顶层目录，不散落
           out = f"{top}.zip"
           root = Path("release")
+          # 符号链接按**目标文件内容**存（旧版 1.4.7 的更新器不认识 zip 符号链接，会把它
+          # 当普通文本写出来、把 Qt 库写坏）；同时把链接清单放进 .update-meta/，
+          # 新版启动器装好后会据此把普通文件还原成符号链接、收回磁盘占用。
+          symlinks = {}
           with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
               for p in sorted(root.rglob("*")):
-                  if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc":
-                      z.write(p, f"{top}/{p.relative_to(root).as_posix()}")
-          print("打包 →", out)
+                  if "__pycache__" in p.parts or p.suffix == ".pyc":
+                      continue
+                  arc = f"{top}/{p.relative_to(root).as_posix()}"
+                  if p.is_symlink():
+                      symlinks[p.relative_to(root).as_posix()] = os.readlink(p)
+                      if not p.exists() or p.is_dir():
+                          continue          # 断链 / 目录链接无法以普通文件复制；由新启动器还原
+                      z.write(p, arc)       # 跟随链接，存目标文件内容
+                  elif p.is_file():
+                      z.write(p, arc)
+              # 即使没有链接也写一份空清单：覆盖上一版可能遗留的清单，避免旧清单作用到新运行时。
+              z.writestr(f"{top}/.update-meta/symlinks.json",
+                         json.dumps(symlinks, ensure_ascii=False, indent=2))
+          print("打包 →", out, f"（{len(symlinks)} 个符号链接已按普通文件存储）")
 
       - name: 上传构建产物（任何触发都留档）
         uses: actions/upload-artifact@v4

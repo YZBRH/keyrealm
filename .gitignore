@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+dist-launcher/
+build-launcher/
 .eggs/
 venv/
 .venv/
@@ -13,6 +15,14 @@ env/
 release/
 # 测试版更新「准备阶段」的构建落点（交棒时安装进程序目录，装完即清）
 .update-staged/
+# 启动器 + onedir 发行布局的运行目录（构建产物 / 更新中间态，不入库）
+/runtime/
+/runtime.old/
+/runtime.bad/
+/runtime.new/
+/.runtime-new/
+/.update-meta/
+/.update-new/
 # 构建产物默认落**仓库根**（.git 同级）：可执行文件本身，以及覆盖前的回滚副本 .old。
 # 注意：Keyrealm* 也会匹配 Keyrealm.spec，但该文件已被追踪，gitignore 不影响已追踪文件。
 Keyrealm*
