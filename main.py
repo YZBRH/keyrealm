@@ -1112,13 +1112,24 @@ def _attach_parent_console() -> None:
         return
     try:
         import ctypes
+        import msvcrt
 
-        if not ctypes.windll.kernel32.AttachConsole(-1):   # ATTACH_PARENT_PROCESS
-            return
-        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
-        sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        kernel32 = ctypes.windll.kernel32
+        # 已经附着到父控制台时 AttachConsole 会返回 ERROR_ACCESS_DENIED；窗口化进程的
+        # sys.stdout 仍可能是 None，所以无论返回值如何都要继续打开 CONOUT$。
+        if not kernel32.GetConsoleWindow():
+            kernel32.AttachConsole(-1)                    # ATTACH_PARENT_PROCESS
+        out = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        err = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        sys.stdout, sys.stderr = out, err
+        kernel32.SetStdHandle.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        kernel32.SetStdHandle.restype = ctypes.c_int
+        kernel32.SetStdHandle(-11, ctypes.c_void_p(msvcrt.get_osfhandle(out.fileno())))
+        kernel32.SetStdHandle(-12, ctypes.c_void_p(msvcrt.get_osfhandle(err.fileno())))
         try:
-            sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
+            inp = open("CONIN$", "r", encoding="utf-8", errors="replace")
+            sys.stdin = inp
+            kernel32.SetStdHandle(-10, ctypes.c_void_p(msvcrt.get_osfhandle(inp.fileno())))
         except OSError:
             pass
     except Exception:  # noqa: BLE001 - 无父控制台时静默降级

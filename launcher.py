@@ -208,15 +208,94 @@ def _attach_console_if_needed(argv: list[str]) -> None:
     if not any(arg in _CLI_FLAGS for arg in argv):
         return
     try:
-        if not ctypes.windll.kernel32.AttachConsole(-1):   # ATTACH_PARENT_PROCESS
-            return
-        # 附着后重新绑定 stdio：窗口化进程原来的 sys.stdout 是 None，直接 print 会丢。
+        kernel32 = ctypes.windll.kernel32
+        # 已附着到控制台时 AttachConsole 会返回 ERROR_ACCESS_DENIED；此时更需要
+        # 打开 CONOUT$（窗口化进程的 sys.stdout 仍是 None），不能直接返回。
+        if not kernel32.GetConsoleWindow():
+            # PyInstaller onefile：Python 代码的父进程是 bootloader，不是调用它的终端；
+            # AttachConsole(ATTACH_PARENT_PROCESS) 会附到没有控制台的 bootloader 上。
+            # 沿父进程链找到真正持有控制台的祖先再附着。
+            pid = os.getppid()
+            for _ in range(8):
+                if pid <= 0:
+                    break
+                if kernel32.AttachConsole(pid):
+                    break
+                pid = _parent_pid(pid)
+        _bind_console_streams()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _parent_pid(pid: int) -> int:
+    """Windows：取指定进程的父进程 PID（失败返回 0）。"""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32FirstW.restype = ctypes.c_int
+    kernel32.Process32NextW.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    snap = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)   # TH32CS_SNAPPROCESS
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return 0
+    entry = PROCESSENTRY32W()
+    entry.dwSize = ctypes.sizeof(entry)
+    try:
+        ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            if entry.th32ProcessID == pid:
+                return int(entry.th32ParentProcessID)
+            ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snap)
+    return 0
+
+
+def _bind_console_streams() -> None:
+    """把 sys.std* 接到当前控制台，并同步设置 Windows 标准句柄。
+
+    设置标准句柄是为了让随后 Popen 出来的运行时子进程也能继承可用的 stdout/stderr。
+    """
+    try:
+        out = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        err = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+    except OSError:
+        return
+    sys.stdout, sys.stderr = out, err
+    try:
+        import msvcrt
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetStdHandle.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        kernel32.SetStdHandle.restype = ctypes.c_int
+        kernel32.SetStdHandle(-11, ctypes.c_void_p(msvcrt.get_osfhandle(out.fileno())))
+        kernel32.SetStdHandle(-12, ctypes.c_void_p(msvcrt.get_osfhandle(err.fileno())))
         try:
-            sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
-            sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+            inp = open("CONIN$", "r", encoding="utf-8", errors="replace")
+            sys.stdin = inp
+            kernel32.SetStdHandle(-10, ctypes.c_void_p(msvcrt.get_osfhandle(inp.fileno())))
         except OSError:
             pass
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - 句柄同步失败不影响已重绑的 Python 流
         pass
 
 
