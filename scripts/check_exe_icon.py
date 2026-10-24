@@ -94,7 +94,6 @@ def _parse_pe(data: bytes) -> tuple[int, list[tuple[int, int, int]]]:
     sections = []
     for i in range(nsec):
         base = sec_off + i * 40
-        _name = data[base:base + 8]
         vsize, va, raw_size, raw_ptr = struct.unpack_from("<IIII", data, base + 8)
         sections.append((va, max(vsize, raw_size), raw_ptr))
     return dd_off, sections
