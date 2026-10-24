@@ -98,6 +98,23 @@ def test_invalid_config_falls_back_and_clear_deletes_it():
         assert not paths.config_file().exists()
 
 
+def test_cli_linux_asset_name_has_no_gui_flavor():
+    """CLI 版没有界面层：Linux 发布资产应为 linux-<arch>-cli，而不是 linux-general/gtk。"""
+    if not sys.platform.startswith("linux"):
+        return
+    from backend import updater
+
+    old_frozen, old_cli = updater.is_frozen, updater._is_cli_build
+    try:
+        updater.is_frozen = lambda: True
+        updater._is_cli_build = lambda: True
+        assert updater.platform_pkg() == f"linux-{updater._machine_arch()}-cli"
+        assert updater.release_asset_name("1.2.3").endswith(
+            f"linux-{updater._machine_arch()}-cli.zip")
+    finally:
+        updater.is_frozen, updater._is_cli_build = old_frozen, old_cli
+
+
 def test_modules_use_configured_dir():
     """database / logger / tasks / updater 的模块级路径必须跟着配置走。"""
     with tempfile.TemporaryDirectory(prefix="kr-paths-") as tmp:

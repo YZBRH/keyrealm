@@ -281,14 +281,16 @@ def _distro_id() -> str:
         return "linux"
 
 
-def _linux_flavor(gui: str) -> str:
+def _linux_flavor(gui: str, *, cli: bool = False) -> str:
     """Linux 上本次构建对应的**发布包 flavor**，与 CI 产物命名一致：
-    Qt 通用版 → ``linux-general-<arch>``；GTK 专项档 → ``linux-gtk-<系统>-<arch>``。
-    非 Linux 返回空串（Windows / macOS 的包名由 updater 另行拼）。
+    CLI → ``linux-<arch>``（无界面层）；Qt 通用版 → ``linux-general-<arch>``；
+    GTK 专项档 → ``linux-gtk-<系统>-<arch>``。非 Linux 返回空串。
     """
     if platform.system() != "Linux":
         return ""
     arch = "arm64" if (platform.machine() or "").lower() in ("arm64", "aarch64") else "x86_64"
+    if cli:
+        return f"linux-{arch}"
     if gui == "gtk":
         return f"linux-gtk-{_distro_id()}-{arch}"
     return f"linux-general-{arch}"
@@ -315,7 +317,7 @@ def write_build_info(gui: str = "", cli: bool = False) -> None:
     except Exception as e:  # noqa: BLE001 - 万一没装 git：标 unknown，不拦构建
         print(f"警告：无法获取 git 版本，构建版本将标为 unknown（{e}）", file=sys.stderr)
 
-    flavor = _linux_flavor(gui)
+    flavor = _linux_flavor(gui, cli=cli)
     (ROOT / "backend" / "_build_info.py").write_text(
         '"""由 scripts/build.py 生成 —— **勿手工编辑、不入库**。"""\n'
         f'COMMIT = "{commit}"\n'

@@ -52,7 +52,7 @@ jobs:
             pkg: macos-arm64-cli
             cli: true
           - os: ubuntu-22.04
-            pkg: linux-general-x86_64-cli
+            pkg: linux-x86_64-cli
             cli: true
 
     steps:

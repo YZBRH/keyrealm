@@ -413,25 +413,23 @@ def _is_cli_build() -> bool:
         return False
 
 
-def _cli_build_suffix() -> str:
-    """CLI 版的发布资产后缀（``-cli``）；桌面版返回空串。"""
-    return "-cli" if _is_cli_build() else ""
-
-
 def platform_pkg() -> str:
     """当前平台的发布包后缀，与 CI 产物命名一致。
 
-    Windows / macOS 用简写：``windows-x64`` / ``macos-arm64``；
-    Linux 带 flavor：``linux-general-<arch>``（Qt 通用版）或 ``linux-gtk-<系统>-<arch>``（GTK 专项档）。
-    CLI 版统一追加 ``-cli``（如 ``windows-x64-cli``），与桌面包区分开。
+    Windows / macOS 用简写：``windows-x64`` / ``macos-arm64``。
+    Linux 桌面版带界面 flavor：``linux-general-<arch>``（Qt 通用版）或
+    ``linux-gtk-<系统>-<arch>``（GTK 专项档）；**CLI 版没有界面层**，统一为
+    ``linux-<arch>-cli``，不再带 ``general`` / ``gtk``。
     """
     arch = _machine_arch()
-    suffix = _cli_build_suffix()
+    cli = _is_cli_build()
     if os.name == "nt":
-        return f"windows-{'x64' if arch == 'x86_64' else arch}{suffix}"
+        return f"windows-{'x64' if arch == 'x86_64' else arch}{'-cli' if cli else ''}"
     if sys.platform == "darwin":
-        return f"macos-{arch}{suffix}"
-    return f"{_linux_flavor(arch)}{suffix}"
+        return f"macos-{arch}{'-cli' if cli else ''}"
+    if cli:
+        return f"linux-{arch}-cli"
+    return _linux_flavor(arch)
 
 
 def release_asset_name(ver: str) -> str:
