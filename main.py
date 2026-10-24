@@ -1,13 +1,17 @@
 """
 Keyrealm — 入口
-pywebview 主窗口 + 系统托盘 + MCP Server + 调度器
+桌面窗口（pywebview）+ 系统托盘 + MCP Server + 调度器；
+另支持 CLI 命令模式（默认不开端口）与可选的 Web 模式（--web）。
 """
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 import threading
+import webbrowser
 from pathlib import Path
+from urllib.parse import quote
 
 # 确保项目根目录在 sys.path
 BASE_DIR = Path(__file__).parent
@@ -92,9 +96,44 @@ if sys.platform.startswith("linux"):
         if "--disable-gpu" not in _qtweb_flags:
             os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{_qtweb_flags} --disable-gpu".strip()
 
-import webview  # pywebview
+def _detect_cli_build() -> bool:
+    """当前是否为 CLI 构建（没有桌面图像层）。"""
+    if not getattr(sys, "frozen", False):
+        return False
+    try:
+        from backend import _build_info
+        return bool(getattr(_build_info, "CLI", False))
+    except Exception:  # noqa: BLE001
+        return False
 
-from backend import api, autostart, database as db, idle_lock, logger, mcp_server, plugin_manager, proxy as proxy_config, scheduler, single_instance, tls_store, tray, verify_options, version
+
+from backend import paths as _paths  # noqa: E402  （只依赖标准库，安全）
+
+_cli_build_early = _detect_cli_build()
+# `--data-dir` 只允许 CLI 版（含 CLI 版的 --web）、桌面版的 --cli 模式，
+# 以及内部自更新进程（它会把发起时的数据目录显式传下来）。
+_data_arg_allowed = ("--cli" in sys.argv or "--self-update" in sys.argv
+                     or _cli_build_early)
+try:
+    _data_arg_given = _paths.argv_data_dir(sys.argv) is not None
+except ValueError as _exc:
+    print(f"数据目录参数错误：{_exc}", file=sys.stderr, flush=True)
+    sys.exit(2)
+if _data_arg_given and not _data_arg_allowed:
+    print("--data-dir 仅支持 CLI 版或 --cli 模式（桌面版请修改入口目录下的 "
+          f"{_paths.CONFIG_FILENAME}）。", file=sys.stderr, flush=True)
+    sys.exit(2)
+try:
+    _paths.configure_data_dir(sys.argv if _data_arg_allowed else None)
+except ValueError as _exc:
+    print(f"数据目录配置错误：{_exc}", file=sys.stderr, flush=True)
+    sys.exit(2)
+
+# 桌面专用依赖（pywebview / pystray）**不在模块级导入**：CLI 版不打包它们，
+# 而 Web/CLI 模式也必须能在没有图形环境的服务器上启动（无 DISPLAY 时 import pystray 会直接抛异常）。
+#   · `webview` 在 main()（桌面模式）里按需导入；
+#   · `tray` 见下方模块级 `tray = None`，同样由 main() 注入。
+from backend import api, autostart, database as db, idle_lock, logger, mcp_server, plugin_manager, scheduler, single_instance
 from backend import vault_proxy_ctx, vault_tls_ctx
 from backend.paths import app_dir, is_frozen, resource_dir
 
@@ -203,6 +242,10 @@ class VaultApi:
 
     def pick_save_path(self, default_name: str = "", file_types=None):
         return api.pick_save_path(default_name, file_types)
+
+    def web_pick_save_path(self, default_name: str = ""):
+        """Web 模式专用：返回服务器侧临时路径，由浏览器下载接口取回。"""
+        return api.web_pick_save_path(default_name)
 
     def run_credential_action(self, credential_id: int, action_id: str, params=None):
         return api.run_credential_action(credential_id, action_id, params)
@@ -445,8 +488,12 @@ class VaultApi:
 
 # ── 窗口与托盘 ────────────────────────────────────────────
 
-_window: webview.Window | None = None
+_window = None  # 桌面模式为 webview.Window；Web/CLI 模式始终为 None
 _quitting = False
+
+# 系统托盘模块：只有桌面模式才会在 main() 里导入并赋到这里。
+# Web / CLI 模式（尤其无图形环境的服务器）不能碰 pystray——它在无 DISPLAY 时导入即抛异常。
+tray = None
 
 # 窗口状态跟踪（最大化 / 最小化）。托盘唤出时必须知道「隐藏前是什么状态」：
 # pywebview 的 `show()` 不保证从最小化恢复，而 `restore()` 在 Windows 上等价于
@@ -508,7 +555,8 @@ def _shutdown_services():
     scheduler.stop_scheduler()
     idle_lock.stop()
     mcp_server.stop_server()
-    tray.stop_tray()
+    if tray is not None:
+        tray.stop_tray()
 
 
 def _hide_to_tray():
@@ -519,7 +567,7 @@ def _hide_to_tray():
     **托盘没挂上时直接不隐藏**（`tray.available()` 为假）：否则窗口藏起来却没有托盘可以
     叫回，用户只能去杀进程。
     """
-    if _window is None or not tray.available():
+    if _window is None or tray is None or not tray.available():
         return
     try:
         _window.hide()
@@ -797,7 +845,7 @@ def _on_closing():
         _shutdown_services()
         return True  # 允许关闭，应用随之退出
     if action == "background":
-        if not tray.available():
+        if tray is None or not tray.available():
             # 托盘没起来（如 macOS 上启动失败 / KEYREALM_NO_TRAY）：不能「隐藏」——
             # 窗口藏了就没法叫回来，直接退出更安全。
             _shutdown_services()
@@ -861,8 +909,107 @@ def _quit_app():
         _window.destroy()
 
 
+def _start_services(mode: str = "desktop"):
+    """桌面 / Web / CLI 共用的初始化入口（窗口与托盘另行处理）。
+
+    CLI 模式（``mode="cli"``）只做一次性命令需要的初始化，不启动调度器、空闲锁、
+    MCP 与自动更新检查——不会额外开端口或留下常驻线程。
+    """
+    from backend import bootstrap
+
+    full = mode != "cli"
+    log = bootstrap.init_core(mode, full=full)
+
+    # 上面那段 Linux 图形回退是**模块级**做的（必须早于 `import webview`），那时日志还没配好，
+    # 所以原因在这里补记一笔——否则用户想查「为什么我的 GPU 加速没生效」会毫无线索。
+    if _GPU_RISK_REASON and full:
+        log.info("图形回退：已退回软件渲染（原因：%s）——Qt 用 QT_XCB_GL_INTEGRATION=none + "
+                 "QT_QUICK_BACKEND/QT_OPENGL=software + Chromium --disable-gpu，GTK 关 dmabuf "
+                 "渲染器；有真 GPU 想强制走硬件可自行覆盖", _GPU_RISK_REASON)
+
+    if full:
+        # 迁移改名（Credential Vault → Keyrealm）留在系统里的旧自启条目：不清掉的话，
+        # 开关会显示「已关闭」而系统里仍有一条指向旧 exe 的条目，开机弹「找不到文件」。
+        # 幂等：没有旧条目时什么都不做（见 backend/autostart.py 的 migrate_legacy）。
+        if autostart.migrate_legacy():
+            log.info("已把开机自启条目迁移到新名字（Keyrealm）")
+    return log
+
+
+def _arg_value(flag: str, default: str = "") -> str:
+    """取 `--flag value` 形式的值（未出现返回默认值）。"""
+    if flag in sys.argv:
+        index = sys.argv.index(flag)
+        if len(sys.argv) > index + 1:
+            return sys.argv[index + 1]
+    return default
+
+
+def run_web_mode(host: str = "127.0.0.1", port: int = 8766,
+                 token: str = "", open_browser: bool = True) -> int:
+    """Web 模式（可选）：同一套后端与前端，通过浏览器操作；CLI 模式不经过这里。"""
+    if not single_instance.acquire():
+        single_instance.focus_existing()
+        print("已有 Keyrealm 实例在运行；同一时间只允许一个实例（请先退出桌面版再启动 Web 模式）。",
+              file=sys.stderr, flush=True)
+        return 0
+
+    log = _start_services("web")
+    if not token:
+        token = secrets.token_urlsafe(24)
+    # 更新重启会复用本次命令行（见 updater._relaunch_spec）：把实际生效的 host/port/token
+    # 补进 argv，重启后地址与令牌不变，已打开的浏览器标签仍可继续用。
+    if "--token" not in sys.argv:
+        sys.argv.extend(["--token", token])
+    if "--port" not in sys.argv:
+        sys.argv.extend(["--port", str(port)])
+    if "--host" not in sys.argv:
+        sys.argv.extend(["--host", host])
+    vault_api = VaultApi()
+
+    # 更新交棒成功后需要真正退出进程（否则 Windows 上替换不了正在运行的 exe）。
+    # Web 模式没有窗口可销毁，这里停掉后台服务后直接退出。
+    def _web_quit() -> None:
+        _shutdown_services()
+        os._exit(0)
+
+    api.set_close_callbacks(quit_cb=_web_quit)
+    display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    url = f"http://{display_host}:{port}/?token={quote(token)}"
+    print(f"Keyrealm Web 已启动：{url}", flush=True)
+    print("按 Ctrl+C 停止服务。", flush=True)
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        log.warning("Web 模式监听在 %s，同一网络内的其他设备可访问；请妥善保管访问令牌", host)
+
+    if open_browser:
+        def _open() -> None:
+            try:
+                webbrowser.open(url)
+            except Exception:  # noqa: BLE001 - 打开浏览器失败不影响服务
+                pass
+        timer = threading.Timer(1.0, _open)
+        timer.daemon = True
+        timer.start()
+
+    try:
+        from backend.web_server import serve
+        dist_dir = Path(_get_frontend_path()).parent
+        serve(vault_api, host, port, token, dist_dir)
+    except KeyboardInterrupt:
+        log.info("收到中断信号，正在停止 Web 服务")
+    finally:
+        _shutdown_services()
+    return 0
+
+
 def main():
-    global _window, _app_url
+    global _window, _app_url, tray
+
+    # 桌面模式才导入图形栈：CLI 版可执行文件中根本不含 pywebview / pystray。
+    import webview
+    from backend import tray as _tray
+
+    tray = _tray
 
     # 单实例闸门：已经有实例在跑时，把它的窗口拉到前台然后自己退出，而不是再起一套。
     # 放在最前面（日志都还没配），因为重复启动不该产生任何副作用（连日志都不写）。
@@ -870,57 +1017,7 @@ def main():
         single_instance.focus_existing()
         sys.exit(0)
 
-    # 尽早初始化日志（默认级别），待数据库就绪后再按用户持久化的级别调整
-    logger.setup_logging()
-    log = logger.get_logger("main")
-
-    # 初始化数据库
-    db.init_db()
-
-    # 应用持久化的日志级别（settings 表）
-    persisted = db.get_setting("log_level", "").strip().upper()
-    if persisted in logger.LEVELS:
-        logger.set_level(persisted)
-
-    # 应用持久化的验证代理（写入 VAULT_PROXY 供插件读取；外部同名变量优先）
-    proxy_config.apply_proxy(db.get_setting("verify_proxy", ""))
-
-    # 应用持久化的验证超时（写入 VAULT_TIMEOUT 供插件读取；外部同名变量优先）
-    verify_options.apply_timeout()
-
-    # 应用持久化的 TLS 版本策略（写入 VAULT_TLS 供插件读取；外部同名变量优先）
-    tls_store.apply_global()
-
-    log.info("应用启动（版本=%s，frozen=%s，日志级别=%s，数据目录=%s）",
-             version.version_string(), is_frozen(), logger.get_level(), app_dir())
-
-    # 上面那段 Linux 图形回退是**模块级**做的（必须早于 `import webview`），那时日志还没配好，
-    # 所以原因在这里补记一笔——否则用户想查「为什么我的 GPU 加速没生效」会毫无线索。
-    if _GPU_RISK_REASON:
-        log.info("图形回退：已退回软件渲染（原因：%s）——Qt 用 QT_XCB_GL_INTEGRATION=none + "
-                 "QT_QUICK_BACKEND/QT_OPENGL=software + Chromium --disable-gpu，GTK 关 dmabuf "
-                 "渲染器；有真 GPU 想强制走硬件可自行覆盖", _GPU_RISK_REASON)
-
-    # 迁移改名（Credential Vault → Keyrealm）留在系统里的旧自启条目：不清掉的话，
-    # 开关会显示「已关闭」而系统里仍有一条指向旧 exe 的条目，开机弹「找不到文件」。
-    # 幂等：没有旧条目时什么都不做（见 backend/autostart.py 的 migrate_legacy）。
-    if autostart.migrate_legacy():
-        log.info("已把开机自启条目迁移到新名字（Keyrealm）")
-
-    # 扫描 plugins/ 装载插件
-    plugin_manager.sync_plugins()
-
-    # 注入回调
-    api.init_callbacks()
-
-    # 启动调度器
-    scheduler.start_scheduler()
-
-    # 启动空闲自动锁定看门狗（是否真的锁由 settings.auto_lock_minutes 决定，默认关闭）
-    idle_lock.start()
-
-    # MCP：按上次退出前的开关状态恢复（上次开着就自动开）。端口被占用时只记日志，不改开关。
-    api.autostart_mcp()
+    log = _start_services("desktop")
 
     # 创建窗口。窗口入口的 file:// 形式另存一份：轻量模式恢复界面时用它重载（见 _restore_page）。
     _frontend = _get_frontend_path()
@@ -947,10 +1044,6 @@ def main():
         quit_cb=_quit_app,
         get_status_cb=api.get_tray_status,
     )
-
-    # 启动时自动检测一次更新（默认开启；非阻塞，发现新版本会通知界面）。
-    # 此刻多半还没解锁、访问令牌尚未注入——unlock() 里会再补跑一次。
-    api.start_auto_update_check()
 
     # 绑定关闭事件
     _window.events.closing += _on_closing
@@ -1015,6 +1108,8 @@ if __name__ == "__main__":
         print(f"frozen           : {is_frozen()}")
         print(f"resource_dir     : {resource_dir()}")
         print(f"app_dir          : {app_dir()}")
+        print(f"data_dir         : {_paths.data_dir()}（来源：{_paths.data_dir_source()}）")
+        print(f"config_file      : {_paths.config_file()}")
         print(f"frontend_index   : {_get_frontend_path()}")
         print(f"db_path          : {db.DB_PATH}")
         print(f"plugins_dir      : {plugin_manager.PLUGINS_DIR}")
@@ -1046,4 +1141,87 @@ if __name__ == "__main__":
         _say(f"=== 自更新进程结束：{'成功' if _ok else '失败'} ===")
         sys.exit(0 if _ok else 1)
 
-    main()
+    # 构建形态：CLI 版没有桌面图像层（启动早期已判定）
+    _cli_build = _cli_build_early
+    _help_requested = "--help" in sys.argv or "-h" in sys.argv
+    _version_requested = "--version" in sys.argv
+
+    def _show_cli_help() -> None:
+        from backend import cli as cli_module
+        sys.exit(cli_module.main(["--help"]))
+
+    def _show_version() -> None:
+        from backend import version
+        print(version.version_string(), flush=True)
+        sys.exit(0)
+
+    # 桌面窗口必须**显式** --gui（冻结的桌面包双击无参数时仍直接开窗口，见末尾）。
+    if "--gui" in sys.argv:
+        if _help_requested:
+            _show_cli_help()
+        if _version_requested:
+            _show_version()
+        if _cli_build:
+            print("CLI 版不包含桌面窗口；请使用 --web 或直接执行命令（如 status / list）。",
+                  file=sys.stderr, flush=True)
+            sys.exit(2)
+        main()
+        sys.exit(0)
+
+    # Web 模式（**可选**）：启动 HTTP 服务，用浏览器操作。
+    #   python main.py --web [--host 127.0.0.1] [--port 8766] [--no-browser] [--token ...]
+    if "--web" in sys.argv:
+        if _help_requested:
+            _show_cli_help()
+        if _version_requested:
+            _show_version()
+        _host = _arg_value("--host", "127.0.0.1")
+        try:
+            _port = int(_arg_value("--port", "8766"))
+        except ValueError:
+            _port = 8766
+        _token = _arg_value("--token", "")
+        sys.exit(run_web_mode(_host, _port, _token, "--no-browser" not in sys.argv))
+
+    # CLI 模式（**默认不开端口**）：一次性命令，执行完即退出。
+    #   python main.py --cli list
+    #   Keyrealm-CLI list          （CLI 构建无需 --cli）
+    if "--cli" in sys.argv:
+        _idx = sys.argv.index("--cli")
+        _argv = sys.argv[1:_idx] + sys.argv[_idx + 1:]
+        from backend import cli as cli_module
+        sys.exit(cli_module.main(_argv))
+    if _cli_build:
+        from backend import cli as cli_module
+        sys.exit(cli_module.main(sys.argv[1:]))
+
+    # 桌面 / 源码的无模式帮助与版本（不打开窗口）
+    if _help_requested:
+        _show_cli_help()
+    if _version_requested:
+        _show_version()
+
+    # 冻结的桌面包：双击（无参数）仍按原行为打开窗口。
+    if is_frozen():
+        main()
+        sys.exit(0)
+
+    # 源码直接 `python main.py`：不再默认弹 GUI，打印启动方式后退出。
+    print(
+        "Keyrealm 启动方式：\n"
+        "  python main.py --gui                 打开桌面窗口\n"
+        "  python main.py --web [--port 8766]   浏览器界面（会监听端口）\n"
+        "  python main.py --cli <命令>          命令行模式（不监听端口）\n"
+        "\n"
+        "示例：\n"
+        "  python main.py --cli status\n"
+        "  python main.py --cli list\n"
+        "  python main.py --cli show 1 --reveal\n"
+        "  python main.py --cli --data-dir /path/to/data list   # 临时指定数据目录\n"
+        "\n"
+        "持久化数据目录：编辑本目录 keyrealm.conf.json，或用 "
+        "`python main.py --cli data-dir set PATH`。\n"
+        "命令行全部参数：python main.py --cli --help",
+        flush=True,
+    )
+    sys.exit(0)

@@ -59,13 +59,11 @@ def launch_argv() -> list[str]:
     """推导开机启动时执行的命令行。
 
     - **冻结**（PyInstaller）：直接执行可执行文件本身；
-    - **源码运行**：``<python> <项目根>/main.py``。
-
-    纯按运行时状态推导，不含任何写死的本机路径。
+    - **源码运行**：``<python> <项目根>/main.py --gui``（源码模式必须显式指定 --gui）。
     """
     if is_frozen():
         return [sys.executable]
-    return [sys.executable, str(app_dir() / "main.py")]
+    return [sys.executable, str(app_dir() / "main.py"), "--gui"]
 
 
 def platform_name() -> str:

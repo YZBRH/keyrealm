@@ -16,10 +16,14 @@ const versionInfo = ref({ display: '—', schemaVersion: '' })
 const appStore = useAppStore()
 const vaultStore = useVaultStore()
 
-const isDesktop = computed(() => typeof window !== 'undefined' && !!window.pywebview)
-const runtimeLabel = computed(() =>
-  isDesktop.value ? '桌面端（pywebview）' : '浏览器预览（开发模式）',
+const isWebMode = computed(
+  () => typeof window !== 'undefined' && !!(window.__KEYREALM_WEB__ || {}).token,
 )
+const isDesktop = computed(() => !isWebMode.value && typeof window !== 'undefined' && !!window.pywebview)
+const runtimeLabel = computed(() => {
+  if (isWebMode.value) return 'Web 模式（浏览器）'
+  return isDesktop.value ? '桌面端（pywebview）' : '浏览器预览（开发模式）'
+})
 const categoryCount = computed(
   () => new Set(vaultStore.plugins.map((p) => p.category).filter(Boolean)).size,
 )
@@ -79,7 +83,7 @@ onMounted(() => {
           Vue 3 · Element Plus · Pinia · Vite
         </el-descriptions-item>
         <el-descriptions-item label="后端技术栈">
-          Python 3.11+ · pywebview · SQLite · cryptography
+          Python 3.11+ · {{ isWebMode ? 'Starlette' : 'pywebview' }} · SQLite · cryptography
         </el-descriptions-item>
       </el-descriptions>
     </el-card>

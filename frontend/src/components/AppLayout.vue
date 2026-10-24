@@ -30,6 +30,9 @@ const vaultStore = useVaultStore()
 
 const collapsed = ref(localStorage.getItem('vault.layout.asideCollapsed') === '1')
 
+// Web / CLI 模式没有系统托盘，「最小化到托盘」按钮不适用
+const isWebMode = computed(() => !!(window.__KEYREALM_WEB__ || {}).token)
+
 watch(collapsed, (value) => {
   localStorage.setItem('vault.layout.asideCollapsed', value ? '1' : '0')
 })
@@ -359,9 +362,10 @@ async function handleMinimize() {
             </span>
           </el-tooltip>
 
-          <el-divider direction="vertical" />
-
-          <el-button text :icon="Minus" @click="handleMinimize">最小化到托盘</el-button>
+          <template v-if="!isWebMode">
+            <el-divider direction="vertical" />
+            <el-button text :icon="Minus" @click="handleMinimize">最小化到托盘</el-button>
+          </template>
           <el-button type="primary" plain :icon="Lock" @click="handleLock">锁定</el-button>
         </div>
       </el-header>

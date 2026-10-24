@@ -10,6 +10,9 @@ import { useProxyStore } from '@/stores/proxy'
 
 const appStore = useAppStore()
 
+// Web / CLI 模式没有系统托盘与桌面窗口：相关设置项不展示（后端也明确返回不支持）
+const isWebMode = computed(() => !!(window.__KEYREALM_WEB__ || {}).token)
+
 /* ── 主密码 ─────────────────────────────────────────── */
 
 const passwordDialog = ref(false)
@@ -799,7 +802,7 @@ onMounted(() => refreshAll(false))
       </div>
     </el-card>
 
-    <el-card shadow="never">
+    <el-card v-if="!isWebMode" shadow="never">
       <template #header><span>窗口与关闭</span></template>
 
       <div class="setting-row">
@@ -837,7 +840,7 @@ onMounted(() => refreshAll(false))
       </div>
     </el-card>
 
-    <el-card shadow="never">
+    <el-card v-if="!isWebMode" shadow="never">
       <template #header><span>启动</span></template>
 
       <div class="setting-row">

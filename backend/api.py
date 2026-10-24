@@ -31,7 +31,6 @@ from . import scheduler
 from . import tasks
 from . import tls_store
 from . import version
-from . import tray
 from . import updater
 from . import verify_options
 from .crypto import (
@@ -63,6 +62,23 @@ _window = None
 
 # 本模块 logger
 _log = logger.get_logger(__name__)
+
+
+def _update_tray() -> None:
+    """刷新系统托盘；没有桌面托盘时静默跳过。
+
+    托盘依赖 pystray，而 pystray 在**无 DISPLAY 的 Linux 上导入即抛异常**，CLI 构建也
+    根本不打包它。因此这里必须延迟导入并吞掉失败——Web/CLI 模式下托盘只是不存在，
+    不该让解锁、加锁这些核心操作跟着报错。
+    """
+    try:
+        from . import tray
+    except Exception:  # noqa: BLE001 - 无图形环境 / CLI 构建
+        return
+    try:
+        tray.update_tray()
+    except Exception as exc:  # noqa: BLE001 - 托盘是辅助功能，失败不影响主流程
+        _log.debug("刷新托盘失败：%s", exc)
 
 
 def set_window(window):
@@ -105,16 +121,37 @@ def _set_key(key: Optional[bytes]):
         _master_key = key
 
 
-def push_event(event_name: str, detail: Any = None):
-    """向前端推送自定义事件"""
-    if _window is None or _page_released:
-        return
+# Web 模式（无 pywebview 窗口）的事件出口：SSE 广播器等注册到这里。
+_event_sinks: list = []
+
+
+def add_event_sink(callback):
+    if callback not in _event_sinks:
+        _event_sinks.append(callback)
+
+
+def remove_event_sink(callback):
     try:
-        payload = json.dumps(detail or {}, ensure_ascii=False, default=str)
-        js = f"window.dispatchEvent(new CustomEvent('{event_name}', {{detail: {payload}}}));"
-        _window.evaluate_js(js)
-    except Exception as e:
-        _log.warning("事件推送失败 %s: %s", event_name, e)
+        _event_sinks.remove(callback)
+    except ValueError:
+        pass
+
+
+def push_event(event_name: str, detail: Any = None):
+    """向前端推送自定义事件（桌面窗口 + Web 模式的事件sink）。"""
+    payload = detail or {}
+    if _window is not None and not _page_released:
+        try:
+            text = json.dumps(payload, ensure_ascii=False, default=str)
+            js = f"window.dispatchEvent(new CustomEvent('{event_name}', {{detail: {text}}}));"
+            _window.evaluate_js(js)
+        except Exception as e:
+            _log.warning("事件推送失败 %s: %s", event_name, e)
+    for sink in list(_event_sinks):
+        try:
+            sink(event_name, payload)
+        except Exception as e:  # noqa: BLE001 - 单个 sink 失败不影响其它出口
+            _log.warning("Web 事件推送失败 %s: %s", event_name, e)
 
 
 def get_tray_status() -> dict:
@@ -169,7 +206,12 @@ def setup_master_password(password: str) -> dict:
     return {"ok": True, "message": "主密码设置成功"}
 
 
-def unlock(password: str) -> dict:
+def unlock(password: str, auto_check: bool = True) -> dict:
+    """校验主密码并注入内存密钥。
+
+    ``auto_check=False`` 供 CLI 一次性命令使用：跳过“解锁后自动检查更新”，
+    避免一条本地命令顺手发起网络请求。
+    """
     salt_hex = db.get_setting("salt")
     verify_token = db.get_setting("verify_token")
     if not salt_hex or not verify_token:
@@ -183,7 +225,7 @@ def unlock(password: str) -> dict:
         return {"ok": False, "message": "密码错误"}
     _set_key(key)
     idle_lock.touch()
-    tray.update_tray()
+    _update_tray()
     # 代码比库新（手动构建换了代码 / 导入过更老的库）时，**先把结构补到位**——
     # 迁移不需要主密码，放在这里正好与紧随其后的数据升级串成一条线：结构 → 数据。
     try:
@@ -203,7 +245,8 @@ def unlock(password: str) -> dict:
     except Exception:  # noqa: BLE001 - 数据升级失败不该影响解锁
         _log.exception("凭据数据升级失败（不影响解锁）")
     # 解锁后补跑一次「自动检测更新」——启动时应用还没解锁、访问令牌尚未注入，那次检查可能没成
-    start_auto_update_check()
+    if auto_check:
+        start_auto_update_check()
     return {"ok": True, "message": "解锁成功"}
 
 
@@ -285,7 +328,7 @@ def lock_vault() -> dict:
     _set_key(None)
     os.environ.pop(updater.ENV_TOKEN, None)   # 锁库即清令牌，别把 PAT 留在进程 env 里
     push_event("vault:locked")
-    tray.update_tray()
+    _update_tray()
     return {"ok": True}
 
 
@@ -783,6 +826,30 @@ def credential_capabilities(credential_id: int) -> dict:
     return plugin_manager.plugin_capabilities(cred["credential_type"], data)
 
 
+def web_pick_save_path(default_name: str = "") -> dict:
+    """Web / CLI 模式的「另存为」：分配服务器侧临时路径，动作完成后由浏览器下载。
+
+    Web 模式没有本机文件对话框（也不该让浏览器直接决定服务器写哪里），所以：
+      1. 这里在 ``data/web_downloads/`` 下分配一个唯一路径；
+      2. 前端把该路径塞进插件参数，插件照常把文件写到服务器；
+      3. 动作结束后，前端通过 ``/api/download`` 取回文件并触发浏览器下载。
+    路径被限定在这个目录内，下载接口也只允许读它，避免令牌持有者借接口读取任意文件。
+    """
+    safe_name = _safe_filename(default_name) or "download"
+    folder = db.DATA_DIR / "web_downloads"
+    folder.mkdir(parents=True, exist_ok=True)
+    # 顺手清掉一天前的残留（浏览器可能中途关掉，文件就没人取了）
+    try:
+        cutoff = time.time() - 24 * 3600
+        for stale in folder.iterdir():
+            if stale.is_file() and stale.stat().st_mtime < cutoff:
+                stale.unlink(missing_ok=True)
+    except OSError:
+        pass
+    path = folder / f"{uuid.uuid4().hex[:10]}-{safe_name}"
+    return {"ok": True, "path": str(path), "name": safe_name}
+
+
 def pick_save_path(default_name: str = "", file_types: Optional[list] = None) -> dict:
     """弹系统「另存为」，返回用户选的路径。
 
@@ -1106,10 +1173,14 @@ def _wait_mcp_stopped(timeout: float = 3.0) -> bool:
 
 def get_mcp_status() -> dict:
     running = mcp_server.is_running()
+    # 未运行时 mcp_server.get_host/get_port 只是模块默认值；应以“上次保存的监听地址”为准，
+    # 否则停止状态会显示成 127.0.0.1:8765，和设置页/实际配置对不上。
+    host = mcp_server.get_host() if running else _mcp_host()
+    port = mcp_server.get_port() if running else _mcp_port()
     return {
         "running": running,
-        "host": mcp_server.get_host(),
-        "port": mcp_server.get_port(),
+        "host": host,
+        "port": port,
         "active_tokens": 1 if db.get_mcp_token_record() else 0,
         "url": mcp_server.get_url() if running else "",
     }
@@ -1229,7 +1300,7 @@ def get_mcp_token() -> dict:
 
 def _push_mcp_status():
     """推送 MCP 状态变化事件（供前端与托盘刷新）。"""
-    tray.update_tray()
+    _update_tray()
     push_event("vault:mcp_status", {
         "running": mcp_server.is_running(),
         "host": mcp_server.get_host(),
@@ -1545,7 +1616,7 @@ def create_proxy(name: str, url: str) -> dict:
         return {"ok": False, "message": result.get("message") or "新增代理失败"}
     _log.info("已新增代理 #%s（%s）", result.get("id"), name)
     push_event("vault:proxies_changed")
-    return {"ok": True, **list_proxies()}
+    return {"ok": True, "created": result, **list_proxies()}
 
 
 def update_proxy(proxy_id: int, name=None, url=None) -> dict:

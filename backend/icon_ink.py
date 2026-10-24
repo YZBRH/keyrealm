@@ -144,7 +144,11 @@ def needs_lift(path: Path) -> bool:
 
     解析不了（文件损坏 / Pillow 缺失）时返回 True —— **垫了只是不好看，不垫就直接看不见**。
     """
-    ink = _svg_ink(path) if path.suffix.lower() == ".svg" else _raster_ink(path)
+    try:
+        ink = _svg_ink(path) if path.suffix.lower() == ".svg" else _raster_ink(path)
+    except Exception:
+        # 文件损坏，或 CLI 构建未打包 Pillow（位图分析不可用）：按「需要垫底」处理。
+        return True
     if not ink:
         # SVG 一个颜色都不声明 → 按 SVG 默认 fill 渲染成纯黑，正是最该垫底的一类；
         # 位图没有不透明像素 → 本来就是空图，垫不垫都一样。
