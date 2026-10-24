@@ -390,7 +390,9 @@ def run_pyinstaller(console: bool, allow_missing: bool = False, cli: bool = Fals
         env=env,
     )
 
-    built = DIST / EXE_NAME
+    # COLLECT 的目录名是**不带扩展名**的 _APP_NAME（Windows: dist/Keyrealm/Keyrealm.exe），
+    # 而 EXE_NAME 带 .exe；用 stem 取目录名，避免 Windows 上找成 dist/Keyrealm.exe/。
+    built = DIST / Path(EXE_NAME).stem
     if not built.is_dir() or not (built / EXE_NAME).is_file():
         sys.exit(f"PyInstaller 结束但未找到 onedir 产物：{built}")
     return built
