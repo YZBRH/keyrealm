@@ -94,14 +94,22 @@ async function load() {
   }
 }
 
+// 正在切换启用状态的插件类型：防止连点导致重复请求 / 连续弹窗
+const togglingTypes = ref([])
+
 async function toggleEnabled(plugin) {
+  const type = plugin.credential_type
+  if (togglingTypes.value.includes(type)) return
   const next = !plugin.enabled
+  togglingTypes.value = [...togglingTypes.value, type]
   try {
-    await vaultStore.setPluginEnabled(plugin.credential_type, next)
+    await vaultStore.setPluginEnabled(type, next)
     ElMessage.success(`已${next ? '启用' : '禁用'}「${plugin.name}」`)
     await load()
   } catch (err) {
     ElMessage.error(err.message || (next ? '启用失败' : '禁用失败'))
+  } finally {
+    togglingTypes.value = togglingTypes.value.filter((item) => item !== type)
   }
 }
 
@@ -205,6 +213,8 @@ function openDefaults(scope, scopeKey, credentialType, name) {
               plain
               size="small"
               :icon="plugin.enabled ? CircleClose : Check"
+              :loading="togglingTypes.includes(plugin.credential_type)"
+              :disabled="togglingTypes.includes(plugin.credential_type)"
               @click="toggleEnabled(plugin)"
             >
               {{ plugin.enabled ? '禁用' : '启用' }}
