@@ -14,13 +14,19 @@
 > **发行包布局**：根目录的 `Keyrealm` / `Keyrealm-CLI` 是启动器，应用本体在 `runtime/`。
 > 启动器把参数原样转交并透传退出码（脚本里的退出码判断不受影响）；移动或升级时请保持
 > `runtime/` 与启动器相邻。
+>
+> **Windows 从终端调用桌面版**：`Keyrealm.exe` 是 GUI 子系统程序，启动器会附着父控制台并转发
+> `--cli` / `--help` 等输出。但 PowerShell / cmd 默认**不等待** GUI 程序，提示符可能先返回、
+> 输出随后出现；需要同步等待时用
+> `Start-Process -Wait -NoNewWindow .\Keyrealm.exe -ArgumentList '--cli','status'`，
+> 或直接使用 `-cli` 发行包里的 `Keyrealm-CLI.exe`。
 
 ---
 
 ## 1. CLI 命令
 
 ```bash
-Keyrealm-CLI status                 # 版本 / 初始化 / 插件 / 全局代理 / TLS
+Keyrealm-CLI status                 # 版本 / 初始化 / 插件 / 全局代理 / TLS / 进程解锁状态
 Keyrealm-CLI init                   # 首次设置主密码
 Keyrealm-CLI list                   # 凭据列表
 Keyrealm-CLI show 3 --reveal        # 敏感字段默认掩码
@@ -49,6 +55,16 @@ Keyrealm-CLI self-update check|install|status
 export KEYREALM_MASTER_PASSWORD='…'
 Keyrealm-CLI --json list
 ```
+
+### status 的「当前解锁」
+
+「当前解锁」是**进程级**状态，表示当前进程内存里有没有主密码派生的 AES key：
+
+- CLI 每条命令都是一次性进程；`status` 本身**不读取主密码**，所以一次性命令里该字段固定为「否」。
+- `--password` / `KEYREALM_MASTER_PASSWORD` **对 `status` 不生效**（只对 `list`、`show`、`verify` 等
+  真正需要解密数据的命令生效）。
+- 该字段只在长驻进程里有意义：桌面窗口、`--web` 服务或 MCP 进程由用户解锁后，
+  同一进程内的状态查询才会返回「是」。
 
 ### 输出与退出码
 

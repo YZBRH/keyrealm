@@ -300,3 +300,10 @@ scripts/restart.sh --wait
 5. 构建/替换产物落在**仓库根**：启动器 `Keyrealm.exe` + `runtime\`（应用本体）；`backups\` 里有且仅有一份 zip（正式版就位前还会短暂出现 `_asset-*.zip`）；测试版的构建落点在 `.update-staged\`。更新期间旧运行时在 `runtime.old\`，新运行时正常启动后自动删除。
 6. 更新完成后程序**自动重启**；设置页「上次更新」显示**逐阶段报告**（✓/✗ + 日志路径）。
 7. 应用运行期间再跑一次 `scripts\db_update.bat --apply` → 应被单实例闸门拒绝。
+8. 在 PowerShell 确认产物后，试：
+   ```powershell
+   Start-Process -Wait -NoNewWindow .\Keyrealm.exe -ArgumentList '--help'
+   Start-Process -Wait -NoNewWindow .\Keyrealm.exe -ArgumentList '--cli','status'
+   ```
+   应能看到帮助 / 状态输出。桌面版是 GUI 子系统程序，PowerShell 直接执行时提示符会先返回、
+   输出随后出现，这是 Windows 的等待行为，不是启动失败。
