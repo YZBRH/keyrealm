@@ -55,7 +55,7 @@ from . import database as db
 from . import logger
 from . import single_instance
 from . import version
-from .paths import app_dir, is_frozen
+from .paths import app_dir, data_dir as configured_data_dir, is_frozen
 
 _log = logger.get_logger(__name__)
 
@@ -275,12 +275,19 @@ def is_source_checkout(root: Optional[Any] = None) -> bool:
 
 
 def _data_dir(root: Optional[Any] = None) -> Path:
-    return repo_root(root) / "data"
+    """数据目录：当前程序用配置后的目录；传入其它 root（脚本/测试）时用 root/data。"""
+    base = repo_root(root)
+    try:
+        if base.resolve() == app_dir().resolve():
+            return configured_data_dir()
+    except OSError:
+        pass
+    return base / "data"
 
 
 def backups_dir(root: Optional[Any] = None) -> Path:
-    # 放 `data/` 下：与用户数据同处、随备份/迁移一起走，且 `data/` 本就被 gitignore 覆盖
-    return repo_root(root) / "data" / "backup"
+    # 放数据目录下：与用户数据同处、随备份/迁移一起走
+    return _data_dir(root) / "backup"
 
 
 def status_file(root: Optional[Any] = None) -> Path:
@@ -313,6 +320,10 @@ def migrations_dirs(root: Optional[Any] = None) -> list:
 
 
 def _exe_name() -> str:
+    # CLI 版可执行文件叫 Keyrealm-CLI(.exe)。冻结后以**当前进程的真实文件名**为准，
+    # 否则更新会把新包安装成 Keyrealm.exe，与正在运行的 Keyrealm-CLI.exe 对不上。
+    if is_frozen():
+        return Path(sys.executable).name
     return "Keyrealm.exe" if os.name == "nt" else "Keyrealm"
 
 
@@ -392,18 +403,35 @@ def _linux_flavor(arch: str | None = None) -> str:
     return f"linux-general-{arch or _machine_arch()}"
 
 
+def _is_cli_build() -> bool:
+    if not is_frozen():
+        return False
+    try:
+        from . import _build_info
+        return bool(getattr(_build_info, "CLI", False))
+    except Exception:  # noqa: BLE001 - 没有构建信息时按桌面版处理
+        return False
+
+
+def _cli_build_suffix() -> str:
+    """CLI 版的发布资产后缀（``-cli``）；桌面版返回空串。"""
+    return "-cli" if _is_cli_build() else ""
+
+
 def platform_pkg() -> str:
     """当前平台的发布包后缀，与 CI 产物命名一致。
 
     Windows / macOS 用简写：``windows-x64`` / ``macos-arm64``；
     Linux 带 flavor：``linux-general-<arch>``（Qt 通用版）或 ``linux-gtk-<系统>-<arch>``（GTK 专项档）。
+    CLI 版统一追加 ``-cli``（如 ``windows-x64-cli``），与桌面包区分开。
     """
     arch = _machine_arch()
+    suffix = _cli_build_suffix()
     if os.name == "nt":
-        return f"windows-{'x64' if arch == 'x86_64' else arch}"
+        return f"windows-{'x64' if arch == 'x86_64' else arch}{suffix}"
     if sys.platform == "darwin":
-        return f"macos-{arch}"
-    return _linux_flavor(arch)
+        return f"macos-{arch}{suffix}"
+    return f"{_linux_flavor(arch)}{suffix}"
 
 
 def release_asset_name(ver: str) -> str:
@@ -1050,7 +1078,7 @@ def db_status(*, root: Optional[Any] = None) -> dict:
     """磁盘上的 DB schema_version 与源码里的 SCHEMA_VERSION 之差。"""
     root = repo_root(root)
     app_schema = version.SCHEMA_VERSION
-    db_path = root / "data" / "credentials.db"
+    db_path = _data_dir(root) / "credentials.db"
     if not db_path.is_file():
         return {"ok": True, "disk": "", "app": app_schema,
                 "needs_migration": False, "chain": []}
@@ -1129,7 +1157,7 @@ def run_migrations(*, root: Optional[Any] = None, apply: bool = False,
         _log.warning("数据库结构迁移被拒：应用正在运行")
         return {"ok": False, "message": "检测到应用正在运行，请先完全退出再更新数据库"}
 
-    db_path = root / "data" / "credentials.db"
+    db_path = _data_dir(root) / "credentials.db"
     t0 = time.monotonic()
     _log.info("=== 数据库结构迁移开始：%s → %s，共 %d 跳（库：%s）===", frm, to, len(steps), db_path)
     conn = sqlite3.connect(str(db_path))
@@ -1228,11 +1256,11 @@ def make_backup(*, root: Optional[Any] = None, kind: str = "formal", keep: int =
                     skipped.append(f"{exe.name}（{type(exc).__name__}）")
             skipped += _zip_add_tree(zf, root / "plugins", "plugins")
             # data/：DB 单独做一致性快照，其余直接收（跳过 logs / webview 等运行中会被锁的目录）
-            skipped += _zip_add_tree(zf, root / "data", "data",
+            skipped += _zip_add_tree(zf, _data_dir(root), "data",
                                      skip_names=set(_BACKUP_SKIP_DIRS) | {"credentials.db",
                                                                           "credentials.db-wal",
                                                                           "credentials.db-shm"})
-            db_path = root / "data" / "credentials.db"
+            db_path = _data_dir(root) / "credentials.db"
             if db_path.is_file():
                 # 快照文件名带 pid：撞不上上次崩溃残留的同名文件
                 snap = db_path.with_name(f"credentials.db.snapshot-{os.getpid()}")
@@ -1380,7 +1408,7 @@ def run_build(*, root: Optional[Any] = None, frontend: bool = True,
         cmd += ["--output", str(output)]
     cmd += list(extra_args or [])
     _log.info("开始构建：%s", " ".join(cmd))
-    log = root / "data" / "logs" / f"build-{time.strftime('%Y%m%d-%H%M%S')}.log"
+    log = _data_dir(root) / "logs" / f"build-{time.strftime('%Y%m%d-%H%M%S')}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     sink = open(log, "ab")
     try:
@@ -1561,26 +1589,37 @@ def wait_for_app_exit(*, root: Optional[Any] = None, timeout: float = 90,
         waited += poll
 
 
-def relaunch_app(*, root: Optional[Any] = None, prefer: str = "auto") -> dict:
+def relaunch_app(*, root: Optional[Any] = None, prefer: str = "auto",
+                 relaunch: Optional[dict] = None) -> dict:
     """重启应用（脱离当前更新进程）。
 
-    ``prefer``：``"exe"`` 跑预编译二进制（正式版更新后）、``"source"`` 跑 ``python main.py``
+    ``prefer``：``"exe"`` 跑预编译二进制（正式版更新后）、``"source"`` 跑 ``python main.py --gui``
     （测试版在源码部署下）、``"auto"`` 按当前形态（冻结→exe，源码→main.py）。
+    ``relaunch``：交棒请求里的启动参数（``_relaunch_spec`` 的 ``argv``）。CLI 版必须带上
+    ``--web`` 等参数，否则重启后会去开一个它不存在的桌面窗口。
     """
     root = repo_root(root)
     exe = root / _exe_name()
     main_py = root / "main.py"
     if prefer == "auto":
         prefer = "source" if (not is_frozen() and main_py.is_file()) else "exe"
+    # 只有冻结包需要沿用原启动参数（CLI 的 --web 等）；源码模式的 argv 自带 main.py，
+    # 直接复用会变成 `python main.py main.py`。
+    extra = [str(a) for a in ((relaunch or {}).get("argv") or [])]
+    extra = [a for a in extra if a != str(main_py)]
     if prefer == "source" and main_py.is_file():
         argv = [sys.executable, str(main_py)]
+        # 源码运行现在必须显式 --gui 才开窗口；更新/重启脚本要替用户补上。
+        if not any(a in ("--gui", "--web", "--cli") for a in extra):
+            argv.append("--gui")
+        argv += extra
     elif exe.is_file():
-        argv = [str(exe)]
+        argv = [str(exe)] + extra
     elif main_py.is_file():
-        argv = [sys.executable, str(main_py)]
+        argv = [sys.executable, str(main_py)] + extra
     else:
         return {"ok": False, "message": "找不到可启动的程序（既无可执行文件，也无 main.py）"}
-    log = root / "data" / "logs" / f"relaunch-{time.strftime('%Y%m%d-%H%M%S')}.log"
+    log = _data_dir(root) / "logs" / f"relaunch-{time.strftime('%Y%m%d-%H%M%S')}.log"
     try:
         # 交棒进程是带着「更新代理」起的（`_spawn_updater` 传了 proxy_env()）；新应用若原样
         # 继承，`plugin_sdk.proxy()` 的「未指定则回退环境变量」会把**全部插件请求**导到更新
@@ -1746,8 +1785,10 @@ def prepared_info(prepared: Optional[dict]) -> Optional[dict]:
 def _relaunch_spec(root: Path) -> dict:
     exe = root / _exe_name()
     if is_frozen():
-        return {"frozen": True, "exe": str(exe), "argv": [], "cwd": str(root)}
-    return {"frozen": False, "exe": sys.executable, "argv": [str(root / "main.py")], "cwd": str(root)}
+        # 沿用当前进程的启动参数：CLI 版要保留子命令/--web 等，桌面版 `--web` 也要
+        # 在更新重启后继续以 Web 模式运行（GUI 正常启动时参数为空，不受影响）。
+        return {"frozen": True, "exe": str(exe), "argv": list(sys.argv[1:]), "cwd": str(root)}
+    return {"frozen": False, "exe": sys.executable, "argv": list(sys.argv[1:]), "cwd": str(root)}
 
 
 # 阶段 → 界面文案
@@ -1992,7 +2033,8 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
             _status_stage(root, kind, stages, "build", "从源码构建到临时目录（scripts/build.py --frontend）…", done)
             _prog(0, 0, "构建中（可能需要几分钟）…")
             out = staging_dir(root)
-            bd = run_build(root=root, frontend=frontend, python=py, output=out)
+            bd = run_build(root=root, frontend=frontend, python=py, output=out,
+                           extra_args=["--cli"] if _is_cli_build() else None)
             if not bd.get("ok"):
                 return {"ok": False, "kind": kind, "message": bd.get("message", "构建失败"),
                         "log": bd.get("log")}
@@ -2013,7 +2055,7 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
 
 
 def _latest_update_log(root: Optional[Any] = None) -> str:
-    logs = sorted((repo_root(root) / "data" / "logs").glob("update-*.log"))
+    logs = sorted((_data_dir(root) / "logs").glob("update-*.log"))
     return str(logs[-1]) if logs else ""
 
 
@@ -2087,7 +2129,8 @@ def apply_update(kind: str = "formal", *, root: Optional[Any] = None, frontend: 
     if do_restart and result.get("ok"):
         _status_stage(root, kind, stages, "restart", "重启程序…", [s["stage"] for s in report])
         single_instance.release()          # 必须先放锁，否则新应用会把自己当第二实例退出
-        rl = relaunch_app(root=root, prefer=prefer)
+        rl = relaunch_app(root=root, prefer=prefer,
+                          relaunch=(req or {}).get("relaunch"))
         if rl.get("ok"):
             log(f"已重启（pid={rl.get('pid')}）")
             report.append({"stage": "restart", "ok": True, "message": "已重启", "at": _now()})
@@ -2229,7 +2272,8 @@ def _apply_test(root: Path, *, frontend: bool, do_backup: bool, do_migrate: bool
 
         _status_stage(root, "test", stages, "build", "从源码构建（scripts/build.py --frontend）…", _done())
         # app 已退出，可直接构建到程序目录（覆盖运行中的 exe 此时已无冲突）
-        bd = run_build(root=root, frontend=frontend, python=py, output=root)
+        bd = run_build(root=root, frontend=frontend, python=py, output=root,
+                       extra_args=["--cli"] if _is_cli_build() else None)
         if not bd.get("ok"):
             return {"ok": False, "message": bd.get("message")}
         report.append({"stage": "build", "ok": True, "message": "构建完成", "at": _now()})
@@ -2275,10 +2319,15 @@ def _finish(root: Path, kind: str, frm: str, result: dict, stages: list,
 
 def _self_update_argv(root: Path, kind: str) -> list[str]:
     """「自更新」进程的命令：冻结 exe 用 ``--self-update``（exe 内跑 updater），
-    源码运行用 ``python main.py --self-update``。两者都**不建窗口**，跑完即退。"""
+    源码运行用 ``python main.py --self-update``。两者都**不建窗口**，跑完即退。
+
+    **显式带上当前数据目录**：CLI 的 ``--data-dir`` 可能是一次性的，不写配置文件；
+    不传下去的话，更新进程会去默认目录找请求/准备产物，交棒直接断掉。
+    """
+    data_arg = ["--data-dir", str(configured_data_dir())]
     if is_frozen():
-        return [sys.executable, "--self-update", kind]
-    return [sys.executable, str(root / "main.py"), "--self-update", kind]
+        return [sys.executable, "--self-update", kind, *data_arg]
+    return [sys.executable, str(root / "main.py"), "--self-update", kind, *data_arg]
 
 
 def _spawn_updater(root: Path, kind: str) -> int:
@@ -2294,7 +2343,7 @@ def _spawn_updater(root: Path, kind: str) -> int:
     # 存档给交棒进程，供它重启新应用时还原（否则新应用会一直带着更新代理）。
     env[ENV_RESTORE_PROXY] = json.dumps(
         {key: os.environ.get(key, "") for key in _PROXY_ENV_KEYS})
-    log = root / "data" / "logs" / f"update-{time.strftime('%Y%m%d-%H%M%S')}.log"
+    log = _data_dir(root) / "logs" / f"update-{time.strftime('%Y%m%d-%H%M%S')}.log"
     return spawn_detached(argv, cwd=root, log=log, env=env)
 
 def begin_handoff(kind: str = "formal", *, root: Optional[Any] = None, restart: bool = True,

@@ -39,6 +39,10 @@ master.key
 plugins/.state.json*
 plugins/.model_cache.json*
 
+# 本机配置（数据目录等；随部署环境不同，不入库）
+keyrealm.conf.json
+keyrealm.conf.json.tmp
+
 # 构建时生成（commit hash 注入，由 scripts/build.py 写；不入库）
 backend/_build_info.py
 

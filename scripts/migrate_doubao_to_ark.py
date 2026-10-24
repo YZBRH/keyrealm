@@ -46,6 +46,8 @@ for stream in (sys.stdout, sys.stderr):
     except Exception:  # noqa: BLE001
         pass
 
+from backend import paths  # noqa: E402
+paths.configure_data_dir()                   # 与桌面/CLI 使用同一份数据目录配置
 from backend import database as db          # noqa: E402  (须在 sys.path 调整之后)
 from backend import single_instance         # noqa: E402
 

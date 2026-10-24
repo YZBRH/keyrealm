@@ -1,7 +1,7 @@
 """
 SQLite 数据访问层
-数据库位置：<app_dir>/data/credentials.db
-（开发时 app_dir=项目根；打包冻结后 app_dir=exe 同级目录，保证可写持久化）
+数据库位置：<data_dir>/credentials.db
+（默认 <程序入口>/data；可通过 keyrealm.conf.json 或 CLI --data-dir 改到别处）
 """
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Union
 
-from .paths import app_dir
+from .paths import data_dir
 # 版本号唯一事实来源见 backend/version.py（不再在这里写常量）
 from .version import LEGACY_SCHEMA_MAX, SCHEMA_VERSION  # noqa: F401  （再导出）
 
-# 应用根目录：开发时=项目根；冻结后=exe 同级目录（保证可写、可持久化）
-BASE_DIR = app_dir()
-DATA_DIR = BASE_DIR / "data"
+# 数据目录（默认入口目录/data；启动早期由 paths.configure_data_dir 决定）
+BASE_DIR = data_dir()
+DATA_DIR = BASE_DIR
 DB_PATH = DATA_DIR / "credentials.db"
 
 _lock = threading.Lock()

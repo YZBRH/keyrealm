@@ -26,6 +26,9 @@ for _stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _logutil import tee_run_log  # noqa: E402
+from backend import paths  # noqa: E402
+
+paths.configure_data_dir()             # 与桌面/CLI 使用同一份数据目录配置
 from backend import updater  # noqa: E402
 
 

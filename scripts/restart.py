@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """重启 Keyrealm（**可单独运行，无交互**）。
 
-    python scripts/restart.py            # 直接重启（优先可执行文件，否则 python main.py）
+    python scripts/restart.py            # 直接重启（优先可执行文件，否则 python main.py --gui）
     python scripts/restart.py --wait     # 先等应用完全退出（并占锁）再重启
 
 新进程与当前终端脱离，关掉本终端的窗口不影响它。
@@ -23,6 +23,9 @@ for _stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _logutil import tee_run_log  # noqa: E402
+from backend import paths  # noqa: E402
+
+paths.configure_data_dir()             # 与桌面/CLI 使用同一份数据目录配置
 from backend import updater  # noqa: E402
 
 

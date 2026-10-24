@@ -45,10 +45,11 @@ class _Tee:
 
 
 def tee_run_log(name: str) -> "Path | None":
-    """开始把本进程 stdout/stderr 落 ``data/logs/<name>-<ts>.log``；返回日志路径（失败返回 None）。"""
+    """开始把本进程 stdout/stderr 落 ``<data_dir>/logs/<name>-<ts>.log``；返回日志路径（失败返回 None）。"""
     try:
-        root = Path(__file__).resolve().parent.parent
-        log_dir = root / "data" / "logs"
+        from backend import paths
+        paths.configure_data_dir()          # 脚本入口同样遵循 keyrealm.conf.json
+        log_dir = paths.data_dir() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}.log"
         sink = open(path, "a", encoding="utf-8", errors="replace", buffering=1)

@@ -1,7 +1,8 @@
 """统一日志管理。
 
-- 输出：滚动文件（始终）+ 控制台（开发/非冻结时）。文件位于 <app_dir>/data/logs/，
-  与数据库同属可写数据目录，冻结（打包）后落在 exe 同级，随应用便携分发。
+- 输出：滚动文件（始终）+ 控制台（开发/非冻结时）。文件位于 <data_dir>/logs/，
+  与数据库同属可写数据目录（默认 <入口目录>/data，可经 keyrealm.conf.json 或 CLI
+  --data-dir 改到别处）。
 - 级别：DEBUG/INFO/WARNING/ERROR/CRITICAL，可运行时调整，并持久化到 settings 表
   （key="log_level"），下次启动自动恢复。
 - 第三方噪声：httpx/httpcore 的 INFO（每次请求一行）默认压到 WARNING，避免刷屏。
@@ -16,10 +17,10 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from .paths import app_dir
+from .paths import data_dir
 
 # ── 常量 ──────────────────────────────────────────────────
-LOG_DIR = app_dir() / "data" / "logs"
+LOG_DIR = data_dir() / "logs"
 LOG_FILE = LOG_DIR / "keyrealm.log"
 LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 DEFAULT_LEVEL = "INFO"

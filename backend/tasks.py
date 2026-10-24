@@ -14,10 +14,10 @@
 
 持久化
 ------
-任务记录与日志一样落**普通文件**（`data/tasks.json`），进程重启后仍在，用户回来能翻到
+任务记录与日志一样落**普通文件**（`<data_dir>/tasks.json`），进程重启后仍在，用户回来能翻到
 「上次那个下载到底成没成」。之所以不进数据库：任务是运行期状态、不参与查询与关联，
-进库就白白要一次 schema 变动 + 迁移脚本，且锁库时反而读不到。文件与日志同放
-`app_dir()/data/`，便携分发时跟着 exe 走。
+进库就白白要一次 schema 变动 + 迁移脚本，且锁库时反而读不到。文件与日志同放数据目录，
+默认随程序目录走，也可经配置/命令行改到别处。
 
 进程重启时**所有 `running` 的任务一律改判 `interrupted`**：线程随进程没了，任务不可能还在跑，
 继续显示「进行中」是骗人；但也没失败（用户没做错什么），故单列一档，与 `canceled` 区分。
@@ -43,7 +43,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from .paths import app_dir
+from .paths import data_dir
 
 # 任务状态
 RUNNING = "running"
@@ -59,7 +59,7 @@ _MAX_FINISHED = 50
 # progress() 的落盘节流间隔（秒）
 _SAVE_INTERVAL = 2.0
 
-_STORE = app_dir() / "data" / "tasks.json"
+_STORE = data_dir() / "tasks.json"
 
 _lock = threading.Lock()
 _tasks: dict[str, dict] = {}          # task_id → 快照

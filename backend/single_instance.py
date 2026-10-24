@@ -54,6 +54,8 @@ def _acquire_posix() -> bool:
     import fcntl
 
     global _lock_file
+    # 单实例锁按**程序目录**而不是数据目录：同一份程序同时只应有一个实例；
+    # 否则用 --data-dir 指定另一个目录就能绕过单实例闸门（更新时尤其危险）。
     lock_dir = app_dir() / "data"
     try:
         lock_dir.mkdir(parents=True, exist_ok=True)
