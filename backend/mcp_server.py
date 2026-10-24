@@ -489,30 +489,43 @@ def _build_mcp_app() -> MCPServer:
 def _make_asgi_app(mcp: MCPServer):
     """将 MCPServer 的 SSE app 包装上 Bearer 鉴权中间件"""
     from starlette.applications import Starlette
+    from starlette.datastructures import Headers
     from starlette.middleware import Middleware as MW
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Mount
 
-    # 中间件定义在函数内：它继承 starlette 的 BaseHTTPMiddleware，类体在导入期就要
-    # 解析基类，放模块顶层会把 starlette 连同 MCP 一起拽进常驻内存（见文件头注释）。
-    # 它只被这一个函数用，就近定义。
-    class BearerAuthMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request: Request, call_next):
-            # SSE 连接和消息端点需要鉴权
-            auth = request.headers.get("authorization", "")
+    # 注意：**不能用 BaseHTTPMiddleware**。它会把响应体重新包一层异步迭代器，
+    # 而 SSE 的长连接会触发 Starlette 的断言
+    # `Unexpected message: http.response.start`，连接直接 500。
+    # 这里用纯 ASGI 中间件：只在进入应用前鉴权，不碰 response body。
+    class BearerAuthMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") != "http":
+                return await self.app(scope, receive, send)
+            headers = Headers(scope=scope)
+            auth = headers.get("authorization", "")
             if not auth.startswith("Bearer "):
-                return JSONResponse({"error": "missing_token", "message": "需要 Bearer Token"}, status_code=401)
+                response = JSONResponse(
+                    {"error": "missing_token", "message": "需要 Bearer Token"},
+                    status_code=401,
+                )
+                return await response(scope, receive, send)
 
             token = auth[7:].strip()
             record = db.get_mcp_token_record()
             # 常量时间比较，别按字符逐位泄漏比对进度（Token 就是这里的唯一凭据）
             if not record or not hmac.compare_digest(hash_token(token), record["token_hash"]):
-                return JSONResponse({"error": "invalid_token", "message": "Token 无效"}, status_code=401)
+                response = JSONResponse(
+                    {"error": "invalid_token", "message": "Token 无效"},
+                    status_code=401,
+                )
+                return await response(scope, receive, send)
 
             _authenticated_var.set(True)
-            return await call_next(request)
+            return await self.app(scope, receive, send)
 
     sse_app = mcp.sse_app()
     # 在 sse_app 外包一层中间件
