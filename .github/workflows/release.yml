@@ -43,6 +43,17 @@ jobs:
           - os: ubuntu-22.04
             pkg: linux-gtk-ubuntu22.04-x86_64
             gui: gtk
+          # CLI 版：同一份源码 / 同一套功能，不包含桌面窗口与托盘；
+          # 默认命令行操作（不监听端口）；需要浏览器界面时加 --web。发布资产带 -cli 后缀。
+          - os: windows-latest
+            pkg: windows-x64-cli
+            cli: true
+          - os: macos-latest
+            pkg: macos-arm64-cli
+            cli: true
+          - os: ubuntu-22.04
+            pkg: linux-general-x86_64-cli
+            cli: true
 
     steps:
       - uses: actions/checkout@v4
@@ -92,15 +103,21 @@ jobs:
         run: npm ci
 
       - name: 构建（前端 + PyInstaller）
-        # --gui 只在 Linux 上有意义；非 Linux 条目没设 matrix.gui，表达式给空串、参数不出现。
+        # --gui 只在 Linux 桌面上有意义；--cli 构建无窗口版本（不打包 pywebview/PySide6/托盘）。
         # --output release：产物落到 release/（可执行文件 + plugins/），便于整目录打包。
-        run: python scripts/build.py --frontend --output release ${{ matrix.gui && format('--gui {0}', matrix.gui) || '' }}
+        run: python scripts/build.py --frontend --output release ${{ matrix.gui && format('--gui {0}', matrix.gui) || '' }} ${{ matrix.cli && '--cli' || '' }}
 
       - name: 冒烟（冻结包能否启动、能否加载界面后端）
         # 在**真正的构建系统**上验证产物自洽（顶层 import 会拉起 gi / WebKit2 等后端）——
         # 这正是跨发行版跑不出来的结论。`--print-paths` 只做初始化、不开窗口，适合无头 runner。
+        # CLI 包本身不含图形层，直接跑即可。
         if: runner.os == 'Linux'
-        run: xvfb-run -a ./release/Keyrealm --print-paths
+        run: |
+          if [ "${{ matrix.cli }}" = "true" ]; then
+            ./release/Keyrealm-CLI --print-paths
+          else
+            xvfb-run -a ./release/Keyrealm --print-paths
+          fi
 
       - name: 写入更新元数据（version.json + migrations/）
         # 程序内「正式版更新」下载本包后，要靠 .update-meta/version.json 才知道目标数据库结构版本；

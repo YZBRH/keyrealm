@@ -13,7 +13,11 @@ console 开关
 ------------
 默认 GUI 模式（console=False，无黑框）。调试构建可设环境变量 CV_CONSOLE=1 保留控制台，
 便于运行 `Keyrealm --print-paths` 校验冻结后的路径解析。
+
+CLI 版（`KEYREALM_CLI=1`，由 `scripts/build.py --cli` 设置）使用 console=True、产物名
+`Keyrealm-CLI`，并排除 pywebview / PySide6 / pystray / Pillow 等桌面图像层依赖。
 """
+import importlib.util
 import os
 import re
 import sys
@@ -36,6 +40,17 @@ ROOT = Path(SPECPATH).resolve()
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 _console = os.environ.get("CV_CONSOLE") == "1"
+
+# CLI 版：同一份源码、同一套功能，只把「桌面图像显示」这一层去掉。
+# 由 scripts/build.py --cli 设置 KEYREALM_CLI=1；产物名 Keyrealm-CLI，保留控制台。
+# 不打包 pywebview / PySide6 / pystray / Pillow，也不要求在构建机安装它们。
+_cli = os.environ.get("KEYREALM_CLI") == "1"
+if _cli:
+    _console = True
+_APP_NAME = "Keyrealm-CLI" if _cli else "Keyrealm"
+
+# Linux 界面后端选择（CLI 构建不使用，但后面的 GTK hooks 判断仍会读它）
+_gui = (os.environ.get("KEYREALM_GUI") or "").strip().lower()
 
 # 应用图标（Windows exe 需 .ico）。文件缺失时传 None，回退 PyInstaller 默认图标。
 _ICON_PATH = ROOT / "assets" / "icon.ico"
@@ -64,7 +79,7 @@ if ASSETS_DIR.exists():
 
 # 逐个收集第三方依赖的数据文件、二进制与隐藏子模块。
 # 这些库大量使用动态导入 / 平台特定后端，手工列 hiddenimports 极易漏，交给 collect_all。
-for _pkg in [
+_COLLECT_PKGS = [
     "webview",        # pywebview（各平台 WebView 后端）
     "clr",            # pythonnet（Windows 后端，非 Windows 上收集失败会被忽略）
     "clr_loader",
@@ -87,7 +102,13 @@ for _pkg in [
     "pydantic",
     "pydantic_core",
     "annotated_types",
-]:
+]
+if _cli:
+    # 无桌面图像显示：这些包只在 GUI / 托盘路径上用到
+    _COLLECT_PKGS = [p for p in _COLLECT_PKGS
+                     if p not in {"webview", "clr", "clr_loader", "pythonnet", "pystray", "PIL"}]
+
+for _pkg in _COLLECT_PKGS:
     try:
         _d, _b, _h = collect_all(_pkg)
         datas += _d
@@ -149,7 +170,7 @@ def require(pkg: str, why: str, install: str) -> None:
 #                 库——实测会死在 `gi.overrides` 的 typelib 版本错配上（`unix_signal_add_full`
 #                 那条断言），只在「同款机器」上有意义。
 # 缺了选中的那个，打出来的包就是「没有 WebView 后端」，起不了窗口（最初那次失败即如此）。
-if sys.platform.startswith("linux"):
+if sys.platform.startswith("linux") and not _cli:
     _gui = (os.environ.get("KEYREALM_GUI") or "").strip().lower()
     if _gui == "gtk":
         require(
@@ -222,9 +243,17 @@ require(
 # `plugins/` 是插件的**唯一来源**（不再有 plugins_builtin/ 与 plugins_optin/ 两份副本），
 # 因此这里只扫它一处即可覆盖全部插件用到的标准库。
 def _plugin_stdlib_imports() -> list[str]:
+    """收集插件用到的标准库模块（含点号子模块）。
+
+    插件是运行时动态加载的，PyInstaller 看不到它们的 import。只收顶层名不够：
+    ``from xml.etree import ElementTree`` 只记下 ``xml`` 的话，冻结包里没有
+    ``xml.etree.ElementTree``，插件一加载就报 ``No module named 'xml.etree'``。
+    因此同时记录完整点号路径，并对 ``from a.b import X`` 探测 ``a.b.X`` 是否为真实模块。
+    """
     roots = [ROOT / "plugins"]
     pat = re.compile(
-        r"^\s*(?:import\s+([A-Za-z_][\w.]*)|from\s+([A-Za-z_][\w.]*)\s+import)\b", re.M
+        r"^\s*(?:import\s+([A-Za-z_][\w.]*)|from\s+([A-Za-z_][\w.]*)\s+import\s+([^\n#]+))",
+        re.M,
     )
     names: set[str] = set()
     for root in roots:
@@ -236,10 +265,24 @@ def _plugin_stdlib_imports() -> list[str]:
             except Exception:
                 continue
             for m in pat.finditer(text):
-                mod = (m.group(1) or m.group(2) or "").split(".")[0]
+                raw = m.group(1) or m.group(2) or ""
+                top = raw.split(".")[0]
                 # 跳过 __future__ 这类伪模块；它进了 hiddenimports 只会让 PyInstaller 报警告
-                if mod and not mod.startswith("_") and mod in sys.stdlib_module_names:
-                    names.add(mod)
+                if not top or top.startswith("_") or top not in sys.stdlib_module_names:
+                    continue
+                names.add(top)
+                if "." in raw:
+                    names.add(raw)
+                if m.group(2) and m.group(3):
+                    # from pkg import Name —— Name 可能本身是子模块
+                    for name in re.split(r"[\s,()]+", m.group(3)):
+                        if re.fullmatch(r"[A-Za-z_]\w*", name or ""):
+                            candidate = f"{raw}.{name}"
+                            try:
+                                if importlib.util.find_spec(candidate) is not None:
+                                    names.add(candidate)
+                            except (ImportError, AttributeError, ValueError):
+                                pass
     return sorted(names)
 
 
@@ -256,6 +299,8 @@ except Exception:
 hiddenimports += [
     "backend",
     "backend.api",
+    "backend.bootstrap",
+    "backend.cli",
     "backend.crypto",
     "backend.database",
     "backend.mcp_server",
@@ -272,7 +317,7 @@ hiddenimports += [
 # 动态 import，静态分析看不全，这里显式补上；并钉住 typelib 版本，免得构建机同时装了 GTK4 时被收错。
 # **仅 GTK 档需要**——Qt 档（linux-general）自包含，不该把系统的 gi/WebKit 拖进包，故与 `_gui` 挂钩。
 _hooksconfig = {}
-if sys.platform.startswith("linux") and _gui == "gtk":
+if sys.platform.startswith("linux") and _gui == "gtk" and not _cli:
     hiddenimports += [
         "gi",
         "gi.repository.Gtk",
@@ -286,6 +331,17 @@ if sys.platform.startswith("linux") and _gui == "gtk":
     ]
     _hooksconfig = {"gi": {"module-versions": {"Gtk": "3.0", "Gdk": "3.0", "WebKit2": "4.1"}}}
 
+if _cli:
+    # 托盘模块在 CLI 包里不存在：不仅用不到，PyInstaller 见到它还会去找 pystray/PIL。
+    hiddenimports = [m for m in hiddenimports
+                     if m != "backend.tray" and not m.startswith("backend.tray.")]
+
+_excludes = ["plugins", "data", "tests", "docs", "pytest", "PyInstaller"]
+if _cli:
+    # 静态分析仍可能从函数体里看到 PIL 等导入（如 backend/icon_ink.py 的懒导入），
+    # 显式排除，确保 CLI 包真的不含桌面图像层。
+    _excludes += ["webview", "pystray", "PIL", "qtpy", "PySide6", "clr", "pythonnet"]
+
 a = Analysis(
     [str(ROOT / "main.py")],
     pathex=[str(ROOT)],
@@ -296,7 +352,7 @@ a = Analysis(
     hooksconfig=_hooksconfig,
     runtime_hooks=[],
     # plugins/data/tests/docs 均为外部内容或开发资源，不进包
-    excludes=["plugins", "data", "tests", "docs", "pytest", "PyInstaller"],
+    excludes=_excludes,
     noarchive=False,
     optimize=0,
 )
@@ -309,7 +365,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="Keyrealm",
+    name=_APP_NAME,
     icon=_icon,
     debug=False,
     bootloader_ignore_signals=False,

@@ -21,6 +21,7 @@
     python scripts/build.py --frontend    # 先执行 npm run build 再打包
     python scripts/build.py --console     # 保留控制台窗口（调试用）
     python scripts/build.py --smoke       # 构建后跑 --print-paths 校验路径（自动开控制台）
+    python scripts/build.py --cli         # CLI 版（无桌面窗口/托盘；命令行操作，可选 --web）
 
 构建前置检查
 ------------
@@ -102,11 +103,16 @@ def _extra_deps(dist: str, extra: str) -> list[str]:
     return names
 
 
-def required_distributions() -> list[str]:
-    """requirements.txt 声明的发行包名（extras 展开），按出现顺序去重。"""
+def required_distributions(for_cli: bool = False) -> list[str]:
+    """requirements.txt 声明的发行包名（extras 展开），按出现顺序去重。
+
+    ``for_cli=True`` 时剔除只在桌面图像层用到的包（pywebview / pystray / Pillow）——
+    CLI 版不打包它们，构建机也就不必安装。
+    """
     out: list[str] = []
     if not REQUIREMENTS.exists():
         return out
+    gui_only = {"pywebview", "pystray", "pillow"} if for_cli else set()
     for raw in REQUIREMENTS.read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line or line.startswith("-"):   # 跳过 -r / -e / --index-url 等指令行
@@ -115,6 +121,8 @@ def required_distributions() -> list[str]:
         if not m:
             continue
         base, extras = m.group(1), m.group(2) or ""
+        if base.lower().replace("_", "-") in gui_only:
+            continue
         out.append(base)
         for extra in (e.strip() for e in extras.split(",")):
             if extra:
@@ -129,7 +137,7 @@ def required_distributions() -> list[str]:
     return uniq
 
 
-def missing_distributions() -> list[str]:
+def missing_distributions(for_cli: bool = False) -> list[str]:
     """当前 Python 环境里没装的依赖。
 
     用 importlib.metadata 判定「发行包是否已安装」，而不是 import 探测——发行名与
@@ -138,7 +146,7 @@ def missing_distributions() -> list[str]:
     from importlib.metadata import PackageNotFoundError, version
 
     missing = []
-    for name in required_distributions():
+    for name in required_distributions(for_cli):
         try:
             version(name)
         except PackageNotFoundError:
@@ -200,7 +208,7 @@ def check_schema() -> None:
     print("建表自检   : 通过 ✅")
 
 
-def check_environment(allow_missing: bool) -> None:
+def check_environment(allow_missing: bool, for_cli: bool = False) -> None:
     """构建前置检查：打包工具 + 依赖齐全。缺依赖默认中止（可被 flag 放行）。
 
     放在最前：缺包时先停下来，别白跑一遍前端构建 + PyInstaller 打包。
@@ -208,8 +216,8 @@ def check_environment(allow_missing: bool) -> None:
     if importlib.util.find_spec("PyInstaller") is None:
         sys.exit("当前 Python 环境未安装 PyInstaller：pip install pyinstaller")
 
-    total = required_distributions()
-    missing = missing_distributions()
+    total = required_distributions(for_cli)
+    missing = missing_distributions(for_cli)
     if missing:
         print(f"依赖检查   : {len(total) - len(missing)}/{len(total)} 已安装，"
               f"缺少 {len(missing)} 个（见下）")
@@ -286,7 +294,7 @@ def _linux_flavor(gui: str) -> str:
     return f"linux-general-{arch}"
 
 
-def write_build_info(gui: str = "") -> None:
+def write_build_info(gui: str = "", cli: bool = False) -> None:
     """把当前 commit 短 hash 写进 `backend/_build_info.py`，供 exe 内显示「构建版本」。
 
     冻结的 exe 里**没有 git**，所以必须在打包**之前**落盘；该文件由本脚本生成、不入库
@@ -312,7 +320,8 @@ def write_build_info(gui: str = "") -> None:
         '"""由 scripts/build.py 生成 —— **勿手工编辑、不入库**。"""\n'
         f'COMMIT = "{commit}"\n'
         f'GUI = "{gui}"      # 空 = 平台默认（Linux 上默认偏好 Qt）\n'
-        f'LINUX_FLAVOR = "{flavor}"   # Linux 发布包 flavor（与 CI 产物名一致）；非 Linux 为空\n',
+        f'LINUX_FLAVOR = "{flavor}"   # Linux 发布包 flavor（与 CI 产物名一致）；非 Linux 为空\n'
+        f"CLI = {bool(cli)}   # CLI 版（无桌面图像显示，发布资产带 -cli 后缀）\n",
         encoding="utf-8",
     )
     print(f"构建版本   : {commit}")
@@ -322,7 +331,7 @@ def write_build_info(gui: str = "") -> None:
         print(f"发布包档   : {flavor}")
 
 
-def run_pyinstaller(console: bool, allow_missing: bool = False) -> None:
+def run_pyinstaller(console: bool, allow_missing: bool = False, cli: bool = False) -> None:
     """调用当前解释器的 PyInstaller，按 spec 打包到 dist/。
 
     ``--allow-missing-deps`` 必须**透传给 spec**：spec 自己也会对那几个「静态分析看不到」
@@ -345,6 +354,11 @@ def run_pyinstaller(console: bool, allow_missing: bool = False) -> None:
         env["CV_CONSOLE"] = "1"
     else:
         env.pop("CV_CONSOLE", None)
+    # CLI 版：spec 据此跳过 pywebview / pystray / Pillow，并改用 Keyrealm-CLI 产物名
+    if cli:
+        env["KEYREALM_CLI"] = "1"
+    else:
+        env.pop("KEYREALM_CLI", None)
     # 与 --allow-missing-deps 打通：spec 里对那四个隐式依赖默认「缺了即中止」，
     # 这里显式跑一次 PyInstaller（而非经本脚本）时，逃生口就是这个环境变量。
     if allow_missing:
@@ -476,12 +490,20 @@ def main() -> None:
     ap.add_argument("--gui", choices=("qt", "gtk"), default=None,
                     help="仅 Linux 有效：界面后端 qt（默认，自包含）/ gtk（用系统 GTK）。"
                          "选中的那个会烘进包里，运行时不必再设环境变量")
+    ap.add_argument("--cli", action="store_true",
+                    help="构建 CLI 版（无桌面窗口/托盘；默认命令行操作，--web 可选启动浏览器界面）")
     args = ap.parse_args()
 
-    console = args.console or args.smoke
+    console = args.console or args.smoke or args.cli
     out_dir = Path(args.output).expanduser().resolve()
 
+    global EXE_NAME
+    if args.cli:
+        EXE_NAME = "Keyrealm-CLI.exe" if IS_WINDOWS else "Keyrealm-CLI"
+
     gui = (args.gui or "").strip().lower()
+    if args.cli and gui:
+        sys.exit("--cli 与 --gui 不能同时使用：CLI 版不包含桌面图像层。")
     if gui and platform.system() != "Linux":
         print(f"注意：--gui {gui} 只对 Linux 有意义，本机是 {platform.system()}，本次忽略",
               file=sys.stderr)
@@ -490,7 +512,9 @@ def main() -> None:
         # 透传给 PyInstaller 子进程：spec 据此决定收集 Qt 还是 gi（见 Keyrealm.spec）
         os.environ["KEYREALM_GUI"] = gui
 
-    if platform.system() == "Linux":
+    if args.cli:
+        gui_note = "不适用（CLI 版无桌面窗口）"
+    elif platform.system() == "Linux":
         gui_note = gui or "（未指定 → 默认 Qt；没装 Qt 则退回 GTK）"
     else:
         gui_note = "（用系统自带的 WebView，无需选择）"
@@ -502,17 +526,18 @@ def main() -> None:
     print(f"产物名     : {EXE_NAME}")
     print(f"输出目录   : {out_dir}")
     print(f"控制台模式 : {console}")
+    print(f"构建形态   : {'CLI（无桌面窗口）' if args.cli else '桌面版（含窗口与托盘）'}")
     print(f"界面后端   : {gui_note}")
     print("=" * 60)
 
-    check_environment(args.allow_missing_deps)
+    check_environment(args.allow_missing_deps, args.cli)
     check_schema()
     # 打包前落盘 commit hash（exe 里没有 git）——必须在 run_pyinstaller 之前
-    write_build_info(gui)
+    write_build_info(gui, args.cli)
 
     if args.frontend:
         build_frontend()
-    run_pyinstaller(console, args.allow_missing_deps)
+    run_pyinstaller(console, args.allow_missing_deps, args.cli)
     exe = assemble_release(out_dir)
 
     if not args.keep_intermediates:
