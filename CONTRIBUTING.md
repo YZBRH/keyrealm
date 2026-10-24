@@ -21,7 +21,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 cd frontend && npm install && npm run build && cd ..
-python main.py
+python main.py --gui
 ```
 
 > **必须用虚拟环境**：部分依赖（`httpx[socks]` 的 socksio、`PySocks`、`telethon` 的
@@ -64,6 +64,18 @@ python main.py
 > ```
 >
 > 判据很直接：**wheel 文件名里的 `manylinux_2_XX` 就是它要求的 glibc 版本**（`2_28` ≤ CentOS 8 的 2.28 才行）。
+
+### 1.1 三种运行方式
+
+```bash
+python main.py --gui                 # 桌面窗口（源码运行必须显式 --gui）
+python main.py --web                 # 浏览器界面（默认 127.0.0.1:8766）
+python main.py --cli status          # 命令行（不监听端口）
+python main.py --cli --data-dir /tmp/vault list   # 临时数据目录
+```
+
+数据目录优先级：CLI `--data-dir` → 入口目录 `keyrealm.conf.json` → 默认 `<入口>/data`。
+完整命令参考见 [docs/CLI_WEB.md](docs/CLI_WEB.md)。
 
 ## 2. 在浏览器里调前端（不必启动 Python）
 
@@ -173,6 +185,33 @@ python scripts/pack_source.py     # 生成/覆盖 release/keyrealm-src.zip
   （看着像代码问题，其实是依赖问题）。`build.py` 会先查 `.bin` 里有没有可执行的 `vite`，
   命中就直接给出「删掉 `frontend/node_modules` 重新 `npm install`」的修法。
 
+### 4.1 运行测试
+
+测试脚本不依赖 pytest，直接 `python tests/test_xxx.py` 即可；每个文件自带
+`setup_module / teardown_module` 与汇总退出码。
+
+```bash
+# 基础契约（沙盒数据库 / 固定临时目录）
+python tests/test_plugin_state.py
+python tests/test_credential_update.py
+python tests/test_schedules.py
+python tests/test_idle_lock.py
+python tests/test_mcp_permissions.py
+
+# 数据目录 / CLI / Web / MCP 集成
+python tests/test_paths_config.py
+python tests/test_help_cli.py
+python tests/test_cli_integration.py
+python tests/test_mcp_cli.py
+python tests/test_web_mode.py
+```
+
+- 集成测试用 `tmp/` 或系统临时目录、随机端口、独立数据目录，**不碰真实凭据库**；
+- 备份导入会写共享的 `plugins/.state.json`，`test_cli_integration.py` 会在 setup/teardown 中
+  保存并还原；
+- `test_mcp_cli.py` / `test_web_mode.py` 会真的起进程，结束时停止并断言端口已释放；
+- `test_real_vendors.py` 需要 `data/real_keys.json`（真实 Key），默认跳过。
+
 ## 5. 项目结构
 
 ```
@@ -181,11 +220,14 @@ keyrealm/
 ├── Keyrealm.spec            # PyInstaller 打包规格
 ├── requirements.txt
 ├── backend/
-│   ├── api.py               # pywebview JS-API 桥接层
+│   ├── api.py               # pywebview JS-API 桥接层（桌面 + Web 共用方法）
+│   ├── bootstrap.py         # 三种形态共用的初始化（CLI 不启动常驻服务）
+│   ├── cli.py               # CLI 命令解析与执行（凭据 / 代理 / TLS / MCP / 自更新 / 数据目录）
+│   ├── web_server.py        # Web 模式（Starlette 静态前端 + RPC + SSE + 下载）
 │   ├── crypto.py            # AES-256-GCM 加密/解密
-│   ├── database.py          # SQLite 数据访问层
+│   ├── database.py          # SQLite 数据访问层（<data_dir>/credentials.db）
 │   ├── backup.py            # 备份 / 恢复（导出单个 JSON；导入为「填充式」并落两份日志）
-│   ├── paths.py             # 冻结感知路径解析（打包/开发统一）
+│   ├── paths.py             # 程序目录 / 数据目录解析（配置优先级、冻结感知）
 │   ├── icon_ink.py          # 插件 logo 深色主题可见度判定
 │   ├── plugin_base.py       # 插件接口定义与模块加载
 │   ├── plugin_manager.py    # 插件目录扫描与自动加载
@@ -195,23 +237,25 @@ keyrealm/
 │   ├── proxy*.py            # 代理工具 / 注册表 / 连通性对照诊断
 │   ├── single_instance.py   # 单实例闸门
 │   ├── scheduler.py         # 定时验证调度器
-│   ├── tasks.py             # 后台任务注册表（状态 / 进度 / 取消，落 data/tasks.json）
+│   ├── tasks.py             # 后台任务注册表（状态 / 进度 / 取消，落 <data_dir>/tasks.json）
 │   ├── verify_options.py    # 批量验证运行参数（并发 / 超时）
 │   ├── idle_lock.py         # 空闲自动锁定看门狗
 │   ├── autostart.py         # 开机自启动（直接读写系统自启条目）
 │   ├── vault_proxy_ctx.py   # 按调用生效的代理上下文
 │   ├── logger.py            # 日志配置（轮转 + 级别可调 + 关键词搜索）
-│   ├── tray.py              # 系统托盘
+│   ├── tray.py              # 系统托盘（仅桌面模式导入）
 │   ├── updater.py           # 程序内更新（检查 / 备份 / 构建 / 逐级迁移 / 重启，唯一实现）
-│   └── mcp_server.py        # MCP Server（SSE）
+│   └── mcp_server.py        # MCP Server（SSE，纯 ASGI Bearer 鉴权）
 ├── assets/                  # 应用图标资源（由 scripts/make_icon.py 生成）
 ├── scripts/                 # 构建与生成脚本（build / pack_source / check_schema / gen_mock_assets；
 │                            #   程序内更新：build_update / db_update / restart + check_version(.py) + migrations/）
 ├── plugins/                 # 插件源码（打包时作为外部目录，不进 exe）
 ├── frontend/                # Vue 3 前端
 │   ├── src/{views,components,stores,api}/
+│   ├── public/web-bridge.js # Web 模式：pywebview API → HTTP RPC / SSE
 │   └── vite.config.js
-└── docs/                    # 架构 / 前端 / 插件 / MCP / 数据库 / 更新 六份文档
+├── tests/                   # 契约 / CLI / Web / MCP 集成测试（直接 python tests/test_*.py）
+└── docs/                    # 架构 / CLI-Web / 前端 / 插件 / MCP / 数据库 / 更新 七份文档
 ```
 
 ## 6. 版本、数据库与发布

@@ -35,11 +35,39 @@
          │                              │
          ▼                              ▼
   ┌─────────────────┐          ┌─────────────────┐
-  │  ./data/        │          │  外部 API 服务   │
+  │  data_dir/      │          │  外部 API 服务   │
   │  credentials.db │          │ OpenAI/Anthropic │
-  │  (项目目录内)   │          │ 方舟/智谱/文心   │
+  │  (默认 ./data)  │          │ 方舟/智谱/文心   │
   └─────────────────┘          └─────────────────┘
 ```
+
+### 1.0 运行形态与数据目录
+
+同一份 `main.py` / `backend` / 前端产物支持三种形态，**不是三个分支**：
+
+| 形态 | 启动方式 | 窗口 | 端口 |
+|---|---|---|---|
+| 桌面 | 冻结包无参数 / `--gui` | pywebview + 托盘 | 仅 MCP（若开启） |
+| Web | `--web` | 浏览器 | HTTP（默认 8766） |
+| CLI | `--cli <命令>` / CLI 包直接跟命令 | 无 | 仅 `mcp start` 时 |
+
+- 桌面专用依赖（`webview` / `pystray` / `PIL`）**延迟导入**：CLI 包不含它们，Web/CLI 也能在无
+  `DISPLAY` 的服务器上启动。
+- 三种形态共用 `backend/bootstrap.py::init_core()`；CLI 传 `full=False`，不启动调度器、空闲锁、
+  MCP 与自动更新检查。
+- **单实例锁按程序入口目录**（`<入口>/data/.instance.lock`），与数据目录无关；CLI 一次性命令
+  不抢锁，`mcp start` / 自更新会抢锁。
+
+**数据目录**由 `backend/paths.py` 在**导入其它 backend 模块之前**解析（database/logger/tasks
+在模块级把路径固化成常量）。优先级：
+
+1. CLI `--data-dir PATH`（一次性；仅 CLI 版或 `--cli` 模式）
+2. 入口目录 `keyrealm.conf.json` 的 `data_dir`（持久化）
+3. 默认 `<入口目录>/data`
+
+配置里的相对路径按配置文件所在目录解析；命令行的相对路径按 CWD 解析。`app_dir()` 仍是程序
+入口目录（插件、配置文件），`data_dir()` 才是数据库/日志/任务/备份/下载临时目录。单实例锁
+与 `plugins/` 不随数据目录移动。
 
 ### 1.1 名字与「故意不改」的标识
 
@@ -74,7 +102,8 @@
 
 **启动与单实例**（`backend/single_instance.py`）：`main()` 的**第一件事**就是取单实例锁
 ——Windows 用命名互斥体 `CreateMutexW`（内核在进程退出时自动释放，**不像 pid 文件那样会在
-崩溃/被强杀后留下陈旧锁**），其它平台用 `data/.instance.lock` 上的 `fcntl.flock`。
+崩溃/被强杀后留下陈旧锁**），其它平台用**程序入口目录**的 `data/.instance.lock` 上的 `fcntl.flock`
+（与可配置的数据目录无关）。
 取不到锁说明已有实例在跑：第二套进程**不创建界面**，而是 `FindWindowW("Keyrealm")`
 + `ShowWindow` + `SetForegroundWindow` 把已有窗口拉到前台，然后自己退出——用户感知上就是
 「双击 exe 就出来了」。拿不到句柄/目录不可写等意外一律**放行**（宁可多开，也不能让应用起不来）。
@@ -114,16 +143,19 @@
 
 **职责**：SQLite 连接管理、CRUD 操作、数据迁移。
 
-**数据库位置**：项目目录内 `./data/credentials.db`，避免跨目录污染。
+**数据库位置**：`<data_dir>/credentials.db`。默认 `data_dir` 是程序入口目录下的 `data/`，
+可通过入口目录 `keyrealm.conf.json` 或 CLI `--data-dir` 改到别处（解析顺序见 §1.0）。
 
 ```
-API-Key-Checker/
-└── data/                  # 已在 .gitignore 中排除
+<程序入口>/
+├── keyrealm.conf.json     # 可选：{"data_dir": "…"}
+└── data/                  # 默认数据目录（已在 .gitignore）
     ├── credentials.db
     ├── credentials.db-wal
+    └── credentials.db-shm
 ```
 
-> 应用启动时自动创建 `data/` 目录。数据库路径相对于 `main.py` 所在目录解析，与操作系统无关。
+> 应用启动时自动创建当前数据目录。数据库路径以 `paths.data_dir()` 为准，与 CWD 无关。
 
 **连接策略**：单连接 + 线程锁（SQLite WAL 模式），避免并发写冲突。
 
@@ -387,16 +419,23 @@ plugins/
 
 **职责**：为 AI Agent 提供凭据管理接口。
 
-**传输**：SSE（Server-Sent Events），默认监听 `127.0.0.1:8765`。不随应用自动启动，由用户在「MCP 设置」页手动开启；开启后窗口最小化到托盘仍持续运行。
+**传输**：SSE（Server-Sent Events），默认监听 `127.0.0.1:8765`。不会随普通 CLI 命令启动；
+桌面/Web 由用户手动开启或按 `mcp_enabled` 恢复，CLI 用 `mcp start` **前台常驻**启动（Ctrl+C 停止）。
 
 **重依赖按需导入**：`mcp` / `starlette` / `uvicorn`（连带 `pydantic`）在应用自身的导入链上
 多占约 **33MB** RSS，而这套东西**只有真正启动服务时才用得到**。因此本模块顶层只留标准库与
 `backend` 内部模块，`mcp`/`uvicorn` 降级到 `TYPE_CHECKING` 仅供类型标注，实际导入下沉到
-`_build_mcp_app()`（构造工具）、`start_server()`（起 uvicorn）里；鉴权中间件 `BearerAuthMiddleware`
-也挪进 `_make_asgi_app()` 内部定义——它要继承 starlette 的 `BaseHTTPMiddleware`，类体在导入期就得
-解析基类，留在模块顶层会把 starlette 一起拽进常驻内存。**注意**：`main.py` / `api.py` 仍照常
+`_build_mcp_app()`（构造工具）、`start_server()`（起 uvicorn）里；Bearer 鉴权中间件也在
+`_make_asgi_app()` 内部定义。**注意**：鉴权必须用**纯 ASGI 中间件**，不能用
+`BaseHTTPMiddleware`——后者会把响应体重新包一层异步迭代器，SSE 长连接会触发 Starlette 的
+`Unexpected message: http.response.start` 断言并返回 500。`main.py` / `api.py` 仍照常
 `import mcp_server`，无需改动；打包侧 `Keyrealm.spec` 用 `collect_all()` 显式收了这三个包，
 不受延迟导入影响，新增重依赖时照此办理。
+
+CLI 启动流程（`backend/cli.py::cmd_mcp_start`）：占单实例锁 → 解锁保险库 → 保存 `--host/--port`
+→ 创建/轮换 Token → `api.start_mcp()` → 前台等待，SIGINT/SIGTERM 设置停止事件、关闭服务并写回
+`mcp_enabled=0`。安装成 PyInstaller onefile 后 Ctrl+C 可能同时落到引导进程与子进程，因此用信号
+事件而不是裸 `KeyboardInterrupt`。
 
 **监听地址可配**：`settings` 的 `mcp_host` / `mcp_port`（默认 `127.0.0.1` / `8765`）。
 `start_server(host, port)` 不再把 `127.0.0.1` 写死，也**取消了「端口被占就 +1/+2」的降级**
@@ -421,6 +460,8 @@ Agent 发起 SSE 连接
 ```
 
 **Token 格式**：`kr_` + 32 位随机十六进制（共 35 字符），只存 SHA-256 哈希，明文仅在创建 / 轮换时展示一次。
+CLI 对应命令：`mcp token`（查看前缀，无 Token 时创建并显示明文）、`mcp token --rotate`
+（轮换并显示新明文）；`mcp start --new-token` 在启动前轮换。已有 Token 的明文**无法找回**。
 
 MCP 全局只保留**一个** Token（不再单独建表，就存在 `settings` 的 `mcp_token_hash` / `mcp_token_prefix`
 两条键里），且**默认即存在**（无则自动创建），仅提供「轮换」（签发新 Token 覆盖旧的，明文仅展示一次）。
@@ -455,9 +496,21 @@ const result = await window.pywebview.api.list_credentials({ group_id: 1 })
 window.evaluate_js("window.dispatchEvent(new CustomEvent('vault:updated', {detail: ...}))")
 ```
 
+`api.push_event()` 现在有两个出口：桌面窗口（`evaluate_js`）与注册到 `add_event_sink()` 的
+Web SSE 广播器。Web 模式下 `frontend/public/web-bridge.js` 把 `window.pywebview.api` 代理成
+`POST /api/call`，并把 `/api/events` 的 SSE 还原成同名 `CustomEvent`——页面代码不区分模式。
+
+**桌面专用方法**（托盘、原生文件对话框、系统浏览器、轻量模式）由 Web 桥接层单独处理或返回
+“不支持”；备份导入导出在浏览器里换成文件选择 / 下载；下载类插件操作使用服务器临时目录
+（`web_pick_save_path` → `/api/download`），不把带鉴权头的 URL 交给前端。
+
 ---
 
 ### 2.7 系统托盘（tray.py）
+
+**仅桌面模式加载**：`main.py` 在 `main()` 里才 `import tray`；CLI / Web 模式不导入 `pystray`
+（无 `DISPLAY` 时导入即抛异常，CLI 包也不打包它）。`api.py` 刷新托盘改成延迟导入
+`_update_tray()`，没有托盘时静默跳过。
 
 **职责**：窗口最小化到托盘后保持后台运行，MCP Server 和调度器持续工作。
 
@@ -551,7 +604,7 @@ window.evaluate_js("window.dispatchEvent(new CustomEvent('vault:updated', {detai
 
 ### 2.9 日志模块（logger.py）
 
-**职责**：统一日志配置，写入 `<app_dir>/data/logs/keyrealm.log`，并可按用户选择调整级别。
+**职责**：统一日志配置，写入 `<data_dir>/logs/keyrealm.log`（默认 `<入口目录>/data/logs/`，可配置），并可按用户选择调整级别。
 
 **实现**：`logging` + `RotatingFileHandler`（单文件约 1 MB × 5 份备份），多行堆栈按时间戳归组。
 
@@ -582,7 +635,7 @@ window.evaluate_js("window.dispatchEvent(new CustomEvent('vault:updated', {detai
 
 - **纯状态模块**：只做任务的增删改查 + 取消标志，不认 webview、不认数据库。推送由 `api.py`
   注入（`tasks.set_notifier(push_event)`）——既避免循环依赖，也让本模块能脱离应用单独测试。
-- **持久化到文件**（`data/tasks.json`，与日志同目录，**不进数据库**）：进程重启后仍在，用户回来
+- **持久化到文件**（`<data_dir>/tasks.json`，与日志同目录，**不进数据库**）：进程重启后仍在，用户回来
   能翻到「上次那个下载到底成没成」。重启时**所有 `running` 一律改判 `interrupted`**——线程随
   进程没了，继续显示「进行中」是骗人，但也没失败（用户没做错什么），故单列一档。写盘时机：
   状态**变迁**（新建 / 结束 / 取消 / 清理）立刻落盘；高频的 `progress()` 按 `_SAVE_INTERVAL = 2s`
@@ -604,6 +657,10 @@ window.evaluate_js("window.dispatchEvent(new CustomEvent('vault:updated', {detai
 ---
 
 ### 2.11 窗口生命周期与轻量模式（main.py）
+
+> **仅桌面模式**有窗口。Web 模式走 `run_web_mode()`（uvicorn + 静态前端 + 浏览器桥），CLI 模式走
+> `backend/cli.py`；两者都不创建窗口，也不会初始化托盘。源码启动必须 `--gui`，冻结桌面包双击
+> 无参数仍直接开窗口。
 
 `main.py` 持有唯一的窗口引用 `_window`，窗口的隐藏 / 显示都收口在这里（`tray.start_tray` 的三个
 回调、`api.set_close_callbacks` 注入的 `hide_cb`、`_on_closing` 都指向它们）：
@@ -655,13 +712,19 @@ pywebview 没有「再次显示」事件可挂（`Form.Shown` 只触发一次，
 它**（含 venv 尚未创建时），脚本据此复用。
 
 **两段式**：应用内「立即更新」拆成 **准备**（`prepare_update()`，应用进程内、带进度、可取消：
-备份 + 下载预编译包 / 拉源码 + 装依赖 + 构建到 `.update-staged/`，写 `data/.update-prepared.json`）
+备份 + 下载预编译包 / 拉源码 + 装依赖 + 构建到 `.update-staged/`，写 `<data_dir>/.update-prepared.json`）
 与 **交棒**（`begin_handoff()` 发请求 + 起脱离进程；脱离进程 `apply_update()` 用准备产物走**快路径**，
 无产物则**回落完整流程**）。**准备完成后不再自动退出**：后端推 `vault:update_ready`，由前端弹窗询问
 「立即重启 / 稍后」；选「立即重启」才调 `api.apply_prepared_update()` → `begin_handoff()`。选「稍后」
 则保留产物，下次 `prepare_update()` 先按「正式版版本仍是最新 Release / 测试版 commit 仍是远端同一
 提交」校验，命中就**跳过下载与构建**（测试版准备阶段已推进源码，`check_update` 会依据本地产物把
 结果标成「本地已有准备完成但未安装的更新」）。产物有效期 7 天。
+
+**CLI 自更新**：`Keyrealm-CLI self-update check|install|status` 直接复用 `updater.prepare_update()`
+/ `begin_handoff()`。`install` 同步准备、成功后由交棒进程替换程序；`--test` 走源码构建并自动带
+`--cli`，正式版按 `platform_pkg()` 选择 `-cli` 资产。交棒前会占住单实例锁、把 relaunch 参数收敛为
+空（避免重启后重复执行 install），并在 `_self_update_argv()` 里**显式传出当前 `--data-dir`**——
+一次性数据目录不写配置，不传下去更新进程就找不到请求/准备产物。
 **构建 / 迁移 / 替换必须留在交棒阶段**——`build.py::assemble_release`
 会 `copy2` 覆盖运行中的可执行文件、`run_migrations` 要独占数据库，两者都要求应用已退出。
 交棒顺序不可颠倒：**先起更新进程、再关闭应用**。
@@ -695,12 +758,14 @@ pywebview 没有「再次显示」事件可挂（`Form.Shown` 只触发一次，
 **交棒时序（顺序不可颠倒）**：应用内 `start_update()` 完成准备并推 `vault:update_ready` → 用户确认
 「立即重启」→ `apply_prepared_update()` → 写 `data/.update-request.json` →
 `spawn_detached()` 把**自更新进程**起成**脱离进程**（冻结 exe 用 `Keyrealm --self-update <渠道>`、
-源码运行用 `python main.py --self-update <渠道>`；**两平台都用脱离进程 + 日志文件，不弹控制台窗口**，
-POSIX 走 `start_new_session`）→ **确认子进程起来之后**才调 `_close_quit_cb()`（= `main._quit_app`）退出。
+源码运行用 `python main.py --self-update <渠道>`，两者都追加 `--data-dir <当前目录>`；
+**两平台都用脱离进程 + 日志文件，不弹控制台窗口**，POSIX 走 `start_new_session`）→ **确认子进程起来之后**
+才调 `_close_quit_cb()`（= `main._quit_app`）退出。
 `main.py` 的 `--self-update` 分支不建窗口，直接跑 `updater.apply_update()`。脚本首步 `wait_for_app_exit()` 轮询
 `single_instance.acquire()`（拿不到锁 = 应用还在跑）；它同时**占住锁**保证更新期间没人能启动
 应用，**重启新应用前必须 `single_instance.release()`**（`backend/single_instance.py` 为此新增了
-`release()`）。
+`release()`）。重启沿用原启动参数（`_relaunch_spec`）：CLI/Web 的 `--web`、`--port` 等不会被丢掉；
+源码模式没有显式模式时自动补 `--gui`。
 
 **跨进程 / 跨重启通信**：全程写 `data/.update-status.json`（阶段、成败、from/to）；新应用启动后
 由前端「设置 → 更新」卡片读取展示。
@@ -710,9 +775,9 @@ POSIX 走 `start_new_session`）→ **确认子进程起来之后**才调 `_clos
 > `base_library.zip` 就崩。所以 `spawn_detached` / `_child_env` 一律带上
 > **`PYINSTALLER_RESET_ENVIRONMENT=1`**（`updater._PYI_ENV`），让子进程解压自己的一份。
 
-**备份**：可执行文件 + `plugins/` + `data/`（DB 走 `sqlite3 backup()` 一致性快照，`logs/`/`webview/` 排除）
+**备份**：可执行文件 + `plugins/` + 当前 `data_dir`（DB 走 `sqlite3 backup()` 一致性快照，`logs/`/`webview/` 排除）
 **再外加一份全量导出 `data/keyrealm-full-backup.json`**（复用「备份」功能，见 §备份），
-打成一个 zip 落 `data/backup/`（gitignored、0600、**含真实密钥**），**只留一份**。构建失败不覆盖旧
+打成一个 zip 落 `<data_dir>/backup/`（gitignored、0600、**含真实密钥**），**只留一份**。构建失败不覆盖旧
 产物（`assemble_release` 覆盖前留 `Keyrealm.old` 供回滚）；**更新流程换 exe 时沿用同一个 `Keyrealm.old`**
 ——Windows 上运行中的 exe 不能被覆盖（`WinError 32`），只能**先改名腾位**再放新的
 （`updater._replace_exe`；交棒进程自己就跑在这个 exe 上）。
@@ -805,6 +870,15 @@ AI Agent（Claude Desktop / Cursor）
 > - 窗口隐藏后所有后台线程继续运行，MCP Server 不中断
 > - 应用真正退出时（托盘菜单"退出"）：停止调度器 → 停止空闲锁定看门狗 → 关闭 MCP Server → 销毁托盘图标 → 退出进程
 
+**其他形态的线程模型**：
+
+- **Web**：uvicorn 主循环在 `run_web_mode()` 的主线程；调度器 / 空闲锁 / MCP（若开启）与桌面一致；
+  每个 HTTP RPC 通过 `run_in_threadpool` 调用同步 `VaultApi`。
+- **CLI 一次性命令**：进程启动 → `bootstrap.init_core(full=False)` → 执行一条命令 → 退出；
+  不启动调度器、空闲锁、MCP、自动更新检查。插件验证仍可同步调用 `scheduler.verify_single_credential`。
+- **CLI `mcp start`**：主线程进入信号等待循环，uvicorn 在独立线程；`SIGINT/SIGTERM` 设置停止事件后
+  关闭服务，进程退出即释放内存密钥。
+
 ---
 
 ## 5. 安全设计
@@ -813,11 +887,14 @@ AI Agent（Claude Desktop / Cursor）
 |------|----------|
 | 数据库文件泄露 | AES-256-GCM 字段级加密，无主密码无法解密 |
 | 主密码暴力破解 | PBKDF2 100,000 次迭代，增加破解成本 |
-| 内存中密钥泄露 | 密钥仅存于进程内存，不写文件；托盘"锁定"可主动清除 |
-| 无人值守时密钥常驻 | 「空闲自动锁定」按 `auto_lock_minutes` 在无操作一段时间后自动清除内存密钥（[§2.8](ARCHITECTURE.md)） |
-| MCP 未授权访问 | Bearer Token 鉴权，Token 哈希存储，支持吊销和过期时间 |
+| 内存中密钥泄露 | 密钥仅存于进程内存，不写文件；托盘"锁定"（桌面）/ `lock_vault` RPC 可主动清除 |
+| 无人值守时密钥常驻 | 「空闲自动锁定」按 `auto_lock_minutes` 在无操作一段时间后自动清除内存密钥（[§2.8](ARCHITECTURE.md)）；CLI 一次性进程退出即释放 |
+| MCP 未授权访问 | Bearer Token 鉴权（纯 ASGI 中间件），Token 只存 SHA-256，支持轮换 |
 | MCP Token 泄露 | 轮换后旧的立即失效（只存 SHA-256，不存明文） |
-| MCP 工具越权 | 全局工具开关（`mcp_permissions`，界面唯一入口）；工具默认关闭，需显式开启 |
+| MCP 工具越权 | 全局工具开关（`mcp_permissions`，界面 / `mcp permission` 唯一入口）；工具默认关闭，需显式开启 |
+| Web 未授权访问 | 默认 `127.0.0.1` + 启动时随机 Bearer Token；`--host 0.0.0.0` 属用户显式暴露 |
+| Web 文件接口越权 | `/api/log_file` 只接受单个日志文件名；`/api/download` 限制在 `<data_dir>/web_downloads` |
+| CLI 密码泄露 | 推荐 `KEYREALM_MASTER_PASSWORD`；`--password` 会出现在进程列表，文档明确提示 |
 | 插件恶意代码 | 插件在独立命名空间加载，文档中明确信任边界 |
 | 验证请求泄露 Key | 验证逻辑由插件实现，Key 仅发送给对应厂商 API |
 | 后台运行时窗口未锁 | 托盘菜单提供"锁定"操作，清除内存密钥，需重新输入主密码 |

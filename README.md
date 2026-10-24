@@ -71,9 +71,11 @@
 ### 其它
 
 - **凭据简易操作、分组管理、6 套界面主题**（3 浅 3 深）、侧边栏与凭据目录树顺序均可拖拽调整。
-- **后台任务**：下载 / 打包这类长操作登记为任务，可看进度、可取消，关掉弹窗照常跑；任务记录持久化到 `data/tasks.json`，重启后历史仍在（上次没跑完的标为「已中断」）。
+- **后台任务**：下载 / 打包这类长操作登记为任务，可看进度、可取消，关掉弹窗照常跑；任务记录持久化到 `<data_dir>/tasks.json`，重启后历史仍在（上次没跑完的标为「已中断」）。
 - **独立日志页**：级别可调、支持关键词搜索（含 traceback 的整条记录匹配）。
 - **单实例**：重复启动不会开出第二个窗口，而是把已运行的拉到前台。
+- **桌面 / CLI / Web 三种形态**：同一份程序可用桌面窗口、纯命令行或浏览器操作；CLI 版不带桌面图像层，命令行可直接管理凭据，`--web` 可选启用完整浏览器界面。
+- **数据目录可配置**：默认 `<程序入口>/data`；CLI `--data-dir` 或用入口目录 `keyrealm.conf.json` 持久化到任意位置。
 - **开机自启动**（默认关闭）。
 - **跨平台**：Windows 优先，兼容 macOS 与 Linux。
 
@@ -147,6 +149,136 @@ PS：由于未签名，首次打开会被 Gatekeeper 拦，需要右键→「打
 
 
 
+#### CLI / Web 版（无桌面窗口）
+
+同一份程序支持多种运行模式，**不是两个分支**：
+
+- **桌面版**：默认打开窗口；也可用 `--cli` 执行命令，或用 `--web` 启动网页服务。
+- **CLI 版**：`Keyrealm-CLI`，默认就是**纯命令行**——执行一条命令、读写本地库、退出，
+  **不会打开任何端口**。浏览器界面是显式可选项：加 `--web` 才启动 HTTP 服务。
+
+从 Releases 下载带 `-cli` 后缀的包，解压后运行 `Keyrealm-CLI`（Windows 为 `Keyrealm-CLI.exe`）：
+
+```shell
+# ── 命令行（默认，无端口）──
+Keyrealm-CLI status                         # 版本 / 初始化 / 插件状态
+Keyrealm-CLI init                           # 首次使用：设置主密码
+Keyrealm-CLI list                           # 列出凭据
+Keyrealm-CLI list --type api_fofa --search 主号
+Keyrealm-CLI show 3                         # 敏感字段默认掩码
+Keyrealm-CLI show 3 --reveal                # 显示完整值
+Keyrealm-CLI add --type api_fofa --name fofa-main -f api_key=xxxx
+Keyrealm-CLI update 3 -f notes=备用
+Keyrealm-CLI verify --all                   # 任一失败时退出码为 1
+Keyrealm-CLI action 3 download_object --param key=path/to/file
+Keyrealm-CLI export backup.json             # 默认加密
+Keyrealm-CLI import backup.json
+Keyrealm-CLI dedupe                         # 扫描重复项
+Keyrealm-CLI groups                        # 也可用 plugins / logs / version
+
+# ── MCP（默认不开端口，需显式 start）──
+Keyrealm-CLI mcp status                     # 状态、地址、Token 前缀
+Keyrealm-CLI mcp start                      # 前台启动（Ctrl+C 停止）
+Keyrealm-CLI mcp start --host 127.0.0.1 --port 8765 --new-token
+Keyrealm-CLI mcp token                      # 查看前缀；--rotate 轮换并显示新 Token
+Keyrealm-CLI mcp permissions                # 工具权限
+Keyrealm-CLI mcp permission <工具> on|off
+
+# ── 代理与 TLS ──
+Keyrealm-CLI proxy list                     # 代理列表与当前全局代理
+Keyrealm-CLI proxy add 本机 socks5://127.0.0.1:1080
+Keyrealm-CLI proxy use 本机                 # 设为全局；none = 直连
+Keyrealm-CLI proxy test 本机                # 测试连通性（不填则测全局）
+Keyrealm-CLI proxy update 本机 --url socks5://127.0.0.1:1081
+Keyrealm-CLI proxy rm 本机
+Keyrealm-CLI tls show                       # 全局 TLS 版本
+Keyrealm-CLI tls set 1.2                    # auto / 1.0 / 1.1 / 1.2 / 1.3
+Keyrealm-CLI update 3 --proxy 本机 --tls 1.3   # 单条凭据覆盖
+Keyrealm-CLI update 3 --proxy-mode global --tls inherit  # 恢复跟随全局
+
+# ── 自更新（替换的是 -cli 资产）──
+Keyrealm-CLI self-update check                   # 检查正式版
+Keyrealm-CLI self-update check --test            # 检查测试版（main 分支）
+Keyrealm-CLI self-update install                 # 下载并安装，交棒后自动重启
+Keyrealm-CLI self-update install --no-restart    # 只替换，不自动重启
+Keyrealm-CLI self-update install --test          # 从源码构建测试版
+Keyrealm-CLI self-update status                  # 最近一次更新状态
+```
+
+自更新会按当前构建选择 `-cli` 资产；`--password`（或 `KEYREALM_MASTER_PASSWORD`）会解锁并
+使用已保存的更新访问令牌，也可直接设置环境变量 `KEYREALM_UPDATE_TOKEN`。更新期间会占住
+单实例锁，桌面端需先退出；`install` 交棒后本进程退出，由更新进程替换并可自动重启。
+
+```shell
+# ── 可选：浏览器界面 ──
+Keyrealm-CLI --web                          # 默认 http://127.0.0.1:8766
+Keyrealm-CLI --web --no-browser --port 8766 --host 127.0.0.1
+Keyrealm-CLI --web --token <固定令牌>       # 默认每次启动随机生成
+```
+
+桌面版使用相同命令时加 `--cli` 前缀：`Keyrealm --cli list`、`Keyrealm --cli status`。
+桌面版同样支持 `--web` 启动网页服务。
+
+**主密码**：交互终端会提示输入；脚本里推荐用环境变量，避免出现在进程列表：
+
+```shell
+export KEYREALM_MASTER_PASSWORD='…'
+Keyrealm-CLI --json list
+```
+
+也支持 `--password`（注意命令行参数可能被其他用户看到）。`--json` 输出机器可读结果，
+适合管道与自动化。
+
+安全提示（仅 `--web`）：默认只监听 `127.0.0.1`，访问地址必须带启动时打印的 `?token=…`。
+监听 `0.0.0.0` 时同一网络内的其他设备可访问，请务必使用强令牌并做好网络隔离。按 `Ctrl+C`
+停止服务。普通 CLI 命令不监听任何端口。
+
+> CLI 版不包含桌面特有的功能（系统托盘、开机自启、窗口关闭行为、轻量模式）。
+> 命令行可直接完成凭据增删改查、验证、插件启停、分组、备份导入导出、去重、日志等常用操作；
+> 完整界面（含任务、MCP、定时计划、更新等常驻管理）仍可用可选的 `--web` 浏览器模式。
+> 浏览器界面是显式选项，不是 CLI 的默认行为。
+>
+> `mcp start` 是**前台常驻**命令：会先解锁保险库，然后占住单实例锁运行 MCP，按 `Ctrl+C` 停止；
+> 启动时会保存监听地址并写入 `mcp_enabled`，下次桌面/Web 启动会按设置自动恢复 MCP。
+> 新 Token 只在创建 / 轮换时显示一次，请立即保存。
+
+完整的命令参考、数据目录优先级与安全说明见 **[CLI / Web / 数据目录](docs/CLI_WEB.md)**。
+
+#### 自定义数据目录
+
+默认数据目录是**程序入口目录下的 `data/`**（数据库、日志、备份、任务记录）。可以改到别处，
+桌面版与 CLI 共用同一份配置：
+
+```shell
+# 查看当前生效目录、来源（命令行 / 配置文件 / 默认）与配置文件位置
+Keyrealm-CLI data-dir show
+
+# 持久化到入口目录的 keyrealm.conf.json，下次启动生效
+Keyrealm-CLI data-dir set /mnt/vault-data
+
+# 清除配置，恢复默认目录
+Keyrealm-CLI data-dir clear
+
+# 仅本次 CLI 命令使用，不写配置（优先级最高，仅 CLI 支持）
+Keyrealm-CLI --data-dir /tmp/alt-data list
+```
+
+查找顺序：**CLI `--data-dir`（仅命令行模式，一次性）→ 入口目录 `keyrealm.conf.json` →
+默认 `<入口目录>/data`**。配置文件格式：
+
+```json
+{
+  "data_dir": "/path/to/data"
+}
+```
+
+- 桌面版直接开窗口时不接受 `--data-dir`（只认配置文件）；桌面版的 `--cli` 模式可以用参数。
+- 配置里的相对路径按配置文件所在目录解析；CLI `--data-dir` 的相对路径按当前工作目录解析。
+- 插件目录仍然固定在入口目录的 `plugins/`；改变的只有 `data/`（数据库/日志/备份/任务/下载临时文件）。
+- 换目录后是一个**新的空保险库**；要沿用原数据，请先把原 `data/` 内容复制过去。
+
+
+
 ### 通过源码运行
 
 基础环境要求：
@@ -165,7 +297,7 @@ cd keyrealm
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-.venv/bin/python main.py
+.venv/bin/python main.py --gui       # 打开桌面窗口（源码运行时必须显式指定）
 ```
 
 如果你想要把他编译成二进制文件，参考追加执行命令：
@@ -189,13 +321,16 @@ python -m venv .venv
 
 
 ```shell
-# 源码运行
-python main.py                       # Linux 默认：有 Qt 用 Qt，没有则退回 GTK
-KEYREALM_GUI=gtk python main.py      # 指定走系统 GTK
+# 源码运行（不指定模式时只打印启动方式，不会默认弹 GUI）
+python main.py --gui                 # 桌面窗口（Linux 默认：有 Qt 用 Qt，没有则退回 GTK）
+KEYREALM_GUI=gtk python main.py --gui  # 指定走系统 GTK
+python main.py --web                 # 浏览器界面（会监听端口）
+python main.py --cli status          # 命令行模式（无端口）
 
 # 打包
 python scripts/build.py --frontend               # 默认打成 Qt 版
 python scripts/build.py --frontend --gui gtk     # 打成 GTK 版
+python scripts/build.py --frontend --cli         # CLI 版（无窗口；命令行操作，可选 --web）
 ```
 
 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
@@ -219,6 +354,14 @@ python scripts/build.py --frontend --gui gtk     # 打成 GTK 版
 
 如果是从 [Releases](../../releases) 中下载的预编译包运行的，我们推荐后续的所有更新都通过"正式版"方式更新。
 
+CLI 版可直接：
+
+```shell
+Keyrealm-CLI self-update check      # 检查
+Keyrealm-CLI self-update install    # 下载/安装并重启
+Keyrealm-CLI self-update status     # 最近一次状态
+```
+
 
 
 如果 [Releases](../../releases) 中没有对应的预编译包，通过"正式版"渠道更新可能会出问题，欢迎提交 Issue 或 PR 来说明需要支持的更多操作系统版本。
@@ -241,7 +384,7 @@ git pull
 # 跑之前请先完全退出应用）
 python scripts/migrations/m_1.2.1__to_1.2.2.py --apply
 
-python main.py
+python main.py --gui
 ```
 
 
@@ -270,10 +413,18 @@ python main.py
 
 Keyrealm 内置一个 **MCP Server**，Agent 可以直接查询、创建、验证凭据，不必把密钥复制到聊天上下文里。
 
-1. 在「设置 → MCP 服务」页手动启动服务（默认监听 `127.0.0.1:8765`，仅本机）。在端口被占用时将会直接报错而不自动换端口。
-2. 页面提供现成的客户端配置 JSON 与访问 Token（Bearer）。把配置粘进 Claude Desktop / Cursor / Claude Code 等客户端即可。
-3. **工具权限默认关闭**，需要在同一页逐个开启。共 20 个工具：读类默认开，写与高危类默认关（开启前二次确认）。
-4. Token 明文**只在轮换时展示一次**，数据库只存哈希与前缀，鉴权失败将返回 401。
+启动方式（任选其一）：
+
+- **桌面 / Web**：在「设置 → MCP 服务」页手动启动服务（默认监听 `127.0.0.1:8765`，仅本机）。
+- **CLI**：`Keyrealm-CLI mcp start` 前台启动，`Ctrl+C` 停止；普通 CLI 命令不会自动开端口。
+
+1. 端口被占用时直接报错，不自动换端口。`mcp start --host H --port P` 可持久化新的监听地址。
+2. 页面 / `mcp token` 提供访问 Token（Bearer）；`mcp token --rotate` 可轮换。
+3. **工具权限默认关闭**，需要在 MCP 设置页逐个开启（CLI：`mcp permission <工具> on`）。
+   共 20 个工具：读类默认开，写与高危类默认关（开启前二次确认）。
+4. Token 明文**只在创建 / 轮换时展示一次**，数据库只存哈希与前缀，鉴权失败返回 401。
+5. CLI 启动 MCP 会先解锁保险库，并占住单实例锁；停止时写入 `mcp_enabled=0`。
+   桌面 / Web 下次启动会按 `mcp_enabled` 自动恢复上次的开关状态。
 
 完整接口规范见 [MCP 接口规范](docs/MCP_API.md)。
 
@@ -286,8 +437,9 @@ Keyrealm 内置一个 **MCP Server**，Agent 可以直接查询、创建、验�
 | 加密算法 | AES-256-GCM（字段级，带认证） |
 | 密钥派生 | PBKDF2-HMAC-SHA256，10 万次迭代，随机 16 字节 salt |
 | 密钥存放 | 派生密钥只存在内存，锁定时立即清除 |
-| 数据位置 | 程序目录下的 `data/`，不联网同步、不上传任何第三方 |
-| 网络行为 | 仅「验证 / 操作」时按你的配置发起请求；MCP Server 默认不启动、仅监听本机 |
+| 数据位置 | 默认程序目录下的 `data/`；可通过入口目录 `keyrealm.conf.json` 或 CLI `--data-dir` 改到别处。不联网同步、不上传任何第三方 |
+| 网络行为 | 仅「验证 / 操作」时按你的配置发起请求；MCP Server 默认不启动、仅监听本机（CLI 需显式 `mcp start`） |
+| Web 模式 | 默认只监听 `127.0.0.1`，必须携带启动时生成的 Bearer Token；`--host 0.0.0.0` 时请自行做好网络隔离 |
 | 输出净化 | 插件的返回文本与日志会过滤掉回显的敏感字段值 |
 | 空闲锁定 | 可选：一段时间无操作后自动清除内存密钥 |
 
@@ -303,10 +455,12 @@ Keyrealm 内置一个 **MCP Server**，Agent 可以直接查询、创建、验�
 无法恢复。只能删掉 `data/` 目录重新开始（已加密的数据无法解密）。
 
 **Q：数据存在哪里？怎么整机迁移？**
-程序的 `data/` 目录：`credentials.db`（凭据库）、`logs/`（日志）、`tasks.json`（任务记录）、`webview/`（界面偏好）。整机迁移直接拷 `data/` 即可（主密码随之带走）。也可以只用「备份」页导出 JSON 迁移，粒度更细。
+默认在程序的 `data/` 目录：`credentials.db`（凭据库）、`logs/`（日志）、`tasks.json`（任务记录）、`webview/`（界面偏好）。
+可用 `Keyrealm-CLI data-dir show` 查看实际位置；如果配置过自定义目录，迁移时把该目录与入口目录的 `keyrealm.conf.json` 一起拷走。
+整机迁移也可以只用「备份」页导出 JSON，粒度更细。
 
 **Q：升级会不会丢数据 / 重置我的插件启用状态？**
-不会。升级只替换程序与 `plugins/`，`data/` 原样保留，`plugins/.state.json`（启用 / 禁用状态）也不会被覆盖。
+不会。升级只替换程序与 `plugins/`，**当前数据目录**（默认 `data/`）原样保留，`plugins/.state.json`（启用 / 禁用状态）也不会被覆盖。
 
 **Q：怎么更新到新版本？**
 两种渠道，在「设置 → 更新」里选：
@@ -328,7 +482,7 @@ Keyrealm 内置一个 **MCP Server**，Agent 可以直接查询、创建、验�
 多半是端口被占用。到「设置 → MCP 服务」改一个端口再启动（应用不会自动换端口）。
 
 **Q：日志在哪里？**
-`data/logs/keyrealm.log`（1 MB × 5 轮转），也可以在「日志」页里直接查看与搜索。
+`<data_dir>/logs/keyrealm.log`（默认 `data/logs/keyrealm.log`，1 MB × 5 轮转），也可以在「日志」页里直接查看与搜索。
 
 **Q：验证会不会产生费用或副作用？**
 校验一律使用**只读**接口，不会修改你在厂商侧的任何配置。唯一的例外是插件显式提供、由你**手动点击**的操作（如修改 DNS 记录、刷新登录态令牌）；另有「欠费探测」会额外发一次极小的对话请求（默认关闭，开启时会消耗极少量额度）。
@@ -340,6 +494,7 @@ Keyrealm 内置一个 **MCP Server**，Agent 可以直接查询、创建、验�
 | 文档 | 内容 |
 |---|---|
 | [架构设计](docs/ARCHITECTURE.md) | 模块划分、数据流、线程模型、日志与配置 |
+| [CLI / Web / 数据目录](docs/CLI_WEB.md) | 三种运行形态、命令参考、数据目录优先级、CLI 自更新与 MCP |
 | [前端设计](docs/FRONTEND.md) | 页面结构、交互细节、主题与样式层 |
 | [插件开发指南](docs/PLUGIN_GUIDE.md) | 插件结构、`manifest.json`、`plugin.py` 接口、插件清单 |
 | [签名器校准证据](docs/SIGNER_CALIBRATION.md) | 五家云厂商签名算法的逐字源码依据（含版本 / commit）与重新校准步骤 |

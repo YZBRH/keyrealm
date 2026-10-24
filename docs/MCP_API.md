@@ -6,9 +6,21 @@
 |------|----|
 | 传输协议 | SSE（Server-Sent Events） |
 | 默认地址 | `http://localhost:8765/sse` |
-| 随应用启动 | 否（在「MCP 设置」页手动启动；启动后窗口最小化到托盘仍持续运行） |
+| 随应用启动 | 否。桌面 / Web 在「MCP 设置」页手动启动，或按上次 `mcp_enabled` 恢复；CLI 用 `mcp start` 前台启动（Ctrl+C 停止） |
 | 鉴权方式 | Bearer Token（必须） |
-| 权限控制 | 全局工具开关（唯一入口）；工具默认关闭，需在 MCP 设置页开启 |
+| 权限控制 | 全局工具开关（唯一入口）；工具默认关闭，需在 MCP 设置页或 `mcp permission` 开启 |
+
+CLI 启动 / 管理：
+
+```bash
+Keyrealm-CLI mcp status
+Keyrealm-CLI mcp start --host 127.0.0.1 --port 8765
+Keyrealm-CLI mcp token --rotate
+Keyrealm-CLI mcp permissions
+Keyrealm-CLI mcp permission vault_list_credentials on
+```
+
+`mcp start` 是前台常驻进程（`Ctrl+C` 停止），启动前会解锁保险库并占住单实例锁。
 
 ---
 
@@ -26,6 +38,14 @@ kr_a3f2b1c9d8e7f6a5b4c3d2e1f0a9b8c7
 在应用 **MCP 设置** 页可查看 Token 前缀；需要更换时点击「轮换 Token」，旧 Token 立即作废，
 新 Token 明文**仅在轮换时展示一次**（数据库只保存 SHA-256 哈希与前缀），请立即复制到 Agent 配置中。
 
+CLI 等价操作：
+
+```bash
+Keyrealm-CLI mcp token                 # 查看前缀；若尚无 Token 则创建并显示明文
+Keyrealm-CLI mcp token --rotate        # 轮换并显示新明文
+Keyrealm-CLI mcp start --new-token     # 启动前轮换
+```
+
 ### 请求头格式
 
 所有 SSE 连接必须在 HTTP Header 中携带 Token：
@@ -42,8 +62,8 @@ Bearer Token 由 SSE 中间件校验，失败时在建立连接前直接返回 *
 // 缺少 Authorization 头
 {"error": "missing_token", "message": "需要 Bearer Token"}
 
-// Token 无效或已被吊销
-{"error": "invalid_token", "message": "Token 无效或已撤销"}
+// Token 无效
+{"error": "invalid_token", "message": "Token 无效"}
 
 ```
 

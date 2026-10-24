@@ -17,6 +17,10 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
 > （否则用户已有的 git 代理配置会把它盖掉，环境变量对它无效）；`pip` / `npm` 则走
 > `http_proxy` / `all_proxy` 环境变量。当前实际出口在卡片里显示。
 
+> **数据目录**：本文中的 `data/...` 均指**当前数据目录**（默认 `<程序入口>/data`，可通过
+> `keyrealm.conf.json` 或 CLI `--data-dir` 改到别处）。准备产物、备份、状态与日志都随之移动；
+> 交棒进程会显式继承发起时的数据目录。
+
 > **访问令牌（可选）**：本仓库**已公开**，不填令牌也能检查与更新（`git` 匿名可读、Release 资产走
 > 公开下载 URL）。填一个 **GitHub PAT** 的用处是——把「检查更新 / 取更新内容」走的 GitHub API 从
 > **匿名 60 次/小时**提到**认证 5000 次/小时**，避开匿名限流。仓库若哪天转回**私有**，则**必须**填
@@ -117,7 +121,7 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
    `Keyrealm.old` 腾出路径**再放新的——Windows 上**运行中的 exe 不能被覆盖（会 `WinError 32`）但可以改名**，
    而交棒进程自己就跑在这个 exe 上，所以绝不能直接覆盖。`data/` 与 `plugins/` 之外的原文件不动。
 7. 读**新源码**的 `SCHEMA_VERSION` 与 `APP_VERSION`，逐级迁移数据库。
-8. 重启（源码部署重启 `python main.py`；二进制部署重启构建出的可执行文件）。
+8. 重启（源码部署重启 `python main.py --gui`；二进制部署重启构建出的可执行文件）。
 
 > **需要能构建**：本机要有 **git**、**Python 3.11+**、**Node.js 18+**。缺哪样都会明确报出来。
 > 只想「下载即用」而不想装这些，用**正式版**。
@@ -165,8 +169,30 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
 ## 6. 命令行脚本
 
 逻辑只有一份（`backend/updater.py`），`.sh` / `.bat` 只是**薄引导**（找 Python；缺 `.venv` 就
-自动建并装依赖，全程不问话）。**每个脚本都会把本次运行输出另存一份到 `data/logs/<脚本名>-<时间戳>.log`**
+自动建并装依赖，全程不问话）。**每个脚本都会把本次运行输出另存一份到 `<data_dir>/logs/<脚本名>-<时间戳>.log`**
 （跨平台：记在 Python 入口，`.bat` 无需 `tee`）。
+
+### 6.1 CLI 自更新（`Keyrealm-CLI self-update`）
+
+CLI 版不需要打开浏览器或窗口也能更新自己：
+
+```bash
+Keyrealm-CLI self-update check                  # 正式版
+Keyrealm-CLI self-update check --test           # 测试版（main）
+Keyrealm-CLI self-update status                 # 最近一次更新状态
+Keyrealm-CLI self-update install                # 准备 + 交棒，自动重启
+Keyrealm-CLI self-update install --no-restart   # 只替换，不自动重启
+Keyrealm-CLI self-update install --test         # 从源码构建 CLI 测试版
+```
+
+- 正式版按当前构建选择 **`-cli` 资产**；测试版构建时自动带 `--cli`。
+- `install` 在**当前进程内同步准备**（备份 + 下载/构建），成功后 `begin_handoff()` 起脱离进程；
+  CLI 退出，交棒进程替换程序并按原参数重启。
+- 更新期间占住单实例锁；桌面端 / 另一个 CLI 实例在跑时会拒绝。
+- 一次性 `--data-dir` 也会传给更新进程（`_self_update_argv()` 显式追加），否则它会去默认目录找
+  请求与准备产物。
+- 可选 `--password` / `KEYREALM_MASTER_PASSWORD` 解锁已保存的更新令牌、并让备份带上全量导出；
+  也可直接设置 `KEYREALM_UPDATE_TOKEN`。
 
 | 能力 | Linux/macOS | Windows | 底层脚本 |
 |---|---|---|---|
@@ -174,6 +200,7 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
 | 数据库更新（逐级） | `scripts/db_update.sh` | `.bat` | `db_update.py` |
 | 程序重启 | `scripts/restart.sh` | `.bat` | `restart.py` |
 | 版本检查（无头 CLI，便于脚本/CI 消费） | —（直接 `python scripts/check_version.py`） | — | `check_version.py` |
+| CLI 自更新（检查 / 安装 / 状态） | `Keyrealm-CLI self-update check` / `install` / `status` | 同左 | `backend/cli.py` + `updater.py` |
 
 > **「检查更新」没有 shell 包装**：它已由应用内承担（应用进程内跑）。`check_version.py` 保留为
 > **纯 Python 无头 CLI**（`--json` 便于自动化），不再配 `.sh`/`.bat`。
@@ -199,7 +226,7 @@ scripts/restart.sh --wait
 
 | 路径 | 作用 | 是否入库 |
 |---|---|---|
-| `data/backup/*.zip` | 更新前备份（含密钥） | 忽略（`data/`） |
+| `data/backup/*.zip` | 更新前备份（含密钥）；`data/` 均指**当前数据目录** | 忽略（`data/`） |
 | `data/backup/_asset-*.zip` | 正式版下载的预编译包（就位后即删） | 忽略（`data/`） |
 | `data/keyrealm-full-backup.json` | 更新前备份里随包的**全量导出**（原库损坏也能还原） | 忽略（`data/`） |
 | `.update-staged/` | 测试版**准备阶段**的构建落点（交棒时安装进程序目录，装完即清） | 忽略（`.update-staged/`） |

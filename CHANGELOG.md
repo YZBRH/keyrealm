@@ -6,6 +6,35 @@
 - **每次提升版本号，必须在本文件留一条记录**（新增 / 修复 / 变更 / 数据库）。
 - **数据库结构有变动时**，除了写记录，还必须在 `scripts/` 附一份迁移脚本（见 README「版本规则」）。
 
+## [Unreleased]
+
+### 新增
+
+- **CLI 模式**：与桌面版共用同一套后端，`Keyrealm-CLI <命令>` / `Keyrealm --cli <命令>`
+  可直接完成凭据增删改查、验证、插件启停、分组、代理 / TLS、备份导入导出、去重、日志等操作；
+  普通命令不监听端口。
+- **Web 模式**：`--web` 通过浏览器操作完整界面；`web-bridge.js` 把 pywebview API 映射为 HTTP RPC，
+  SSE 推送同名事件；备份 / 下载类操作适配浏览器文件选择与下载。
+- **CLI MCP**：`mcp status|start|token|permissions|permission`，可前台启动 MCP 并显示 / 轮换 Token。
+- **数据目录可配置**：CLI `--data-dir`（一次性）→ 入口目录 `keyrealm.conf.json` → 默认
+  `<入口>/data`；桌面版与其他 CLI 命令共用同一份配置。新增 `data-dir show|set|clear`。
+- **CLI 自更新**：`self-update check|install|status`，正式版选择 `-cli` 资产，测试版从源码构建。
+- **CLI 发布包**：`scripts/build.py --cli` 与 CI 的 `-cli` 资产；不打包 pywebview / PySide6 / 托盘。
+
+### 变更
+
+- 源码运行桌面窗口必须显式 `--gui`；冻结桌面包双击仍直接开窗口。
+- 单实例锁固定在程序入口目录，不随数据目录移动。
+- 更新进程显式继承当前数据目录；CLI / Web 的重启参数会被保留。
+
+### 修复
+
+- MCP SSE 在 Starlette 1.7 下因 `BaseHTTPMiddleware` 包装长连接返回 500；改为纯 ASGI Bearer 鉴权。
+- MCP 停止状态错误显示默认 `127.0.0.1:8765`；改为使用保存的监听地址。
+- 冻结包漏收插件使用的 `xml.etree` 等标准库子模块，导致部分插件加载失败。
+- Web / CLI 模式下 `import pystray` 在无 `DISPLAY` 环境崩溃；托盘与 GUI 依赖改为按需导入。
+- 插件管理连续点击「禁用」触发重复请求与连续弹窗；同一插件切换期间禁用按钮。
+
 ## [1.4.7] - 2026-10-19
 
 ### 新增

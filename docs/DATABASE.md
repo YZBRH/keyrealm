@@ -2,17 +2,22 @@
 
 ## 存储位置
 
-数据库存放在**项目目录内**，避免跨目录污染：
+数据库存放在**当前数据目录**（`paths.data_dir()`），默认是程序入口目录下的 `data/`：
 
 ```
-API-Key-Checker/
-└── data/
+<程序入口>/
+├── keyrealm.conf.json     # 可选：{"data_dir": "…"}
+└── data/                  # 默认数据目录
     ├── credentials.db        # 主数据库
     ├── credentials.db-wal    # WAL 日志（运行时）
     └── credentials.db-shm    # 共享内存（运行时）
 ```
 
-> `data/` 目录已加入 `.gitignore`，不会提交到版本库。应用启动时自动创建。
+查找顺序：CLI `--data-dir`（一次性）→ 入口目录 `keyrealm.conf.json` → 默认 `<入口>/data`。
+配置里的相对路径按配置文件目录解析；命令行相对路径按 CWD 解析。
+
+> `data/` 与 `keyrealm.conf.json` 均已加入 `.gitignore`。应用启动时自动创建当前数据目录；
+> `plugins/` 与单实例锁**不随**数据目录移动。
 
 SQLite 开启 WAL 模式，支持读写并发。
 
@@ -37,6 +42,8 @@ CREATE TABLE settings (
 | `verify_token` | 主密码验证密文（base64） | `"x9k1..."` |
 | `mcp_host` | MCP Server 监听地址（仅 IP / localhost，默认 `127.0.0.1`） | `"127.0.0.1"` |
 | `mcp_port` | MCP Server 监听端口（1–65535，默认 `8765`；被占用时报错不自动换） | `"8765"` |
+| `mcp_enabled` | 上次 MCP 开关（`"1"` = 桌面/Web 启动时自动恢复；CLI `mcp start` 成功写 1，停止写 0） | `"1"` |
+| `tls_version` | 全局默认 TLS 版本（`auto` / `1.0` / `1.1` / `1.2` / `1.3`） | `"auto"` |
 | `auto_verify` | 保存时自动验证 | `"true"` |
 | `log_level` | 日志级别 | `"INFO"` |
 | `verify_proxy` | **全局代理地址的快照**（由 `global_proxy_id` 解析后写入，供 `VAULT_PROXY` 环境变量那条老通道用） | `"socks5://127.0.0.1:10808"` |

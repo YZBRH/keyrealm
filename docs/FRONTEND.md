@@ -271,6 +271,28 @@ window.addEventListener('vault:credential_updated', (e) => {
 > **开发模式**：Vite dev server（:5173）+ pywebview 连接 localhost
 > **生产模式**：`npm run build` → `frontend/dist/` → pywebview 加载本地文件
 
+### Web / CLI 模式的桥接（`public/web-bridge.js`）
+
+同一份前端产物也由 `backend/web_server.py` 通过 HTTP 提供。服务端在 `index.html` 里注入
+`window.__KEYREALM_WEB__ = { token }` 并先加载 `web-bridge.js`：
+
+- `window.pywebview.api` 用一个 `Proxy` 映射到 `POST /api/call`（Bearer Token），
+  页面里的调用方式完全不变。注意 `then/catch/finally`/Symbol 属性必须返回 `undefined`，
+  否则 `Promise.resolve(api)` 会把它当 thenable、调用一个不存在的 `then` 后端方法。
+- 后端 `push_event()` 通过 `/api/events` SSE 下发，桥接层还原成同名 `CustomEvent`。
+- 桌面专用方法在桥接层单独处理：
+  - `open_external_url` → 白名单内 `window.open`
+  - `open_log_file` → `/api/log_file`
+  - `pick_save_path` → 后端 `web_pick_save_path` 分配临时路径，动作完成后 `/api/download` 取回并触发下载
+  - 备份导入 → 浏览器文件选择；导出 → Blob 下载
+  - 托盘 / 开机自启 / 轻量模式 / 关闭行为 → 返回“不支持”或 no-op
+- 界面据此隐藏无意义项：顶栏「最小化到托盘」、设置里的「窗口与关闭」「启动」卡片；
+  「关于」显示「Web 模式（浏览器）」。
+- 开发模式（`npm run dev`）仍然使用内存 Mock，不会加载 Web 桥接层。
+
+> 下文中出现的 `data/...` 路径均指**当前数据目录**（默认 `<程序入口>/data`，可通过
+> `keyrealm.conf.json` 或 `--data-dir` 改动）。日志、任务、备份、下载临时目录都随之移动。
+
 ### 开发模式的内存 Mock（`src/api/mock.js`）
 
 没有 pywebview 的普通浏览器里跑 `npm run dev` 时，`installDevBridge()` 会把一个**纯内存后端**
@@ -1253,6 +1275,9 @@ created_at, finished_at}`，`status ∈ running | done | failed | canceled | int
 | ⚪ | 应用未解锁（主密码未输入） |
 
 ### 前端与托盘的交互
+
+> Web 模式没有系统托盘：顶栏「最小化到托盘」按钮与设置里的「窗口与关闭 / 启动」卡片会被隐藏，
+> web-bridge 对这些方法返回 no-op 或 `supported: false`。
 
 前端通过 `window.pywebview.api` 控制托盘行为：
 
