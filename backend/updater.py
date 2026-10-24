@@ -41,6 +41,7 @@ import platform
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -48,7 +49,7 @@ import threading
 import time
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Optional
 
 from . import database as db
@@ -244,9 +245,9 @@ def _git_auth_env(token: Optional[str] = None) -> dict:
 _PYI_ENV = {"PYINSTALLER_RESET_ENVIRONMENT": "1"}
 
 
-def _child_env(extra: Optional[dict] = None, token: Optional[str] = None) -> dict:
-    """子进程环境 = 当前环境 + 隔离 PyInstaller 临时目录 + 更新代理 + 访问令牌认证（+ 额外项）。"""
-    return {**os.environ, **_PYI_ENV, **proxy_env(), **_git_auth_env(token), **(extra or {})}
+def _child_env(token: Optional[str] = None) -> dict:
+    """子进程环境 = 当前环境 + 隔离 PyInstaller 临时目录 + 更新代理 + 访问令牌认证。"""
+    return {**os.environ, **_PYI_ENV, **proxy_env(), **_git_auth_env(token)}
 
 
 def _short(text: Any, limit: int = 200) -> str:
@@ -325,6 +326,31 @@ def _exe_name() -> str:
     if is_frozen():
         return Path(sys.executable).name
     return "Keyrealm.exe" if os.name == "nt" else "Keyrealm"
+
+
+def _launcher_path(root: Optional[Any] = None) -> Optional[Path]:
+    """当前发行布局里的启动器路径（``<入口>/Keyrealm``）；不是该布局返回 None。
+
+    只有「入口有启动器、且 ``runtime/<同名 exe>`` 存在」才算新布局。源码运行与旧版
+    onefile 部署都会回落到原来的自更新方式。启动器可被用户改名：它会把真实路径经
+    ``KEYREALM_LAUNCHER`` 传给应用。
+    """
+    base = repo_root(root)
+    runtime_exe = base / "runtime" / _exe_name()
+    if not (base / "runtime").is_dir():
+        return None
+    override = os.environ.get("KEYREALM_LAUNCHER", "").strip()
+    if override:
+        try:
+            candidate = Path(override).resolve()
+            if candidate.is_file() and candidate.parent == base.resolve():
+                return candidate
+        except OSError:
+            pass
+    launcher = base / _exe_name()
+    if launcher.is_file() and runtime_exe.is_file():
+        return launcher
+    return None
 
 
 # ── 版本比较 ──────────────────────────────────────────────
@@ -584,53 +610,155 @@ def _zip_schema(zip_path: Path) -> str:
         return ""
 
 
-def extract_release_zip(zip_path: Path, app_dir: Path) -> dict:
-    """把发布包解压覆盖到程序目录：**剥离顶层目录**、**跳过 ``data/``**（绝不覆盖用户数据）。
+def _unsafe_zip_name(name: str) -> bool:
+    """zip 条目名是否可能逃出解压目录（POSIX 与 Windows 规则都查）。
 
-    交棒进程自己就跑在 ``<exe>`` 上，而 Windows 下**运行中的 exe 不能原地覆盖**
-    （`WinError 32`，Python 里是 `PermissionError` / `Errno 13`）、**但可以改名**。所以包里
-    带 exe 时先把它挪到 ``<exe>.old`` 让出路径再解压；中途失败就挪回来——宁可停在旧版本，
-    也不能把程序目录弄成「没有 exe」。
+    Windows 上 ``C:evil`` 是驱动器相对路径：``is_absolute()`` 为假、也不含 ``..``。
+    """
+    if not name or name.endswith("/"):
+        return True
+    win, posix = PureWindowsPath(name), Path(name)
+    return (bool(win.drive) or win.is_absolute() or posix.is_absolute()
+            or ".." in win.parts or ".." in posix.parts)
+
+
+def extract_release_zip(zip_path: Path, app_dir: Path) -> dict:
+    """把发布包解压并安装到程序目录（**剥离顶层目录**、**跳过 ``data/``**）。
+
+    先在临时目录 ``.update-new/`` 里完整解压，再交给 :func:`install_bundle` 整体安装。
+    这样运行时目录是「换一个新目录」而不是把新文件逐个盖在旧目录上——旧版本删掉的文件
+    不会残留。
     """
     app_dir = Path(app_dir)
-    exe_name = _exe_name()
-    aside: Optional[Path] = None
+    tmp = app_dir / ".update-new"
     try:
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True)
         with zipfile.ZipFile(zip_path) as zf:
             infos = zf.infolist()
-            tops = {i.filename.split("/", 1)[0] for i in infos if "/" in i.filename}
+            tops = set()
+            for info in infos:
+                raw = info.filename
+                if _unsafe_zip_name(raw):
+                    continue              # 恶意条目不参与顶层目录判断
+                if "/" in raw:
+                    tops.add(raw.split("/", 1)[0])
             strip = (next(iter(tops)) + "/") if len(tops) == 1 else ""
-
-            def _rel(info) -> str:
+            for info in infos:
                 name = info.filename
-                return name[len(strip):] if strip and name.startswith(strip) else name
-
-            names = [_rel(i) for i in infos]
-            if exe_name in names:                   # 包里有 exe 才让位（没有就别动能跑的程序）
-                aside = _move_exe_aside(app_dir)
-
-            for info, name in zip(infos, names):
+                if strip and name.startswith(strip):
+                    name = name[len(strip):]
                 if not name or name.endswith("/"):
                     continue
-                if name.split("/", 1)[0] == "data":     # 用户数据目录原样保留
+                parts = Path(name).parts
+                if not parts or _unsafe_zip_name(name) or parts[0] == "data":
                     continue
-                target = app_dir / name
+                target = tmp.joinpath(*parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
+                raw_mode = (info.external_attr >> 16) & 0xFFFF
+                if stat.S_ISLNK(raw_mode):
+                    # 包里的符号链接（Qt 的 .so 版本链接等）：只允许落在解压目录内。
+                    link = zf.read(info).decode("utf-8", "replace")
+                    link_path = Path(link)
+                    if not link or link_path.is_absolute() or PureWindowsPath(link).drive:
+                        continue
+                    try:
+                        (target.parent / link_path).resolve().relative_to(tmp.resolve())
+                    except (OSError, ValueError):
+                        continue
+                    try:
+                        if target.is_symlink() or target.exists():
+                            target.unlink()
+                        os.symlink(link, target)
+                    except (OSError, NotImplementedError):
+                        pass
+                    continue
                 with zf.open(info) as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst)
-                mode = (info.external_attr >> 16) & 0o777   # 还原可执行位（macOS/Linux）
-                if mode:
+                # Windows 的 zip 权限位没有意义，乱设可能把文件标成只读；只在 POSIX 还原。
+                mode = raw_mode & 0o777
+                if mode and os.name != "nt":
                     try:
                         os.chmod(target, mode)
                     except OSError:
                         pass
+        return install_bundle(tmp, app_dir)
     except Exception as exc:  # noqa: BLE001
-        if aside is not None:                       # 让了位却没装成 → 把旧的挪回来
+        return {"ok": False, "message": f"解压失败：{exc}"}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def install_bundle(src: Path, root: Path) -> dict:
+    """把含 ``runtime/`` 的完整发行目录安装到 ``root``（启动器 + 运行时 + 插件）。
+
+    只替换 ``runtime/`` 整个目录；``plugins/`` 合并（保留 ``.state.json``），``data/``
+    与配置文件一律不动。调用方必须保证应用已退出——Windows 下运行中的 exe/DLL 虽然可以
+    改名，但整个目录一起替换最干净。
+    """
+    src, root = Path(src), Path(root)
+    exe_name = _exe_name()
+    runtime_src = src / "runtime"
+    if not (runtime_src / exe_name).is_file():
+        return {"ok": False, "message": "更新包缺少 runtime/ 或其中没有可执行文件"}
+
+    # 先装运行时；启动器最后再换（运行中的 exe 不能原地覆盖，换之前改名腾位）。
+    bundle_exe = src / exe_name
+
+    old = root / "runtime.old"
+    if old.exists():
+        shutil.rmtree(old, ignore_errors=True)
+    live = root / "runtime"
+    moved = False
+    if live.exists():
+        try:
+            os.replace(live, old)
+            moved = True
+        except OSError as exc:
+            return {"ok": False, "message": f"无法移动旧运行时：{exc}{_busy_hint(exc)}"}
+    try:
+        os.replace(runtime_src, live)
+    except OSError as exc:
+        if moved:
             try:
-                os.replace(aside, app_dir / exe_name)
+                os.replace(old, live)
             except OSError:
                 pass
-        return {"ok": False, "message": f"解压失败：{exc}"}
+        return {"ok": False, "message": f"安装运行时失败：{exc}{_busy_hint(exc)}"}
+
+    try:
+        for entry in src.iterdir():
+            if entry.name in ("runtime", "data") or entry.name == exe_name:
+                continue
+            target = root / entry.name
+            if entry.is_dir():
+                shutil.copytree(entry, target, dirs_exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(entry, target)
+        if bundle_exe.is_file():
+            aside = _move_exe_aside(root)
+            try:
+                shutil.copy2(bundle_exe, root / exe_name)
+            except OSError:
+                if aside is not None:      # 换失败 → 把旧启动器挪回来
+                    try:
+                        os.replace(aside, root / exe_name)
+                    except OSError:
+                        pass
+                raise
+        if os.name != "nt":
+            for target in (root / exe_name, live / exe_name):
+                try:
+                    target.chmod(target.stat().st_mode | 0o111)
+                except OSError:
+                    pass
+    except OSError as exc:
+        return {"ok": False, "message": f"安装配套文件失败：{exc}{_busy_hint(exc)}"}
+
+    # 非启动器路径（源码 / 旧版 onefile）没有「新应用存活」的判定者，旧运行时只能立即删除；
+    # 启动器路径在 ``launcher.install_bundle`` 中保留 runtime.old，待新应用正常启动后再清。
+    shutil.rmtree(old, ignore_errors=True)
     return {"ok": True}
 
 
@@ -1222,9 +1350,9 @@ def _zip_add_tree(zf: zipfile.ZipFile, src: Path, arc_prefix: str,
     return skipped
 
 
-def make_backup(*, root: Optional[Any] = None, kind: str = "formal", keep: int = 1,
+def make_backup(*, root: Optional[Any] = None, kind: str = "formal",
                 export_doc: Optional[dict] = None) -> dict:
-    """把可执行文件 + ``plugins/`` + ``data/``（含凭据库一致性快照）打包成 zip；**至多保留 ``keep`` 份**。
+    """把启动器 + ``plugins/`` + ``data/``（含凭据库一致性快照）打包成 zip；**只留一份**。
 
     ``export_doc``：**全量导出文档**（`backend/backup.build_backup` 的产物）。应用内更新时由
     `backend/api.py` 生成（它才拿得到主密码派生的 key）并传进来，随包落成
@@ -1233,31 +1361,37 @@ def make_backup(*, root: Optional[Any] = None, kind: str = "formal", keep: int =
     root = repo_root(root)
     bdir = backups_dir(root)
     bdir.mkdir(parents=True, exist_ok=True)
-    # 「只留一份」：写新备份前先删旧的
-    for old in sorted(bdir.glob("keyrealm-backup-*.zip")):
-        try:
-            old.unlink()
-        except OSError:
-            pass
     stamp = time.strftime("%Y%m%d-%H%M%S")
     dest = bdir / f"keyrealm-backup-{kind}-{version.APP_VERSION}-{stamp}.zip"
+    tmp = dest.with_name(dest.name + ".tmp")
     members: list[str] = []
     skipped: list[str] = []
     try:
-        with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
-            exe = root / _exe_name()
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            exe = (_launcher_path(root) if is_frozen() else None) or (root / _exe_name())
             if exe.is_file():
                 try:
                     zf.write(exe, exe.name)
                     members.append(exe.name)
                 except OSError as exc:      # 可执行文件被占用（运行中）时同样只跳过
                     skipped.append(f"{exe.name}（{type(exc).__name__}）")
+            cfg = root / "keyrealm.conf.json"
+            if cfg.is_file():
+                try:
+                    zf.write(cfg, cfg.name)
+                    members.append(cfg.name)
+                except OSError as exc:
+                    skipped.append(f"{cfg.name}（{type(exc).__name__}）")
             skipped += _zip_add_tree(zf, root / "plugins", "plugins")
             # data/：DB 单独做一致性快照，其余直接收（跳过 logs / webview 等运行中会被锁的目录）
             skipped += _zip_add_tree(zf, _data_dir(root), "data",
-                                     skip_names=set(_BACKUP_SKIP_DIRS) | {"credentials.db",
-                                                                          "credentials.db-wal",
-                                                                          "credentials.db-shm"})
+                                     skip_names=set(_BACKUP_SKIP_DIRS) | {
+                                         "credentials.db", "credentials.db-wal", "credentials.db-shm",
+                                         # 更新状态 / 单实例锁是运行期瞬态，回滚时不应恢复旧值
+                                         ".instance.lock", ".update-status.json",
+                                         ".update-request.json", ".update-prepared.json",
+                                         ".update-check.json",
+                                     })
             db_path = _data_dir(root) / "credentials.db"
             if db_path.is_file():
                 # 快照文件名带 pid：撞不上上次崩溃残留的同名文件
@@ -1286,7 +1420,27 @@ def make_backup(*, root: Optional[Any] = None, kind: str = "formal", keep: int =
                 except Exception as exc:  # noqa: BLE001 - 序列化失败不该挡住更新
                     skipped.append(f"keyrealm-full-backup.json（{type(exc).__name__}）")
     except Exception as exc:  # noqa: BLE001
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
         return {"ok": False, "message": f"备份失败：{exc}"}
+    # 新备份完整落盘后才删旧备份——写失败时至少还留着上一份可用备份。
+    try:
+        os.replace(tmp, dest)
+    except OSError as exc:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return {"ok": False, "message": f"备份落盘失败：{exc}"}
+    for old in sorted(bdir.glob("keyrealm-backup-*.zip")):
+        if old == dest:
+            continue
+        try:
+            old.unlink()
+        except OSError:
+            pass
     try:
         os.chmod(dest, 0o600)  # 含真实密钥，限权（Windows 上基本无效，忽略）
     except OSError:
@@ -1300,17 +1454,87 @@ def make_backup(*, root: Optional[Any] = None, kind: str = "formal", keep: int =
 
 
 def restore_backup(zip_path: Path, *, root: Optional[Any] = None) -> dict:
-    """把备份 zip 解压覆盖回仓库根（``--rollback`` 用）。"""
+    """回滚入口：先确认应用已退出（拿单实例锁），再恢复备份。"""
+    if not single_instance.acquire():
+        return {"ok": False, "message": "应用正在运行：请先退出 Keyrealm 再回滚"}
+    try:
+        return _restore_backup(zip_path, root=root)
+    finally:
+        single_instance.release()
+
+
+def _restore_backup(zip_path: Path, *, root: Optional[Any] = None) -> dict:
+    """把备份 zip 解压覆盖回仓库根（``--rollback`` 用）。
+
+    如果更新后保留了 ``runtime.old/``（新运行时启动失败、尚未被正常启动清理），
+    先把它换回 ``runtime/``——备份本身不含体积巨大的运行时目录。
+    """
     root = repo_root(root)
     zip_path = Path(zip_path)
     if not zip_path.is_file():
         return {"ok": False, "message": f"备份文件不存在：{zip_path}"}
+    runtime_restored = False
+    old_runtime = root / "runtime.old"
+    live_runtime = root / "runtime"
+    if old_runtime.is_dir() and (old_runtime / _exe_name()).is_file():
+        try:
+            failed_runtime = root / "runtime.bad"
+            shutil.rmtree(failed_runtime, ignore_errors=True)
+            if live_runtime.exists():
+                os.replace(live_runtime, failed_runtime)   # 先改名，不直接删
+            try:
+                os.replace(old_runtime, live_runtime)
+            except OSError:
+                if failed_runtime.exists():
+                    os.replace(failed_runtime, live_runtime)
+                raise
+            runtime_restored = True
+            shutil.rmtree(failed_runtime, ignore_errors=True)
+        except OSError as exc:
+            _log.warning("回滚运行时失败：%s", exc)
     try:
+        data_root = _data_dir(root)
         with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(root)
+            for info in zf.infolist():
+                name = info.filename
+                if not name or name.endswith("/"):
+                    continue
+                parts = Path(name).parts
+                if not parts or _unsafe_zip_name(name):
+                    continue
+                # 备份里的 data/ 是**当前数据目录**的内容：自定义数据目录时要解到那里，
+                # 不能一律写回 <入口>/data。
+                target = (data_root.joinpath(*parts[1:]) if parts[0] == "data"
+                          else root.joinpath(*parts))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                raw_mode = (info.external_attr >> 16) & 0xFFFF
+                if stat.S_ISLNK(raw_mode):
+                    link = zf.read(info).decode("utf-8", "replace")
+                    link_path = Path(link)
+                    if (not link or link_path.is_absolute() or PureWindowsPath(link).drive
+                            or ".." in link_path.parts):
+                        continue
+                    try:
+                        if target.is_symlink() or target.exists():
+                            target.unlink()
+                        os.symlink(link, target)
+                    except (OSError, NotImplementedError):
+                        pass
+                    continue
+                with zf.open(info) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                mode = raw_mode & 0o777
+                if mode and os.name != "nt":
+                    try:
+                        os.chmod(target, mode)
+                    except OSError:
+                        pass
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "message": f"恢复失败：{exc}"}
-    return {"ok": True, "message": f"已从备份恢复：{zip_path}"}
+    message = f"已从备份恢复：{zip_path}"
+    if runtime_restored:
+        message += "（运行时已回滚到 runtime.old）"
+    return {"ok": True, "message": message, "runtime_restored": runtime_restored}
 
 
 def latest_backup(*, root: Optional[Any] = None) -> Optional[Path]:
@@ -1384,15 +1608,14 @@ def fetch_latest(*, root: Optional[Any] = None, branch: str = DEFAULT_BRANCH,
 
 def run_build(*, root: Optional[Any] = None, frontend: bool = True,
               extra_args: Optional[list] = None, python: Optional[str] = None,
-              output: Optional[Any] = None,
-              should_cancel: Optional[Callable[[], bool]] = None) -> dict:
+              output: Optional[Any] = None) -> dict:
     """跑 ``scripts/build.py``。``python`` 指定用哪个解释器（默认 ``sys.executable``）。
 
     - 冻结 exe 里的自更新要**用 venv 的解释器**构建（``sys.executable`` 是 exe，跑不了脚本），
       故由调用方传入 ``ensure_venv()`` 的路径。
     - ``output`` 指定产物落点（默认仓库根）。**准备阶段**（应用还在跑）必须传 ``staging_dir``——
       默认落点会覆盖运行中的可执行文件，而运行中的程序文件不可覆盖。
-    - 构建输出落 ``data/logs/build-*.log`` 便于排障；``should_cancel()`` 为真则终止构建。
+    - 构建输出落 ``data/logs/build-*.log`` 便于排障。
     """
     root = repo_root(root)
     build = root / "scripts" / "build.py"
@@ -1418,19 +1641,7 @@ def run_build(*, root: Optional[Any] = None, frontend: bool = True,
         return {"ok": False, "message": f"构建无法启动：{exc}", "log": str(log)}
     finally:
         sink.close()   # 子进程持有自己的 fd，父侧随即关闭即可
-    while True:
-        if should_cancel and should_cancel():
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            return {"ok": False, "canceled": True, "log": str(log), "message": "已取消构建"}
-        try:
-            rc = proc.wait(timeout=1.0)
-            break
-        except subprocess.TimeoutExpired:
-            continue
+    rc = proc.wait()
     if rc != 0:
         tail = _short(log.read_text(encoding="utf-8", errors="replace")[-800:]) if log.is_file() else ""
         return {"ok": False, "returncode": rc, "log": str(log),
@@ -1597,7 +1808,8 @@ def relaunch_app(*, root: Optional[Any] = None, prefer: str = "auto",
     ``--web`` 等参数，否则重启后会去开一个它不存在的桌面窗口。
     """
     root = repo_root(root)
-    exe = root / _exe_name()
+    # 新布局重启入口是启动器（可能与 runtime 里的 exe 不同名，用户也可能改过名）。
+    exe = (_launcher_path(root) if is_frozen() else None) or (root / _exe_name())
     main_py = root / "main.py"
     if prefer == "auto":
         prefer = "source" if (not is_frozen() and main_py.is_file()) else "exe"
@@ -1622,7 +1834,8 @@ def relaunch_app(*, root: Optional[Any] = None, prefer: str = "auto",
         # 交棒进程是带着「更新代理」起的（`_spawn_updater` 传了 proxy_env()）；新应用若原样
         # 继承，`plugin_sdk.proxy()` 的「未指定则回退环境变量」会把**全部插件请求**导到更新
         # 代理上——用户界面里看不出任何设置。这里还原成更新前的原值（见 `_restored_proxy_env`）。
-        pid = spawn_detached(argv, cwd=root, log=log, env=_restored_proxy_env())
+        env = {**(_restored_proxy_env() or {}), ENV_TOKEN: ""}
+        pid = spawn_detached(argv, cwd=root, log=log, env=env)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "message": f"重启失败：{exc}"}
     return {"ok": True, "pid": pid, "argv": argv}
@@ -1652,6 +1865,15 @@ def _write_status(root: Optional[Any], payload: dict) -> None:
 
 def read_status(root: Optional[Any] = None) -> dict:
     return _read_json(status_file(root)) or {}
+
+
+def update_in_progress(root: Optional[Any] = None) -> bool:
+    """是否有更新正在安装/迁移（供 CLI 在写库命令前拒绝并发操作）。"""
+    st = read_status(root)
+    if st.get("finished_at") or st.get("phase") in (None, "done", "failed", "prepared"):
+        return False
+    age = _age_seconds(st.get("updated_at"))
+    return age is not None and age <= 3600
 
 
 def read_request(root: Optional[Any] = None) -> dict:
@@ -1707,9 +1929,9 @@ def read_prepared(root: Optional[Any] = None) -> dict:
     return _read_json(prepared_file(root)) or {}
 
 
-def _write_prepared(root: Optional[Any], payload: dict) -> None:
-    _write_json_atomic(prepared_file(root),
-                       {**payload, "schema": PREPARED_SCHEMA, "prepared_at": _now()})
+def _write_prepared(root: Optional[Any], payload: dict) -> bool:
+    return _write_json_atomic(prepared_file(root),
+                              {**payload, "schema": PREPARED_SCHEMA, "prepared_at": _now()})
 
 
 def _clear_prepared(root: Optional[Any] = None) -> None:
@@ -1748,7 +1970,9 @@ def _validate_prepared(root: Optional[Any], prepared: dict) -> bool:
             return False
         # 复用（以及「稍后」之后的手动交棒）必须能真的装上：构建产物还在才算数。
         staging = Path(str(prepared.get("staging_dir") or ""))
-        if not staging.is_dir() or not (staging / _exe_name()).is_file():
+        if not staging.is_dir():
+            return False
+        if not (staging / "runtime" / _exe_name()).is_file():
             return False
     else:
         return False
@@ -1780,13 +2004,9 @@ def prepared_info(prepared: Optional[dict]) -> Optional[dict]:
 
 # ── 编排：更新主流程 ──────────────────────────────────────
 
-def _relaunch_spec(root: Path) -> dict:
-    exe = root / _exe_name()
-    if is_frozen():
-        # 沿用当前进程的启动参数：CLI 版要保留子命令/--web 等，桌面版 `--web` 也要
-        # 在更新重启后继续以 Web 模式运行（GUI 正常启动时参数为空，不受影响）。
-        return {"frozen": True, "exe": str(exe), "argv": list(sys.argv[1:]), "cwd": str(root)}
-    return {"frozen": False, "exe": sys.executable, "argv": list(sys.argv[1:]), "cwd": str(root)}
+def _relaunch_spec() -> dict:
+    """记录重启时要沿用的启动参数：CLI 子命令 / `--web` 等不能丢（GUI 正常为空）。"""
+    return {"argv": list(sys.argv[1:])}
 
 
 # 阶段 → 界面文案
@@ -1861,37 +2081,24 @@ def _move_exe_aside(root: Path) -> Optional[Path]:
     return bak
 
 
-def _replace_exe(src: Path, root: Path) -> None:
-    """把 ``src`` 装成 ``root/<exe>``：先让位（见 `_move_exe_aside`）再放新的。"""
-    _move_exe_aside(root)
-    shutil.copy2(src, root / _exe_name())
-
-
 def _busy_hint(exc: OSError) -> str:
     """「文件被占用」的可操作提示：Windows `WinError 32` / POSIX `ETXTBSY`、`EBUSY`。
-    交棒进程自身占用已被 `_replace_exe` 的改名腾位绕开，走到这里多半是别处的残留进程。"""
+    ``install_bundle`` 已把旧启动器改名腾位，走到这里多半是别处的残留进程。"""
     if getattr(exc, "winerror", None) == 32 or exc.errno in (errno.ETXTBSY, errno.EBUSY):
         return "（文件被占用：可能另有 Keyrealm 进程没退干净，或被杀软/同步盘锁定；关掉后重试）"
     return ""
 
 
 def _install_staged(staging: Any, root: Path) -> dict:
-    """把 staging 里构建好的产物安装进程序目录（换可执行文件 + 覆盖 ``plugins/``）。"""
+    """把 staging 里「启动器 + runtime/ + plugins/」的完整发行目录安装进程序目录。"""
     staging, root = Path(staging), Path(root)
     if not staging.is_dir():
         return {"ok": False, "message": "未找到构建产物（staging 目录不存在）"}
-    exe_src = staging / _exe_name()
-    if exe_src.is_file():
-        try:
-            _replace_exe(exe_src, root)
-        except OSError as exc:
-            return {"ok": False, "message": f"替换可执行文件失败：{exc}{_busy_hint(exc)}"}
-    plugins_src = staging / "plugins"
-    if plugins_src.is_dir():
-        try:
-            shutil.copytree(plugins_src, root / "plugins", dirs_exist_ok=True)
-        except OSError as exc:
-            return {"ok": False, "message": f"安装插件失败：{exc}"}
+    if not (staging / "runtime").is_dir():
+        return {"ok": False, "message": "构建产物缺少 runtime/（旧单文件布局已不再支持）"}
+    result = install_bundle(staging, root)
+    if not result.get("ok"):
+        return result
     shutil.rmtree(staging, ignore_errors=True)   # 装完即清，别把一份构建产物长期留在程序目录
     return {"ok": True}
 
@@ -1905,7 +2112,7 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
     """**准备阶段**（应用进程内跑，程序不退出）：备份 + 下载预编译包 / 拉源码 + 装依赖 + 构建。
 
     产物写 ``prepared_file``，交棒进程据此走快路径。``progress_cb(current, total, text)`` 报进度；
-    ``should_cancel()`` 为真则尽快中止（下载按块、步骤之间）——但**源码一旦更新即不再接受取消**
+    ``should_cancel()`` 在下载/步骤之间生效；源码构建无法中途打断，构建结束后会再检查一次
     （工作区已前进，取消会让源码领先于数据库）。返回 ``{ok, has_update, kind, prepared, reused, ...}``；
     无更新时 ``has_update=False`` 且不写清单。若本地已有同渠道、仍匹配目标版本的产物（上次选了
     「稍后」），复用该产物并跳过下载 / 构建，``reused=True``。
@@ -2016,7 +2223,7 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
                 return {"ok": False, "kind": kind, "message": src.get("message", "获取源码失败")}
             log(src.get("message", "源码已就绪"))
             done.append("source")
-            should_cancel = None      # 提交点：源码已更新，此后不再接受取消
+            # 提交点：源码已更新，构建阶段无法中途打断；结束后再检查一次取消。
             _status_stage(root, kind, stages, "deps", "准备构建环境（虚拟环境 + 依赖）…", done)
             _prog(0, 0, "准备构建环境…")
             vn = ensure_venv(root=root)
@@ -2040,12 +2247,17 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
             done.append("build")
             meta = source_meta(root)
             prepared.update({
-                "staging_dir": str(out), "venv_python": py,
+                "staging_dir": str(out),
                 "asset_path": "", "asset_sha256": "", "asset_bytes": None,
                 "schema_version": meta.get("schema_version") or to_schema or local["schema_version"],
             })
 
-    _write_prepared(root, prepared)   # 复用也会刷新 prepared_at（相当于给产物续期）
+    # 取消是协作式的：构建阶段不能中途打断，但结束后必须尊重用户在此期间点的取消。
+    if _cancelled():
+        return {"ok": False, "canceled": True, "kind": kind, "message": "已取消"}
+    if not _write_prepared(root, prepared):   # 复用也会刷新 prepared_at（给产物续期）
+        return {"ok": False, "kind": kind,
+                "message": "无法写入更新准备清单（数据目录不可写？），更新未开始"}
     _write_status(root, {"phase": "prepared", "ok": True, "kind": kind, "stages": stages,
                          "done_stages": done, "percent": 100, "message": "准备完成"})
     return {"ok": True, "has_update": True, "kind": kind, "to_version": to_ver,
@@ -2053,8 +2265,14 @@ def prepare_update(kind: str = "formal", *, root: Optional[Any] = None, frontend
 
 
 def _latest_update_log(root: Optional[Any] = None) -> str:
-    logs = sorted((_data_dir(root) / "logs").glob("update-*.log"))
-    return str(logs[-1]) if logs else ""
+    logs = list((_data_dir(root) / "logs").glob("update-*.log"))
+    if not logs:
+        return ""
+    try:
+        latest = max(logs, key=lambda p: p.stat().st_mtime)
+    except OSError:
+        latest = logs[-1]
+    return str(latest)
 
 
 def apply_update(kind: str = "formal", *, root: Optional[Any] = None, frontend: bool = True,
@@ -2069,6 +2287,17 @@ def apply_update(kind: str = "formal", *, root: Optional[Any] = None, frontend: 
     由 ``main.py --self-update``（应用内交棒）或 ``scripts/build_update.py`` 调用。
     """
     root = repo_root(root)
+    # 新布局下应用跑在 runtime/ 里，无法替换自己所在的目录；正常入口已交给启动器。
+    # 手工执行 `runtime/Keyrealm --self-update` 时给出明确指引，而不是中途替换失败。
+    if (is_frozen() and Path(sys.executable).resolve().parent.name == "runtime"
+            and (Path(sys.executable).resolve().parent / "_internal").is_dir()):
+        _k = kind if kind in CHANNELS else "formal"
+        message = ("当前为「启动器 + runtime」布局，不能从 runtime 内部自更新；"
+                   "请从应用内触发更新（由启动器完成安装）。")
+        _write_status(root, {"phase": "failed", "ok": False, "kind": _k,
+                             "stages": _stages_for(_k), "message": message,
+                             "finished_at": _now()})
+        return {"ok": False, "message": message}
     req = read_request(root)
     # 只采信**时效内**的请求文件；陈旧请求不得覆盖 CLI 传入的 kind（老坑）。
     if req and (_age_seconds(req.get("requested_at")) or 1e9) <= _REQUEST_TTL:
@@ -2138,6 +2367,10 @@ def apply_update(kind: str = "formal", *, root: Optional[Any] = None, frontend: 
     else:
         single_instance.release()
     _clear_prepared(root)
+    try:
+        request_file(root).unlink(missing_ok=True)
+    except OSError:
+        pass
     # 「更新后」的提交：准备清单里记着远端 commit；CLI 流程回落现查（此时源码已更新到新提交）。
     to_commit = prepared.get("commit") or ""
     if not to_commit and kind == "test":
@@ -2149,6 +2382,91 @@ def apply_update(kind: str = "formal", *, root: Optional[Any] = None, frontend: 
     if not final.get("ok"):
         log("（更新失败：本次未替换程序文件，原程序仍可用。"
             "详情见本次日志与「设置 → 更新 → 上次更新」。）")
+    return final
+
+
+def finish_update(kind: str = "formal", *, root: Optional[Any] = None,
+                  assume_lock: bool = False, do_restart: Optional[bool] = None,
+                  log: Callable[[str], None] = print) -> dict:
+    """**启动器安装完成后的收尾**：迁移数据库 → 写状态（→ 重启）。
+
+    由启动器在新 ``runtime/`` 里执行（``--self-update finish``）。此时文件已经换好，
+    旧应用也已退出，因此不需要等待、备份或再次安装；只做「新代码对新数据」的部分。
+    ``assume_lock``：启动器已经占住单实例锁（并且会在释放后自己重启应用），
+    此时不要重复抢锁、也不在收尾进程里重启。
+    """
+    root = repo_root(root)
+    req = read_request(root)
+    if req and (_age_seconds(req.get("requested_at")) or 1e9) <= _REQUEST_TTL:
+        kind = req.get("kind") or kind
+    kind = kind if kind in CHANNELS else "formal"
+    stages = _stages_for(kind)
+    prepared = read_prepared(root)
+    frm = prepared.get("from_version") or version.APP_VERSION
+    frm_commit = prepared.get("from_commit") or ""
+    install_stage = "extract" if kind == "formal" else "install"
+    report = [{"stage": install_stage, "ok": True, "message": "启动器已安装新运行时", "at": _now()}]
+
+    _log.info("更新收尾开始：kind=%s assume_lock=%s", kind, assume_lock)
+    log(f"=== Keyrealm 更新收尾（渠道={kind}）===")
+
+    # 收尾期间占住单实例锁：迁移不能与「用户又启动了一个实例」并发。
+    # 启动器流程里锁由启动器持有（跨安装 + 收尾），这里跳过。
+    if not assume_lock and not single_instance.acquire():
+        result = {"ok": False, "message": "检测到程序正在运行，更新收尾中止（请退出后重新启动）"}
+        _clear_prepared(root)
+        final = _finish(root, kind, frm, result, stages, report=report, frm_commit=frm_commit)
+        log(f"✗ {final.get('message')}")
+        return final
+
+    meta = read_release_meta(update_meta_dir(root)) if kind == "formal" else source_meta(root)
+    to_schema = str(prepared.get("schema_version") or meta.get("schema_version") or "")
+    to = str(prepared.get("version") or meta.get("app_version") or version.APP_VERSION)
+    result: dict = {"ok": True, "to": to}
+
+    try:
+        if to_schema:
+            _status_stage(root, kind, stages, "migrate", "迁移数据库结构…", [install_stage])
+            mg = run_migrations(root=root, apply=True, guard=False, to=to_schema)
+            if not mg.get("ok"):
+                result = {"ok": False, "message": mg.get("message", "数据库迁移失败")}
+                report.append({"stage": "migrate", "ok": False, "message": result["message"], "at": _now()})
+            else:
+                log(mg.get("message", "数据库已就绪"))
+                report.append({"stage": "migrate", "ok": True, "message": mg.get("message", ""), "at": _now()})
+        else:
+            report.append({"stage": "migrate", "ok": True, "message": "目标结构版本未知，跳过", "at": _now()})
+    except Exception as exc:  # noqa: BLE001 - 收尾进程没有窗口，异常必须落进状态文件
+        _log.exception("更新收尾迁移异常")
+        result = {"ok": False, "message": f"数据库迁移异常：{type(exc).__name__}: {exc}"}
+        report.append({"stage": "migrate", "ok": False, "message": result["message"], "at": _now()})
+    finally:
+        # 重启前必须放锁，否则新应用会把自己当第二实例退出。
+        if not assume_lock:
+            single_instance.release()
+
+    # 旧运行时（runtime.old）保留到新应用**正常跑起来**之后，由启动器删除；
+    # 新运行时启动即崩时它就是回滚副本。
+
+    want_restart = bool(req.get("restart", True)) if do_restart is None else bool(do_restart)
+    if result.get("ok") and want_restart:
+        _status_stage(root, kind, stages, "restart", "重启程序…", [s["stage"] for s in report])
+        rl = relaunch_app(root=root, prefer="exe", relaunch=(req or {}).get("relaunch"))
+        if rl.get("ok"):
+            log(f"已重启（pid={rl.get('pid')}）")
+            report.append({"stage": "restart", "ok": True, "message": "已重启", "at": _now()})
+        else:
+            result = {"ok": False, "message": rl.get("message", "重启失败")}
+            report.append({"stage": "restart", "ok": False, "message": rl.get("message", ""), "at": _now()})
+
+    _clear_prepared(root)
+    try:
+        request_file(root).unlink(missing_ok=True)
+    except OSError:
+        pass
+    final = _finish(root, kind, frm, result, stages, report=report,
+                    frm_commit=frm_commit, to_commit=str(prepared.get("commit") or ""))
+    log(("✓ " if final.get("ok") else "✗ ") + str(final.get("message", "")))
     return final
 
 
@@ -2316,15 +2634,23 @@ def _finish(root: Path, kind: str, frm: str, result: dict, stages: list,
 # ── 应用内入口：交棒 ──────────────────────────────────────
 
 def _self_update_argv(root: Path, kind: str) -> list[str]:
-    """「自更新」进程的命令：冻结 exe 用 ``--self-update``（exe 内跑 updater），
-    源码运行用 ``python main.py --self-update``。两者都**不建窗口**，跑完即退。
+    """「更新进程」的命令：新布局交给启动器安装；源码 / 旧版 onefile 仍由自身跑 updater。
+
+    新布局（``<入口>/Keyrealm`` + ``runtime/``）下，运行中的应用无法替换自己所在的
+    ``runtime/``，必须由启动器（独立进程、不在 runtime 里）来完成安装。
 
     **显式带上当前数据目录**：CLI 的 ``--data-dir`` 可能是一次性的，不写配置文件；
     不传下去的话，更新进程会去默认目录找请求/准备产物，交棒直接断掉。
     """
     data_arg = ["--data-dir", str(configured_data_dir())]
     if is_frozen():
-        return [sys.executable, "--self-update", kind, *data_arg]
+        launcher = _launcher_path(root)
+        if launcher:
+            return [str(launcher), "--apply-update", kind, *data_arg]
+        # 冻结包缺少启动器时，从 runtime 内部起的 updater 一定会被 apply_update 拒绝；
+        # 直接给出可照做的错误，别起一个注定失败的子进程。
+        raise RuntimeError(
+            f"未找到启动器（{root / _exe_name()}），无法自更新；请重新解压完整发行包。")
     return [sys.executable, str(root / "main.py"), "--self-update", kind, *data_arg]
 
 
@@ -2345,12 +2671,13 @@ def _spawn_updater(root: Path, kind: str) -> int:
     return spawn_detached(argv, cwd=root, log=log, env=env)
 
 def begin_handoff(kind: str = "formal", *, root: Optional[Any] = None, restart: bool = True,
-                  terminal: str = "auto", quit_cb: Optional[Callable[[], None]] = None,
+                  quit_cb: Optional[Callable[[], None]] = None,
                   prepared: Optional[dict] = None) -> dict:
-    """**交棒**：写请求文件（带 ``prepared`` 指针）→ 起脱离进程 → 延时关闭应用。
+    """**交棒**：写请求文件 → 起脱离进程 → 延时关闭应用。
 
     **顺序不可颠倒**：先把自更新进程起起来，确认起来了，再退出应用。
-    ``prepared`` 为准备产物清单（缺省读 ``prepared_file``）；交棒进程据它走快路径。
+    ``prepared`` 只用于判断产物是否已就绪（决定提示文案与日志）；安装进程始终从
+    ``prepared_file`` 读取清单。
     """
     root = repo_root(root)
     kind = kind if kind in CHANNELS else "formal"
@@ -2359,10 +2686,10 @@ def begin_handoff(kind: str = "formal", *, root: Optional[Any] = None, restart: 
     if not isinstance(prepared, dict):
         prepared = read_prepared(root)
 
-    req = {"kind": kind, "restart": bool(restart), "terminal": terminal or "auto",
-           "requested_at": _now(), "relaunch": _relaunch_spec(root),
-           "prepared": bool(prepared), "prepared_file": prepared_file(root).name}
-    _write_json_atomic(request_file(root), req)
+    req = {"kind": kind, "restart": bool(restart),
+           "requested_at": _now(), "relaunch": _relaunch_spec()}
+    if not _write_json_atomic(request_file(root), req):
+        return {"ok": False, "message": "无法写入更新请求文件（程序目录不可写？），更新未开始"}
 
     try:
         pid = _spawn_updater(root, kind)
@@ -2391,10 +2718,3 @@ def begin_handoff(kind: str = "formal", *, root: Optional[Any] = None, restart: 
         hint = "将安装新版本并重启" if prepared else "将从源码重新构建"
     return {"ok": True, "pid": pid,
             "message": f"已开始更新：程序将关闭，{hint}，完成后自动重启。"}
-
-
-def start_update(kind: str = "formal", *, root: Optional[Any] = None,
-                 restart: bool = True, terminal: str = "auto",
-                 quit_cb: Optional[Callable[[], None]] = None) -> dict:
-    """兼容入口：**旧语义**（不准备、直接交棒）。新流程用 ``prepare_update`` + ``begin_handoff``。"""
-    return begin_handoff(kind, root=repo_root(root), restart=restart, terminal=terminal, quit_cb=quit_cb)

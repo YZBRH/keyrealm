@@ -130,13 +130,6 @@ def add_event_sink(callback):
         _event_sinks.append(callback)
 
 
-def remove_event_sink(callback):
-    try:
-        _event_sinks.remove(callback)
-    except ValueError:
-        pass
-
-
 def push_event(event_name: str, detail: Any = None):
     """向前端推送自定义事件（桌面窗口 + Web 模式的事件sink）。"""
     payload = detail or {}
@@ -2159,14 +2152,13 @@ def _full_export_doc() -> Optional[dict]:
     return built["document"]
 
 
-def start_update(kind: str = "formal", restart: bool = True, terminal: str = "auto") -> dict:
+def start_update(kind: str = "formal") -> dict:
     """「立即更新」：**应用内先准备**（备份 + 下载 / 拉源码 / 装依赖 / 构建，带进度、可取消）。
 
     准备成功后**不自动退出**：推 ``vault:update_ready`` 让界面弹窗询问是否立即重启；
     用户确认后由 ``apply_prepared_update()`` 交棒（替换 / 迁移 / 重启）并退出。
     选择「稍后」时准备产物留在本地，下次 ``prepare_update()`` 会复用、跳过重复下载 / 构建。
     准备失败 / 取消 / 无更新一律**不退出应用**。
-    ``restart`` / ``terminal`` 保留给确认后的 ``apply_prepared_update()`` 使用。
     """
     global _update_task_id
     kind = kind if kind in updater.CHANNELS else "formal"
@@ -2227,7 +2219,7 @@ def start_update(kind: str = "formal", restart: bool = True, terminal: str = "au
             "message": "已开始准备更新（准备完成后会询问是否立即重启）"}
 
 
-def apply_prepared_update(restart: bool = True, terminal: str = "auto") -> dict:
+def apply_prepared_update(restart: bool = True) -> dict:
     """用户确认「立即重启」：用本地准备产物交棒（替换 / 迁移 / 重启）。
 
     与 ``start_update`` 的准备阶段分离：这里**不重新下载/构建**，只校验产物然后起脱离进程。
@@ -2241,7 +2233,7 @@ def apply_prepared_update(restart: bool = True, terminal: str = "auto") -> dict:
         if not prepared:
             return {"ok": False, "message": "本地没有可用的准备产物，请重新检查并准备更新"}
         kind = str(prepared.get("kind") or "formal")
-        hs = updater.begin_handoff(kind, restart=bool(restart), terminal=terminal,
+        hs = updater.begin_handoff(kind, restart=bool(restart),
                                    quit_cb=_close_quit_cb, prepared=prepared)
         if hs.get("ok"):
             _handoff_started = True

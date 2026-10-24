@@ -479,11 +479,11 @@ class VaultApi:
     def get_update_check_result(self):
         return api.get_update_check_result()
 
-    def start_update(self, kind: str = "formal", restart: bool = True, terminal: str = "auto"):
-        return api.start_update(kind, restart, terminal)
+    def start_update(self, kind: str = "formal"):
+        return api.start_update(kind)
 
-    def apply_prepared_update(self, restart: bool = True, terminal: str = "auto"):
-        return api.apply_prepared_update(restart, terminal)
+    def apply_prepared_update(self, restart: bool = True):
+        return api.apply_prepared_update(restart)
 
 
 # ── 窗口与托盘 ────────────────────────────────────────────
@@ -1101,7 +1101,37 @@ def main():
     _exit_cleanly()
 
 
+def _attach_parent_console() -> None:
+    """Windows 窗口化程序在命令行里被调用时，接上父进程的控制台。
+
+    启动器已先 `AttachConsole(-1)`；运行时作为它的子进程，这里附着到启动器的控制台，
+    让 `--version` / `--help` / `--print-paths` 这类不走 CLI 入口的路径也能正常输出。
+    双击启动（没有父控制台）时失败即可，不会凭空多出黑框。
+    """
+    if os.name != "nt" or (sys.stdout is not None and sys.stderr is not None):
+        return
+    try:
+        import ctypes
+
+        if not ctypes.windll.kernel32.AttachConsole(-1):   # ATTACH_PARENT_PROCESS
+            return
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        try:
+            sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+    except Exception:  # noqa: BLE001 - 无父控制台时静默降级
+        pass
+
+
 if __name__ == "__main__":
+    # 桌面版是窗口化程序：从终端调用 CLI / 版本 / 帮助 / 路径打印时先接上控制台。
+    if os.name == "nt" and any(arg in sys.argv for arg in
+                               ("--cli", "--web", "--version", "-h", "--help",
+                                "--print-paths", "--self-update")):
+        _attach_parent_console()
+
     # 调试/构建校验：打印冻结后解析到的各关键路径后退出（不创建窗口）。
     # 用于确认打包产物中 frontend/dist 随包、data/plugins 落在 exe 同级。
     if "--print-paths" in sys.argv:
@@ -1115,7 +1145,8 @@ if __name__ == "__main__":
         print(f"plugins_dir      : {plugin_manager.PLUGINS_DIR}")
         sys.exit(0)
 
-    # 自更新入口：由 backend/updater.start_update 起成脱离进程；**不建窗口**，跑完即退。
+    # 自更新入口：由 backend/updater.begin_handoff 起成脱离进程（新布局交给启动器安装）；
+    # **不建窗口**，跑完即退。
     # 冻结 exe 与源码运行都用这条路径（后者是 `python main.py --self-update <kind>`）。
     if "--self-update" in sys.argv:
         from backend import updater
@@ -1135,9 +1166,21 @@ if __name__ == "__main__":
             except Exception:  # noqa: BLE001
                 pass
         _idx = sys.argv.index("--self-update")
-        _kind = sys.argv[_idx + 1] if len(sys.argv) > _idx + 1 else "formal"
-        _say(f"=== Keyrealm 自更新进程启动（渠道={_kind}，pid={os.getpid()}）===")
-        _ok = updater.apply_update(_kind).get("ok")
+        _arg = sys.argv[_idx + 1] if len(sys.argv) > _idx + 1 else "formal"
+        if _arg == "finish":
+            # 启动器已把新 runtime 装好，本进程从**新代码**里跑收尾（迁移 + 重启）。
+            _kind = (sys.argv[_idx + 2] if len(sys.argv) > _idx + 2
+                     and not sys.argv[_idx + 2].startswith("--") else "formal")
+            _say(f"=== Keyrealm 更新收尾进程启动（渠道={_kind}，pid={os.getpid()}）===")
+            _ok = updater.finish_update(
+                _kind,
+                assume_lock="--no-lock" in sys.argv,       # 启动器已占住单实例锁
+                do_restart=False if "--no-restart" in sys.argv else None,
+            ).get("ok")
+        else:
+            _kind = _arg if not _arg.startswith("--") else "formal"
+            _say(f"=== Keyrealm 自更新进程启动（渠道={_kind}，pid={os.getpid()}）===")
+            _ok = updater.apply_update(_kind).get("ok")
         _say(f"=== 自更新进程结束：{'成功' if _ok else '失败'} ===")
         sys.exit(0 if _ok else 1)
 

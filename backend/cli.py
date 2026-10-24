@@ -1107,8 +1107,14 @@ def cmd_update_install(args) -> int:
         return 0
 
     prepared = updater.read_prepared(updater.repo_root())
-    # 交棒后重启时不要再执行一遍 update install：把 argv 收敛成「无参数」。
-    sys.argv = [sys.argv[0]]
+    # 交棒后重启时不要再执行一遍 update install；只保留模式与一次性的数据目录参数，
+    # 否则桌面版的 `--cli` 会变成开窗口，临时 `--data-dir` 也会丢。
+    relaunch: list[str] = []
+    if "--cli" in sys.argv:
+        relaunch.append("--cli")
+    if paths.data_dir_source() == "cli":
+        relaunch += ["--data-dir", str(paths.data_dir())]
+    sys.argv = [sys.argv[0], *relaunch]
     handoff = updater.begin_handoff(
         kind,
         restart=not args.no_restart,
@@ -1446,6 +1452,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     # data-dir 命令只读写配置文件，不应打开数据库 / 初始化日志目录
     if not getattr(args, "no_init", False):
+        # 更新安装/迁移期间并发写库会与收尾进程抢同一个 SQLite：先拒绝，稍后再试。
+        if updater.update_in_progress():
+            print("更新正在进行中（安装或数据库迁移），请稍后再试。", file=sys.stderr)
+            return 1
         bootstrap.init_core("cli", full=False)
     try:
         return int(args.func(args) or 0)
