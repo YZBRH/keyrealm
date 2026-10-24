@@ -24,7 +24,7 @@ ROOT = Path(SPECPATH).resolve()
 _cli = os.environ.get("KEYREALM_CLI") == "1"
 _NAME = "Keyrealm-CLI" if _cli else "Keyrealm"
 _ICON_PATH = ROOT / "assets" / "icon.ico"
-_icon = str(_ICON_PATH) if (_ICON_PATH.exists() and not _cli) else None
+_icon = str(_ICON_PATH) if _ICON_PATH.exists() else None
 
 a = Analysis(
     [str(ROOT / "launcher.py")],
