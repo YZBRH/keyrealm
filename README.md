@@ -118,11 +118,23 @@
 
 ### 通过预编译程序运行
 
+预编译包采用 **启动器 + onedir** 布局：根目录的 `Keyrealm`（Windows 为 `Keyrealm.exe`）是启动器，
+应用本体与全部依赖在 `runtime/` 下。启动时直接加载磁盘文件，不再像单文件包那样每次解压整包，
+启动更快。升级时只替换启动器与 `runtime/`，`plugins/`、`data/` 与配置原样保留。
+
+> 请保持目录结构完整；不要单独移动启动器或 `runtime/`，也不要删除 `runtime/`。
+
 #### Windows
 
 从 [Releases](../../releases) 下载对应平台与架构的压缩包，解压后直接运行，双击运行  `Keyrealm.exe` 即可。
 
+发行目录包含启动器 `Keyrealm.exe`、应用本体 `runtime/`、插件 `plugins/` 与运行时数据 `data/`。
+请**保持目录结构完整**，不要单独移动启动器或 `runtime/`——启动靠二者配合。
+
 PS：需要 **WebView2 Runtime**（Windows 10/11 通常已内置；若启动时报缺 WebView2，从微软官网安装即可）。
+
+PS：onedir 的 `runtime/_internal/` 目录层级较深，建议解压到**较短**的路径（如 `D:\Keyrealm`），
+避免 Windows 的长路径限制导致文件缺失。
 
 
 
@@ -130,7 +142,8 @@ PS：需要 **WebView2 Runtime**（Windows 10/11 通常已内置；若启动时�
 
 从 [Releases](../../releases) 下载对应平台与架构的压缩包，解压后运行包内的 `Keyrealm` 文件。
 
-PS：由于未签名，首次打开会被 Gatekeeper 拦，需要右键→「打开」，或终端执行 `xattr -dr com.apple.quarantine Keyrealm` 放行。
+PS：由于未签名，首次打开会被 Gatekeeper 拦，需要右键→「打开」，或在终端对**解压后的整个目录**
+执行 `xattr -dr com.apple.quarantine <解压目录>` 放行（`runtime/` 里的文件也要一并清除）。
 
 
 
@@ -157,7 +170,8 @@ PS：由于未签名，首次打开会被 Gatekeeper 拦，需要右键→「打
 - **CLI 版**：`Keyrealm-CLI`，默认就是**纯命令行**——执行一条命令、读写本地库、退出，
   **不会打开任何端口**。浏览器界面是显式可选项：加 `--web` 才启动 HTTP 服务。
 
-从 Releases 下载带 `-cli` 后缀的包，解压后运行 `Keyrealm-CLI`（Windows 为 `Keyrealm-CLI.exe`）：
+从 Releases 下载带 `-cli` 后缀的包，解压后运行 `Keyrealm-CLI`（Windows 为 `Keyrealm-CLI.exe`）；
+同样需要保留同目录的 `runtime/`：
 
 ```shell
 # ── 命令行（默认，无端口）──
@@ -460,11 +474,12 @@ Keyrealm 内置一个 **MCP Server**，Agent 可以直接查询、创建、验�
 整机迁移也可以只用「备份」页导出 JSON，粒度更细。
 
 **Q：升级会不会丢数据 / 重置我的插件启用状态？**
-不会。升级只替换程序与 `plugins/`，**当前数据目录**（默认 `data/`）原样保留，`plugins/.state.json`（启用 / 禁用状态）也不会被覆盖。
+不会。升级只替换启动器与 `runtime/`（以及 `plugins/` 的源码文件），**当前数据目录**（默认 `data/`）
+原样保留，`plugins/.state.json`（启用 / 禁用状态）也不会被覆盖。更新期间旧运行时保留在 `runtime.old/`，新运行时正常启动后自动清理。
 
 **Q：怎么更新到新版本？**
 两种渠道，在「设置 → 更新」里选：
-- **正式版**：从 GitHub Release 下载对应平台的预编译包替换当前程序（不编译），更新前会把可执行文件、
+- **正式版**：从 GitHub Release 下载对应平台的预编译包替换当前程序（不编译），更新前会把启动器、
   `plugins/`、`data/` 备份到 `data/backup/`（只留最近一份），数据库结构有变动会逐级自动迁移。
 - **测试版**：跟 `main` 最新提交从源码重新构建（本机没有源码会先拉一份到程序目录），如果本机缺少开发环境，运行可能会报错，建议优先选择正式版。
 

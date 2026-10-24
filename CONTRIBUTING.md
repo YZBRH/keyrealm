@@ -123,31 +123,39 @@ python scripts/build.py --frontend
 | `--frontend` | 先跑 `npm run build` 再打包 |
 | `--output` / `-o` | 产物落点目录（默认仓库根，即 `.git` 同级；传 `release` 即旧行为） |
 | `--console` | 保留控制台窗口（调试用） |
-| `--smoke` | 构建后跑 `--print-paths` 校验冻结路径（隐含 `--console`） |
+| `--smoke` | 构建后经启动器跑 `--print-paths` 校验冻结路径（隐含 `--console`） |
 | `--allow-missing-deps` | 依赖缺失时仍继续构建（默认中止） |
+| `--cli` | 构建 CLI 版（无桌面窗口/托盘；命令行操作，`--web` 可选） |
+| `--gui qt\|gtk` | 仅 Linux：界面后端（Qt 自包含 / GTK 用系统 WebKit） |
 
-构建产出的 `release/` 结构：
+构建产出的 `release/` 结构（**启动器 + onedir**）：
 
 ```
 release/
-├── Keyrealm.exe      # 单文件可执行程序（后端代码 + frontend/dist 已内置）
+├── Keyrealm.exe      # 启动器（onefile，只依赖标准库）：拉起 runtime/，并负责更新安装
+├── runtime/          # 应用本体（PyInstaller onedir）
+│   ├── Keyrealm.exe
+│   └── _internal/    # 第三方依赖、PySide6/WebKit、frontend/dist 等只读资源
 ├── keyrealm-src.zip  # 源码归档（由 scripts/pack_source.py 生成）
-├── plugins/          # 插件【唯一事实来源】，放 exe 同级：放入即加载、删除即卸载
+├── plugins/          # 插件【唯一事实来源】：放入即加载、删除即卸载
 │                     #   .state.json 记录启用/禁用状态（不存在 = 全部启用）
 └── data/             # 首次运行自动创建（数据库、主密码校验、日志、界面偏好）
 ```
 
+启动器与运行时分开：启动时应用直接从磁盘加载，**不再把整包解压到临时目录**；更新时由启动器
+整体替换 `runtime/`（应用自己无法替换正在使用的目录），用户内容原样保留。
+
 打包边界：
 
-| 内容 | 是否进 exe | 说明 |
+| 内容 | 是否进 runtime | 说明 |
 |---|---|---|
-| 后端代码、`frontend/dist` | ✅ 内置 | 只读资源，运行时从临时解压目录读取 |
-| `plugins/` | ❌ 外部 | 放 exe 同级；启动时扫描自动加载，删子插件目录即卸载 |
+| 后端代码、`frontend/dist` | ✅ 内置 | 只读资源，运行时从 `runtime/_internal` 读取 |
+| `plugins/` | ❌ 外部 | 放入口目录；启动时扫描自动加载，删子插件目录即卸载 |
 | `data/` | ❌ 外部 | 运行时可写，保证数据持久化 |
 
-`release/` 自包含、可便携分发，**不进 git**（`Keyrealm.spec` 与 `scripts/*.py` 保留追踪）。
+`release/` 自包含、可便携分发，**不进 git**（`Keyrealm.spec` / `Launcher.spec` 与 `scripts/*.py` 保留追踪）。
 
-> **升级时 `data/` 原样保留**：`build.py` 只替换 exe 与 `plugins/`（**不覆盖**
+> **升级时 `data/` 原样保留**：`build.py` 只替换启动器、`runtime/` 与 `plugins/`（**不覆盖**
 > `plugins/.state.json`，你的启用/禁用状态不会被重置），另清理 `data/installed_plugins/`
 > （zip 安装时代的遗留缓存）。其余一律不碰——`data/webview/` 是界面偏好、`data/logs/` 是日志。
 
@@ -325,13 +333,16 @@ keyrealm/
   **GTK 专项版**各一条）。暂不出 macOS Intel 版；以后要加 macOS Intel 就补一条 `macos-13` / `macos-x64`。
   **必须矩阵**——PyInstaller **不能跨平台编译**，每个平台只能在对应系统上构建。
 - 每个 runner：装 Python + Node → `pip install -r requirements.txt pyinstaller` → `npm ci` →
-  `python scripts/build.py --frontend --output release` → 把 `release/`（可执行文件 + `plugins/`
-  + `.update-meta/`）打成 `Keyrealm-<版本>-<平台>.zip`（顶层一个干净目录，不散落）→ 挂到 Release。
+  `python scripts/build.py --frontend --output release` → 把 `release/`（启动器 + `runtime/` +
+  `plugins/` + `.update-meta/`）打成 `Keyrealm-<版本>-<平台>.zip`（顶层一个干净目录，不散落）→ 挂到 Release。
   > 包里的 `.update-meta/`（`version.json` 记 `schema_version`/`commit`，`migrations/` 是迁移脚本）
   > 让程序内「正式版更新」在**没有源码**的机器上也能知道目标结构版本并逐级迁移——所以它必须随包走。
+  > onedir 里的符号链接（Qt 的 `.so` 版本链接）在 zip 中按**目标文件内容**存储，并写
+  > `.update-meta/symlinks.json` 清单：1.4.7 的旧更新器不认识 zip 符号链接，1.5.0 启动器
+  > 装好后会按清单还原成链接。
 - **手动触发**（Actions → Release → Run workflow）只产出构建产物、不发 Release，可用于验证。
 - 目标机前提：**Windows** 需 WebView2 Runtime（Win10/11 通常自带）；**macOS** 产物**未签名**，
-  首次打开会被 Gatekeeper 拦，需右键→「打开」或 `xattr -dr com.apple.quarantine <文件>` 放行。
+  首次打开会被 Gatekeeper 拦，需右键→「打开」或对**解压后的整个目录**执行 `xattr -dr com.apple.quarantine <解压目录>`（`runtime/` 内文件也要清除）。
 - **Linux 出两类包**（详见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md)）：
   - **通用版** `Keyrealm-<版本>-linux-general-x86_64.zip`：`ubuntu-22.04` 上构建、**Qt 后端**（自包含），
     任意发行版可用（glibc ≥ 2.35）。
@@ -339,6 +350,8 @@ keyrealm/
     **GTK 后端**（用系统 WebKitGTK）——CI 额外 apt 装 GTK3 / WebKit2GTK 4.1 / AyatanaAppIndicator 的
     typelib 与编译依赖，再 `pip install "PyGObject<3.51"`，spec 仅在 GTK 档收 `gi.*`。**产物只在构建它的
     那个发行版上稳**，故包名带构建系统（如 `ubuntu22.04`）。
+  - **CLI 版**（`--cli`）：Windows / macOS / Linux 各一条，产物名带 `-cli`；不含 Qt/WebKit/托盘，
+    体积小。同样是「启动器 + `runtime/`」布局。
 
 ## 10. 提交约定
 

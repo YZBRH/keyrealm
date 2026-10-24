@@ -33,9 +33,14 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
 > 把远端指向别处，便于离线自测）。
 
 > **两段式**：应用内「立即更新」先跑 **准备阶段**（备份 + 下载预编译包 / 拉源码 + 装依赖 + 构建，
-> 全程在**应用进程内**、带进度、可取消），准备成功后才**交棒**给一个脱离进程做
+> 全程在**应用进程内**、带进度、可取消），准备成功后才**交棒**给脱离进程做
 > **构建 / 解压替换 / 数据库迁移 / 重启**——这几步要覆盖运行中的程序文件、且要独占数据库，
 > 必须等应用退出。因此：**准备阶段看得到实时进度，交棒阶段看 `data/logs/update-*.log`，重启后看「上次更新」的逐阶段报告**。
+>
+> **发行布局是「启动器 + onedir」**：根目录的 `Keyrealm(.exe)` 是启动器，应用本体在 `runtime/`。
+> 运行中的应用无法替换自己正在使用的 `runtime/`，所以交棒进程就是**启动器**：它等应用退出后
+> 整体替换 `runtime/`，再由新运行时执行 `--self-update finish` 完成数据库迁移；
+> 迁移成功后启动器释放单实例锁并自己重启应用（全程不会有第二个实例插进来）。
 
 ---
 
@@ -76,19 +81,21 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
 
 **准备阶段（应用内，程序不退出）**：
 1. 查 GitHub Release 的最新正式版标签；与本机 `APP_VERSION` 比，更高才继续。
-2. **备份**当前程序（可执行文件 + `plugins/` + `data/`）。
+2. **备份**当前程序（启动器 + `plugins/` + `data/`；`runtime/` 由 `runtime.old/` 承担回滚）。
 3. **下载**对应平台的包 `Keyrealm-<版本>-<平台>.zip` 到 `data/backup/_asset-<版本>.zip`
-   （平台取当前系统与架构；目前 CI 发布的只有 `windows-x64` 与 `macos-arm64`），算 **SHA-256**。
+   （平台取当前系统与架构；CI 同时发布 Windows / macOS / Linux 与各自的 `-cli` 包），算 **SHA-256**。
 4. 写**准备清单** `data/.update-prepared.json`（版本 / 包路径 / sha256 / 目标 `schema_version`）。
 
 > 若清单里已有**同一最新版本**、包仍在且 sha256 一致的产物（上次选了「稍后」），跳过第 3 步下载，直接复用。
 
-**交棒阶段（应用退出后）**：
-5. **校验**清单里的包存在且 sha256 一致（不符则**回落到重新下载**）。
-6. **解压替换**到程序目录（可执行文件 + `plugins/`；包内 `.update-meta/` 也在内，见 §4）。
-   **`data/` 目录绝不覆盖**，换 exe 先改名 `Keyrealm.old` 腾位（同 §3 第 6 步）。
-7. 读包内 `.update-meta/version.json` 的 `schema_version`，**逐级迁移**数据库。
-8. 重启新的可执行文件。
+**交棒阶段（应用退出后，由启动器执行）**：
+5. **校验**清单里的包存在且 sha256 一致；不符则中止本次安装并写失败状态（下次准备会重新下载）。
+6. **解压替换**：启动器把整包解到 `.update-new/`，再把 `runtime/` 整体换掉，同步更新启动器与
+   `plugins/`；包内 `.update-meta/` 也在内（见 §4）。**`data/` 目录绝不覆盖**。
+   旧 `runtime/` 先改名为 `runtime.old/` 保留，**新运行时正常启动后**才删除（启动失败时可直接改名回滚）。
+7. 由**新运行时**（`--self-update finish --no-lock --no-restart`）读包内
+   `.update-meta/version.json` 的 `schema_version`，**逐级迁移**数据库（锁仍由启动器持有）。
+8. 收尾成功后启动器释放锁，并自己重启新的运行时。
 
 > **源码部署也可用**：选了正式版，就等于切到官方的预编译二进制（以后重启跑的是它）。
 > 想留在源码部署，用**测试版**（从源码构建）或手动 `git pull`。
@@ -104,12 +111,12 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
    > **工作区有改动时直接丢弃**（`git reset --hard`）——更新要的就是「拉最新」，而部署目录里的改动多半是
    > 构建/依赖留下的痕迹（典型是 `npm install` 改写的 `package-lock.json`）。想保留就先 commit，
    > 或用 CLI 的 `--force`（先 `git stash` 再合并）。**未跟踪 / 被忽略的文件不受影响。**
-   > **这一步是「提交点」**：源码一更新，工作区就前进了，而数据库还没迁移——所以此后**不再接受取消**，
-   > 会直接进入构建；构建完成后询问是否立即重启。若交棒失败，用 `scripts/build_update.sh --kind test` 手动补完（回落流程会补做构建/迁移/替换）。
+   > **这一步是「提交点」**：源码一更新，工作区就前进了，数据库还没迁移——构建阶段无法中途打断；
+   > 构建结束后会再检查一次取消：用户已点取消则丢弃本次准备（源码已前进，下次重新准备即可）。
 3. **准备构建环境**：项目下没有 `.venv` 就现建一个，再装 `requirements.txt` + `pyinstaller`（全程走「更新代理」）。
 4. `python scripts/build.py --frontend --output .update-staged` —— **构建到 `.update-staged/`**，
    不触碰运行中的程序文件（默认落点会覆盖运行中的可执行文件）。
-5. 写**准备清单** `data/.update-prepared.json`（commit / `staging_dir` / venv 解释器 / 目标 `schema_version`）。
+5. 写**准备清单** `data/.update-prepared.json`（commit / `staging_dir` / 目标 `schema_version`）。
 
 > 若清单里的产物仍指向**远端同一 commit**、`.update-staged/` 里的可执行文件还在（上次选了「稍后」），
 > 跳过第 2~4 步（拉源码 / 装依赖 / 构建），直接复用该构建。
@@ -117,11 +124,10 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
 > 此时后端会依据本地产物把结果标成「本地已有准备完成但未安装的更新」，按钮变成「安装已准备好的更新」。
 
 **交棒阶段（应用退出后）**：
-6. **安装** `.update-staged/`（可执行文件 + `plugins/`）到程序目录。换 exe 时**先把旧文件改名成
-   `Keyrealm.old` 腾出路径**再放新的——Windows 上**运行中的 exe 不能被覆盖（会 `WinError 32`）但可以改名**，
-   而交棒进程自己就跑在这个 exe 上，所以绝不能直接覆盖。`data/` 与 `plugins/` 之外的原文件不动。
+6. **安装** `.update-staged/`（启动器 + `runtime/` + `plugins/`）到程序目录：运行时目录整体替换，
+   旧目录改名为 `runtime.old/` 保留到新运行时正常启动；启动器与插件按需更新。`data/` 与配置不动。
 7. 读**新源码**的 `SCHEMA_VERSION` 与 `APP_VERSION`，逐级迁移数据库。
-8. 重启（源码部署重启 `python main.py --gui`；二进制部署重启构建出的可执行文件）。
+8. 重启（源码部署重启 `python main.py --gui`；二进制部署经启动器重启构建出的运行时）。
 
 > **需要能构建**：本机要有 **git**、**Python 3.11+**、**Node.js 18+**。缺哪样都会明确报出来。
 > 只想「下载即用」而不想装这些，用**正式版**。
@@ -150,7 +156,8 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
 
 ## 5. 备份
 
-- **内容**：可执行文件 + `plugins/` + `data/`（数据库走 SQLite 一致性快照）。
+- **内容**：启动器 + `keyrealm.conf.json` + `plugins/` + `data/`（数据库走 SQLite 一致性快照）。
+  **不包含 `runtime/`**（体积大）：更新期间旧运行时保留在 `runtime.old/`。回滚必须**运行时与数据库一起**（先解压备份恢复数据，再换回 `runtime.old/`）；只换运行时会得到「旧代码 + 新结构库」。
   **另外还随包带一份「全量导出」`data/keyrealm-full-backup.json`**（就是「备份」页那份整库备份：
   凭据 / 分组 / 代理 / 预设 / 定时计划 / 设置 / 保险库 KDF / MCP / 插件启停）——**原库损坏或丢失时，
   靠它也能把数据还原回来**（在「备份 → 导入」里选它，来自别的保险库时会再问当时的主密码）。
@@ -158,11 +165,12 @@ Keyrealm 可以在程序内检查并一键更新。**两种渠道的更新方式
   用户数据目录，运行时被 WebView **独占**，一读就 `Permission denied`；它只是可再生的缓存）。
 - **读不了的文件会被跳过而不是让备份失败**：更新前的备份失败会**直接挡住更新**，而读取失败
   多半只是文件被运行中的程序占用——跳过的条目会**如实汇总**在「已备份」的提示里（`N 个文件被占用已跳过`）。
-- **位置**：`data/backup/keyrealm-backup-<渠道>-<版本>-<时间戳>.zip`，**只保留一份**（写新备份前删旧的）。
+- **位置**：`data/backup/keyrealm-backup-<渠道>-<版本>-<时间戳>.zip`，**只保留一份**（新备份完整落盘后才删旧的）。
   应用内更新在**准备阶段**就备份（因此准备失败或取消时也会留下一份 zip）。
 - **⚠ 含真实密钥**：`data/` 里有 `credentials.db` 与明文密钥文件；备份 zip 因此**含明文**，
   以 `0600` 落盘、目录已被 `.gitignore` 忽略，请自行妥善保管。
-- **恢复**：`scripts/build_update.sh --rollback` 会把备份解压覆盖回程序目录；也可手动解压。
+- **恢复**：`scripts/build_update.sh --rollback` 会把备份解压覆盖回程序目录；若 `runtime.old/` 还在，
+  会先把它换回 `runtime/`（备份本身不含运行时）。也可手动解压 / 改名。
 
 ---
 
@@ -231,14 +239,17 @@ scripts/restart.sh --wait
 | `data/keyrealm-full-backup.json` | 更新前备份里随包的**全量导出**（原库损坏也能还原） | 忽略（`data/`） |
 | `.update-staged/` | 测试版**准备阶段**的构建落点（交棒时安装进程序目录，装完即清） | 忽略（`.update-staged/`） |
 | `.update-meta/` | 从预编译包解出的 `version.json` + `migrations/`（正式版更新后才有） | 忽略 |
-| `data/.update-request.json` | 应用交给交棒进程的请求（含 `prepared` 指针） | 忽略（`data/`） |
+| `data/.update-request.json` | 应用交给交棒进程的请求（渠道 / 是否重启 / 重启参数），收尾后删除 | 忽略（`data/`） |
 | `data/.update-prepared.json` | **准备产物清单**（版本 / 包路径 / sha256 / staging / 目标 schema） | 忽略（`data/`） |
 | `data/.update-status.json` | 更新进度与结果（含 `from`/`to` 版本与 `from_commit`/`to_commit`、逐阶段 `report`），重启后由新应用读取展示 | 忽略（`data/`） |
 | `data/.update-check.json` | **最近一次「检查更新」的结果**（持久化：换页 / 重启后界面仍显示，直到被新结果替换） | 忽略（`data/`） |
 | `data/logs/update-*.log` | 交棒进程（POSIX）无终端时的输出 | 忽略 |
 | `data/logs/build-*.log` | 构建输出（排障用） | 忽略 |
 | `data/logs/<脚本名>-*.log` | 命令行脚本每次运行的输出 | 忽略 |
-| `Keyrealm` / `Keyrealm.exe` / `Keyrealm.old` | 构建产物与回滚副本。**换 exe 时旧文件先改名成 `<exe>.old`**（更新与构建共用这一个名字，同目录只留一份） | 忽略（`Keyrealm*`） |
+| `Keyrealm` / `Keyrealm.exe` / `Keyrealm.old` | 启动器与回滚副本。更新时旧启动器先改名成 `<exe>.old`（更新与构建共用这一个名字，同目录只留一份） | 忽略（`Keyrealm*`） |
+| `runtime/` | 应用本体（onedir）。更新时整体替换 | 忽略（`/runtime/`） |
+| `runtime.old/` | 上一版运行时。**新应用正常启动后才删除**；回滚时需与备份里的数据库**一起**恢复 | 忽略（`/runtime.old/`） |
+| `.update-new/` | 启动器的解压暂存目录，安装完成后清理 | 忽略（`/.update-new/`） |
 
 ---
 
@@ -256,22 +267,22 @@ scripts/restart.sh --wait
 | 应用内「立即更新」正准备时**失败/取消** | 这是**准备阶段**（应用进程内），**程序不会退出**，错误显示在卡片上，可重试；也可改用 `scripts/build_update.sh` 一次性补完。 |
 | 准备完成后**交棒失败**（更新进程没起来） | 应用不退出。正式版用 `scripts/build_update.sh --kind formal`、测试版用 `--kind test` 手动补完（回落流程会补做替换/构建/迁移）。 |
 | 更新进程在跑但看不到进度 | 交棒阶段应用已退出，进度看 **`data/logs/update-*.log`**（Windows 也一样，不再弹控制台窗口）；结论在重启后的「上次更新」报告里。 |
-| **更新后什么都没发生、版本还是旧的** | 逐条看：① **`data/logs/update-*.log`**——交棒进程**每个里程碑都打一行**（启动横幅 / 等待退出 / 应用已退出 / 各阶段 / 结论），失败原因也在里面；② **`data/.update-status.json`**——`phase`/`message` 说明停在哪一步（如「等待应用退出超时」＝程序没完全退出）；③ 应用内**「设置 → 更新 → 上次更新」**，失败会在下次启动时**弹通知**。全程**不会**静默：失败也保证不替换任何文件。 |
-| 替换时报 **`WinError 32`（另一个程序正在使用此文件）** | 交棒进程**自己就运行在待替换的 `Keyrealm.exe` 上**，而 Windows 下**运行中的 exe 不能原地覆盖**。程序已改为**先把旧 exe 改名成 `Keyrealm.old` 腾出路径**再放新的（改名允许），正常不再报此错。若仍报，多半是**别处的残留进程**（没退干净的旧实例 / 杀毒软件锁定）占着 exe：关掉所有 Keyrealm 进程与相关杀软后重试，或用 `scripts/build_update.sh --kind test` 手动补完。 |
+| **更新后什么都没发生、版本还是旧的** | 逐条看：① **`data/logs/update-*.log`**——交棒进程**每个里程碑都打一行**（启动横幅 / 等待退出 / 应用已退出 / 各阶段 / 结论），失败原因也在里面；② **`data/.update-status.json`**——`phase`/`message` 说明停在哪一步（如「等待应用退出超时」＝程序没完全退出）；③ 应用内**「设置 → 更新 → 上次更新」**，失败会在下次启动时**弹通知**。全程**不会**静默。安装阶段失败时仍停在旧运行时上；若收尾（迁移/重启）失败，状态会明确写出“已安装、未完成迁移/重启”，按提示重试或回滚。 |
+| 替换时报 **`WinError 32`（另一个程序正在使用此文件）** | 正常流程由**启动器**在应用退出后替换 `runtime/`，不会再出现「自己替换自己」。若仍报，多半是**别处的残留进程**（没退干净的旧实例 / 杀毒软件锁定）占着 `runtime/`：关掉所有 Keyrealm 进程与相关杀软后重试，或用 `scripts/build_update.sh --kind test` 手动补完。 |
 | 重启时报 **`Failed to execute script 'pyiboot01_bootstrap'`** / **`_MEI…\base_library.zip` 不存在** | PyInstaller onefile 的坑：父进程把临时解压目录经 **`_MEIPASS2`** 交给子进程，子进程会**复用**同一份 `_MEI`，而父进程一退出就把它删了——新 exe 再去读 `base_library.zip` 就 `FileNotFoundError`。已修：所有脱离子进程都带 **`PYINSTALLER_RESET_ENVIRONMENT=1`**（`updater._PYI_ENV`），让新 exe 解压自己的一份。**遇到此错的老版本：手动双击 `Keyrealm.exe` 即可启动**（手动启动不继承这个变量），再更新到含修复的版本即可。 |
 | 迁移报「迁移链断档」 | 目标结构版本与现有脚本之间缺一跳。补齐 `m_<缺的from>__to_*.py` 或核对 `SCHEMA_VERSION`。 |
 | 迁移报「检测到应用正在运行」 | 应用没完全退出。先退出应用再 `--apply`。 |
+| **更新后启动即退出 / 窗口一闪而过** | 新运行时可能不可用。旧运行时保留在 `runtime.old/`，更新前备份在 `data/backup/`。关闭所有 Keyrealm 进程后：① 解压最新的 `keyrealm-backup-*.zip` 覆盖程序目录（恢复启动器 / 插件 / 数据库；自定义数据目录时，备份里的 `data/` 要解到该目录）；② 把 `runtime.old/` 改名为 `runtime/`；③ 重新启动。也可用 `scripts/build_update.sh --rollback`（源码部署）。 |
 | 重启后没起来 | 看 `data/logs/relaunch-*.log`；或手动 `scripts/restart.sh`。 |
 
 ---
 
 ## 9. 边界与已知限制
 
-- **正式版**要求 GitHub 上已发布**当前平台**的预编译包；目前 CI 只出 **Windows（x64）与 macOS
-  （Apple Silicon / arm64）**；**macOS Intel（x64）与 Linux 暂不出**（Linux 的 pywebview 依赖
-  GTK/WebKitGTK，打包成本高）。
+- **正式版**要求 GitHub 上已发布**当前平台**的预编译包；目前 CI 出 **Windows（x64）、macOS
+  （Apple Silicon / arm64）与 Linux（x86_64）**，以及各自的 CLI 包。**macOS Intel（x64）暂不出**。
 - **测试版**要求本机能构建（git + Python + Node）；从 Releases 装、机器上又什么都没有时，只能走正式版。
-- **macOS 预编译包未签名**：首次打开会被 Gatekeeper 拦（右键→「打开」，或 `xattr -dr com.apple.quarantine <文件>`）。
+- **macOS 预编译包未签名**：首次打开会被 Gatekeeper 拦（右键→「打开」，或对**解压后的整个目录**执行 `xattr -dr com.apple.quarantine <解压目录>`；`runtime/` 内文件也要清除）。
 - **Windows** 需 WebView2 Runtime（Win10/11 通常自带）。
 - **备份含明文密钥**（见 [§5](#5-备份)）。
 - Windows 的 `.bat` 与真机端到端未在开发机（Linux/WSL）实测；首次用请按 [§10](#10-windows-手工验收清单首次使用) 验收。
@@ -286,6 +297,6 @@ scripts/restart.sh --wait
 4. 确认**准备阶段在应用内进行**（卡片显示进度条、可取消）；准备完成后**弹窗询问是否立即重启**，
    选「立即重启」后程序关闭，**不再弹控制台窗口**，脱离进程完成替换/迁移/重启（输出落 `data\logs\update-*.log`）。
    选「稍后」时程序保持运行；再次点更新应复用本地包/构建产物（不重复下载/构建）。
-5. 构建/替换产物 `Keyrealm.exe` 落在**仓库根**；`backups\` 里有且仅有一份 zip（正式版就位前还会短暂出现 `_asset-*.zip`）；测试版的构建落点在 `.update-staged\`。
+5. 构建/替换产物落在**仓库根**：启动器 `Keyrealm.exe` + `runtime\`（应用本体）；`backups\` 里有且仅有一份 zip（正式版就位前还会短暂出现 `_asset-*.zip`）；测试版的构建落点在 `.update-staged\`。更新期间旧运行时在 `runtime.old\`，新运行时正常启动后自动删除。
 6. 更新完成后程序**自动重启**；设置页「上次更新」显示**逐阶段报告**（✓/✗ + 日志路径）。
 7. 应用运行期间再跑一次 `scripts\db_update.bat --apply` → 应被单实例闸门拒绝。

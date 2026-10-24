@@ -434,7 +434,7 @@ plugins/
 
 CLI 启动流程（`backend/cli.py::cmd_mcp_start`）：占单实例锁 → 解锁保险库 → 保存 `--host/--port`
 → 创建/轮换 Token → `api.start_mcp()` → 前台等待，SIGINT/SIGTERM 设置停止事件、关闭服务并写回
-`mcp_enabled=0`。安装成 PyInstaller onefile 后 Ctrl+C 可能同时落到引导进程与子进程，因此用信号
+`mcp_enabled=0`。启动器是 PyInstaller onefile，Ctrl+C 可能同时落到引导进程与子进程，因此用信号
 事件而不是裸 `KeyboardInterrupt`。
 
 **监听地址可配**：`settings` 的 `mcp_host` / `mcp_port`（默认 `127.0.0.1` / `8765`）。
@@ -756,31 +756,40 @@ pywebview 没有「再次显示」事件可挂（`Form.Shown` 只触发一次，
 `stash`）。
 
 **交棒时序（顺序不可颠倒）**：应用内 `start_update()` 完成准备并推 `vault:update_ready` → 用户确认
-「立即重启」→ `apply_prepared_update()` → 写 `data/.update-request.json` →
-`spawn_detached()` 把**自更新进程**起成**脱离进程**（冻结 exe 用 `Keyrealm --self-update <渠道>`、
-源码运行用 `python main.py --self-update <渠道>`，两者都追加 `--data-dir <当前目录>`；
-**两平台都用脱离进程 + 日志文件，不弹控制台窗口**，POSIX 走 `start_new_session`）→ **确认子进程起来之后**
-才调 `_close_quit_cb()`（= `main._quit_app`）退出。
-`main.py` 的 `--self-update` 分支不建窗口，直接跑 `updater.apply_update()`。脚本首步 `wait_for_app_exit()` 轮询
-`single_instance.acquire()`（拿不到锁 = 应用还在跑）；它同时**占住锁**保证更新期间没人能启动
-应用，**重启新应用前必须 `single_instance.release()`**（`backend/single_instance.py` 为此新增了
-`release()`）。重启沿用原启动参数（`_relaunch_spec`）：CLI/Web 的 `--web`、`--port` 等不会被丢掉；
-源码模式没有显式模式时自动补 `--gui`。
+「立即重启」→ `apply_prepared_update()` → 写 `data/.update-request.json`（含 `relaunch` 参数）→
+`spawn_detached()` 把**启动器**起成**脱离进程**（冻结发行版用 `Keyrealm --apply-update <渠道>`；
+源码运行 / 旧版 onefile 仍用 `Keyrealm --self-update <渠道>` 或 `python main.py --self-update`，
+都追加 `--data-dir <当前目录>`；**两平台都用脱离进程 + 日志文件，不弹控制台窗口**，
+POSIX 走 `start_new_session`）→ **确认子进程起来之后**才调 `_close_quit_cb()`（= `main._quit_app`）退出。
+
+**启动器安装**：启动器**抢应用的单实例锁**（拿到 = 应用已退出）并一直持有 → 把包解到
+`.update-new/` → 同步 `plugins/` 与 `.update-meta/` → 换启动器 → **最后**把 `runtime/` 改名为
+`runtime.old/`、新运行时 rename 到 `runtime/` → 以
+`runtime/Keyrealm --self-update finish <渠道> --no-lock --no-restart` 起**新运行时**收尾
+（`updater.finish_update`：只做数据库迁移；锁由启动器持有）。收尾成功后启动器**释放锁**、
+再经启动器拉起新应用；全程不会有第二个实例插进「应用已退出 → 替换 → 迁移」的窗口。
+启动器不在 `runtime/` 里运行，所以能安全替换整个目录；应用本体从磁盘直接加载，不再每次启动解压整包。
+
+**旧路径**（源码 / 旧 onefile）：`main.py --self-update` 直接跑 `updater.apply_update()`，脚本首步
+`wait_for_app_exit()` 轮询 `single_instance.acquire()`（拿不到锁 = 应用还在跑）；它同时**占住锁**
+保证更新期间没人能启动应用，**重启新应用前必须 `single_instance.release()`**
+（`backend/single_instance.py` 为此新增了 `release()`）。重启沿用原启动参数（`_relaunch_spec`）：
+CLI/Web 的 `--web`、`--port` 等不会被丢掉；源码模式没有显式模式时自动补 `--gui`。
 
 **跨进程 / 跨重启通信**：全程写 `data/.update-status.json`（阶段、成败、from/to）；新应用启动后
 由前端「设置 → 更新」卡片读取展示。
 
-> **子进程环境必须隔离 PyInstaller 临时目录**：onefile 的父进程把解压目录经 `_MEIPASS2` 传给子进程，
-> 子进程会**复用**同一份 `_MEI`；父进程一退出就删掉它，子进程（交棒进程 / 重启起来的新 exe）再去读
-> `base_library.zip` 就崩。所以 `spawn_detached` / `_child_env` 一律带上
-> **`PYINSTALLER_RESET_ENVIRONMENT=1`**（`updater._PYI_ENV`），让子进程解压自己的一份。
+> **子进程环境必须隔离 PyInstaller 临时目录**：启动器是 onefile，它把解压目录经 `_MEIPASS2`
+> 传给子进程，子进程会**复用**同一份 `_MEI`；父进程一退出就删掉它，子进程再去读
+> `base_library.zip` 就崩。所以 `spawn_detached` / `_child_env` 以及启动器起应用时一律带上
+> **`PYINSTALLER_RESET_ENVIRONMENT=1`**（`updater._PYI_ENV`），让子进程使用自己的运行时。
 
-**备份**：可执行文件 + `plugins/` + 当前 `data_dir`（DB 走 `sqlite3 backup()` 一致性快照，`logs/`/`webview/` 排除）
+**备份**：启动器 + `plugins/` + 当前 `data_dir`（DB 走 `sqlite3 backup()` 一致性快照，`logs/`/`webview/` 排除）
 **再外加一份全量导出 `data/keyrealm-full-backup.json`**（复用「备份」功能，见 §备份），
-打成一个 zip 落 `<data_dir>/backup/`（gitignored、0600、**含真实密钥**），**只留一份**。构建失败不覆盖旧
-产物（`assemble_release` 覆盖前留 `Keyrealm.old` 供回滚）；**更新流程换 exe 时沿用同一个 `Keyrealm.old`**
-——Windows 上运行中的 exe 不能被覆盖（`WinError 32`），只能**先改名腾位**再放新的
-（`updater._replace_exe`；交棒进程自己就跑在这个 exe 上）。
+打成一个 zip 落 `<data_dir>/backup/`（gitignored、0600、**含真实密钥**），**只留一份**。
+`runtime/` 不纳入备份（体积大）：更新时旧运行时保留为 `runtime.old/`，新运行时正常启动后由启动器删除。
+构建失败不覆盖旧产物（`assemble_release` 覆盖前留 `Keyrealm.old` 供回滚）；更新时启动器同样
+先把旧启动器改名成 `<exe>.old` 再放新的。
 > 两份内容互补：**快照**用于「更新失败原样回退」，**全量导出**用于「原库损坏/丢失仍能还原」。
 
 **数据库逐级迁移**：`scripts/migrations/m_<from>__to_<to>.py`（接口 `FROM_VERSION` /
@@ -796,9 +805,10 @@ SQLite 快照，`--apply` 前抢单实例锁。
 **规矩**：规则只在这个模块里维护——插件只描述**当前**格式、不写双格式兼容，框架其它地方也不做
 格式容忍。
 
-**`scripts/build.py` 的输出**：默认落**仓库根**（`.git` 同级，`--output` 可改）。输出=仓库根时
-`assemble_release` **跳过 `plugins/` 自我复制**（否则会把活的源目录删掉再自我复制），也不清
-`data/installed_plugins`（那已是用户真实数据目录）。
+**`scripts/build.py` 的输出**：默认落**仓库根**（`.git` 同级，`--output` 可改）。
+产物是「启动器 + onedir」：`Keyrealm`（`Launcher.spec`，onefile）+ `runtime/`（`Keyrealm.spec`，
+含 `_internal/`）+ 外部 `plugins/`。输出=仓库根时 `assemble_release` **跳过 `plugins/` 自我复制**
+（否则会把活的源目录删掉再自我复制），也不清 `data/installed_plugins`（那已是用户真实数据目录）。
 
 > 使用方式、命令行参数、备份/回滚、故障排查与 Windows 验收清单见 **[程序内更新](UPDATE.md)**。
 
