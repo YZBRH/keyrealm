@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _testutil import MAIN, PYTHON, cli_env  # noqa: E402
+from backend import version  # noqa: E402
 
 
 def _run(*args):
@@ -62,7 +63,7 @@ def test_modes_help_and_version():
         res = _run(*args)
         assert res.returncode == 0, res.stderr
     assert "Keyrealm 启动方式" in _run().stdout
-    assert "1.4.7" in _run("--version").stdout
+    assert version.APP_VERSION in _run("--version").stdout
 
 
 def test_data_dir_restriction():
