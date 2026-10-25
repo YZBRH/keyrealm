@@ -30,7 +30,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Optional
 
-from . import api, backup, bootstrap, mcp_server, paths, plugin_manager, proxy_store, single_instance, tls_store, updater, version
+from . import api, backup, bootstrap, database as db, mcp_server, paths, proxy_store, single_instance, tls_store, updater, version
 
 
 class CliError(Exception):
@@ -338,7 +338,8 @@ def cmd_init(args) -> int:
 def cmd_status(args) -> int:
     initialized = bool(api.is_initialized().get("initialized"))
     unlocked = bool(api.is_unlocked().get("unlocked"))
-    plugins = plugin_manager.list_installed_plugins(sync=False)   # bootstrap 已同步过
+    # bootstrap 已完成插件同步；状态页只要计数，不必逐个查询凭据数量 / 类别图标
+    plugins = db.list_plugins()
     proxies = api.list_proxies()
     tls = api.get_tls_options()
     payload = {
