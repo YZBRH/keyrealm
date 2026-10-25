@@ -10,7 +10,8 @@
  *   splash:reveal  点击后的转场开始（主界面此时应已渲染）
  *   splash:done    开屏结束，组件自动隐藏
  *
- * 等待阶段（开场结束后）不自动跳转：点击任意处 / Enter / Space / ESC 进入；
+ * 等待阶段（开场结束后）不自动跳转：默认点击 / Enter / Space / ESC 进入；
+ * 宿主提供子元素（密码表单）时，等待阶段显示该表单，解锁成功后调用 enter() 进入。
  * 主界面应在此之前渲染好。
  *
  * 方法：play() / enter() / skip() / replay() / seek(ms)
@@ -337,6 +338,40 @@
       rgba(240,255,220,.55) 0,rgba(163,230,53,.18) 22%,rgba(34,211,238,.08) 46%,transparent 76%);
     mix-blend-mode:screen}
 
+  /* ── 品牌字 / 等待区 ─────────────────────────────── */
+  .kr-copy{position:relative; z-index:21; display:flex; flex-direction:column;
+    align-items:center; margin-top:clamp(10px,2vh,22px); text-align:center;
+    pointer-events:none}
+  .kr-word{display:flex; align-items:baseline; gap:.06em; padding-left:.3em;
+    font-family:var(--kr-mono); font-size:clamp(12px,1.5vmin,17px);
+    font-weight:600; letter-spacing:.3em; color:var(--kr-ink);
+    text-shadow:0 0 18px rgba(163,230,53,.14)}
+  .kr-word .L{display:inline-block; will-change:transform,opacity,filter}
+  .kr-word .L.k{color:var(--kr-primary)}
+  .kr-tagline{display:flex; align-items:center; justify-content:center; gap:9px;
+    margin-top:9px; font-family:var(--kr-mono); font-size:9.5px;
+    letter-spacing:.24em; color:rgba(244,244,245,.46)}
+  .kr-tagline::before,.kr-tagline::after{content:""; width:16px; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(163,230,53,.58))}
+  .kr-tagline::after{transform:scaleX(-1)}
+  .kr-tagline i{font-style:normal; color:rgba(163,230,53,.72); letter-spacing:0}
+
+  .kr-auth{grid-area:auth; align-self:center; justify-self:center; position:relative;
+    z-index:23; width:100%; max-width:380px; pointer-events:none;
+    opacity:0; transform:translateY(12px); cursor:default;
+    transition:opacity .35s ease,transform .35s ease}
+  .kr-auth.ready{opacity:1; transform:none; pointer-events:auto}
+
+  .kr-root.has-auth .kr-stage{display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(320px,390px);
+    grid-template-areas:"dial auth" "copy auth";
+    align-items:center; justify-items:center;
+    column-gap:clamp(24px,5vw,80px); row-gap:0; padding:3vh 4vw}
+  .kr-root.has-auth .kr-dial-wrap{grid-area:dial; width:min(47vmin,440px);
+    transition:width .55s cubic-bezier(.4,0,.2,1)}
+  .kr-root.has-auth .kr-copy{grid-area:copy; margin-top:clamp(8px,1.6vh,16px)}
+  .kr-root.has-auth .kr-hold{display:none!important}
+
   /* ── 等待进入：3s 倒计时 / 点击任意处 ──────────────── */
   .kr-hold{position:absolute; left:50%; bottom:clamp(44px,7.2vh,68px); z-index:22;
     display:inline-flex; align-items:center; gap:10px; height:36px; padding:0 16px;
@@ -520,6 +555,10 @@
           </div>
         </div>
 
+        <div class="kr-auth" part="auth">
+          <slot></slot>
+        </div>
+
         <button class="kr-hold" type="button" part="enter" aria-label="进入 Keyrealm">
           <span class="kr-hold-dot" aria-hidden="true"></span>
           <span>点击任意处进入</span>
@@ -552,6 +591,13 @@
       this._ring = this.shadowRoot.querySelector('.kr-hole-ring');
       this._skipBtn = this.shadowRoot.querySelector('.kr-skip');
       this._holdEl = this.shadowRoot.querySelector('.kr-hold');
+      this._authWrap = this.shadowRoot.querySelector('.kr-auth');
+      this._authSlot = this.shadowRoot.querySelector('slot');
+      this._auth = false;
+      if (this._authWrap) this._authWrap.inert = true;
+      if (this._authSlot) {
+        this._authSlot.addEventListener('slotchange', () => this._onAuthSlotChange());
+      }
       this._tunnel = this.shadowRoot.querySelector('.kr-tunnel');
       this._flashEl = this.shadowRoot.querySelector('.kr-flash');
 
@@ -572,13 +618,14 @@
       this._skipBtn.addEventListener('click', () => this.skip());
       /* 等待阶段：点击画面任意处立即进入（进入按钮的点击也会冒泡到这里） */
       this._root.addEventListener('click', () => {
-        if (this._holding) this._enter('click');
+        if (this._holding && !this._auth) this._enter('click');
       });
     }
 
     static get observedAttributes() { return ['duration', 'theme', 'skippable']; }
 
     connectedCallback() {
+      this._detectAuth();
       if (this.hasAttribute('autoplay') && !this._autoStarted) {
         this._autoStarted = true;
         var self = this;
@@ -600,6 +647,7 @@
     play() {
       if (this._state === 'playing') return;
       this._reset();
+      this._detectAuth();
       this.hidden = false;
       this._state = 'playing';
       this._done = false;
@@ -724,6 +772,12 @@
       this._skipBtn.style.display = '';
       this._skipBtn.style.pointerEvents = '';
       this._flashEl.style.opacity = '';
+      if (this._authWrap) {
+        this._authWrap.classList.remove('ready');
+        this._authWrap.inert = true;
+        this._authWrap.style.opacity = '';
+        this._authWrap.style.transform = '';
+      }
 
       var hold = this._holdEl;
       if (hold) {
@@ -948,11 +1002,18 @@
       var q = function (s) { return self._q(s); };
       var hold = this._holdEl;
 
-      /* 先收启动 HUD，再把 CTA 浮上来；此后一直等待用户点击/回车，不自动跳转 */
+      /* 先收启动 HUD，再把 CTA / 解锁表单浮上来；此后一直等用户操作，不自动跳转 */
       this._anim(q('.kr-boot'), [
         { opacity: 1, transform: 'translateY(0)' },
         { opacity: 0, transform: 'translateY(4px)' }
       ], { start: 0, end: 240, easing: 'ease-out', real: true });
+
+      if (this._auth) {
+        this._revealAuth();
+        /* 集成密码表单时保留「跳过」作为回退到独立解锁页的出口 */
+        return;
+      }
+
       this._anim(hold, [
         { opacity: 0, transform: 'translate(-50%,10px)' },
         { opacity: 1, transform: 'translate(-50%,0)' }
@@ -963,6 +1024,47 @@
         this._fadeOut(this._skipBtn, 260, true);
         this._skipBtn.style.pointerEvents = 'none';
       }
+    }
+
+    /* ── 集成密码表单（宿主把表单直接作为子元素提供） ─────────────────── */
+    _detectAuth() {
+      var slot = this._authSlot;
+      var assigned = slot ? slot.assignedElements({ flatten: true }) : [];
+      this._auth = assigned.length > 0;
+      /* 进入转场开始后，即使宿主移除表单也不要把布局切回 CTA —— 否则放大动画会跳一下 */
+      if (!this._entering) {
+        if (this._root) this._root.classList.toggle('has-auth', this._auth);
+        if (this._holdEl) this._holdEl.style.display = this._auth ? 'none' : '';
+      }
+      if (this._authWrap && !this._auth) {
+        this._authWrap.classList.remove('ready');
+        this._authWrap.inert = true;
+      }
+    }
+
+    _onAuthSlotChange() {
+      var wasAuth = this._auth;
+      this._detectAuth();
+      if (this._entering) return;
+      if (this._holding && this._auth) this._revealAuth();
+      else if (this._holding && wasAuth && !this._auth) this._restoreHold();
+    }
+
+    _revealAuth() {
+      if (!this._authWrap) return;
+      this._holdEl.style.display = 'none';
+      this._authWrap.inert = false;
+      this._authWrap.classList.add('ready');
+      this.dispatchEvent(new CustomEvent('splash:auth', { bubbles: true, composed: true }));
+    }
+
+    _restoreHold() {
+      if (!this._holdEl || this._auth || this._entering) return;
+      this._holdEl.style.display = '';
+      this._holdEl.classList.add('ready');
+      this._holdEl.style.opacity = '1';
+      this._holdEl.style.transform = 'translate(-50%,0)';
+      this._holdEl.style.pointerEvents = 'auto';
     }
 
     _enter(mode) {
@@ -981,6 +1083,11 @@
       hold.classList.remove('ready');
       hold.style.pointerEvents = 'none';
       this._fadeOut(hold, 200, true);
+      if (this._authWrap) {
+        this._authWrap.classList.remove('ready');
+        this._authWrap.inert = true;
+        this._fadeOut(this._authWrap, 200, true);
+      }
       this._skipBtn.style.display = 'none';
 
       if (this.hasAttribute('sound')) this._playWhoosh();
@@ -1152,6 +1259,7 @@
         if (self._state !== 'playing' || self._entering) return;
         self._holding = true;
         root.classList.add('is-holding');
+        if (self._auth) { self._revealAuth(); return; }
         var hold = self._holdEl;
         hold.classList.add('ready');
         hold.style.opacity = '1';
@@ -1400,7 +1508,8 @@
     _bindGlobal() {
       var self = this;
       this._onKey = function (e) {
-        if (self._holding && (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
+        if (self._holding && !self._auth &&
+            (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
           e.preventDefault();
           self._enter('key');
           return;

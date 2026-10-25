@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 // 按需引入后不再有 app.use(ElementPlus, { locale })，中文语言包改由根级
@@ -7,6 +7,7 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 
 import api, { EVENTS, onEvent } from '@/api'
+import SplashAuth from '@/components/SplashAuth.vue'
 // 开屏动画：自包含 Web Component（Shadow DOM，零网络请求）。
 import '@/splash/keyrealm-splash.js'
 import { useAppStore } from '@/stores/app'
@@ -24,10 +25,28 @@ const proxyStore = useProxyStore()
 // 桌面按进程、Web 按标签页会话只播一次；禁用开关存在后端 settings。
 // 窗口过小时直接跳过：动画按大屏构图，窄窗口下观感差且拖慢启动。
 const SPLASH_MIN_WIDTH = 1024
-const SPLASH_MIN_HEIGHT = 640
+const SPLASH_MIN_HEIGHT = 600
 const splashEl = ref(null)
+const splashAuthRef = ref(null)
 const splashMounted = ref(true)
 const splashPlaying = ref(false)
+
+const splashAuthMode = computed(() => (appStore.initialized ? 'unlock' : 'setup'))
+// 是否需要在开屏里嵌密码表单：只在引导完成时判定一次。
+// 不能用 `!appStore.unlocked` 实时判断 —— 解锁成功后 store 会立刻变 true，
+// 表单会在 emit('success') 之前被卸载，宿主收不到成功事件。
+const splashAuthNeeded = ref(false)
+const splashAuthDone = ref(false)
+const showSplashAuth = computed(
+  () => splashPlaying.value && splashAuthNeeded.value && !splashAuthDone.value,
+)
+watch(
+  () => appStore.bootstrapped,
+  (ready) => {
+    if (ready) splashAuthNeeded.value = !appStore.unlocked
+  },
+  { immediate: true },
+)
 
 const isWebMode = !!(window.__KEYREALM_WEB__ || {}).token
 const SPLASH_SEEN_KEY = 'keyrealm.splash.seen'
@@ -77,12 +96,25 @@ async function initSplash() {
     return
   }
   el.addEventListener('splash:done', onSplashDone, { once: true })
-  el.play()
+  el.addEventListener('splash:auth', () => splashAuthRef.value?.focus?.())
+  try {
+    el.play()
+  } catch {
+    // 动画初始化失败不能把底层页面一直锁在 inert 状态
+    splashPlaying.value = false
+    splashMounted.value = false
+  }
 }
 
 function onSplashDone() {
   splashPlaying.value = false
   splashMounted.value = false
+}
+
+function onSplashAuthSuccess() {
+  splashAuthDone.value = true
+  router.push('/').catch(() => {})
+  splashEl.value?.enter?.()
 }
 
 const disposers = []
@@ -306,14 +338,25 @@ watch(
       <span class="blob b3" />
     </div>
 
-    <router-view />
+    <router-view v-slot="{ Component }">
+      <!-- 开屏遮罩期间锁住底层页面，避免密码表单被重复聚焦 / 误触。 -->
+      <component :is="Component" :inert="splashPlaying || null" />
+    </router-view>
 
     <!-- 开屏动画：原生 Web Component，隐藏状态不占位、不拦点击。 -->
     <keyrealm-splash
       v-if="splashMounted"
       ref="splashEl"
       :hidden="!splashPlaying"
-    />
+    >
+      <!-- 密码表单作为开屏的一部分；禁用开屏 / 已解锁时不挂载，走原有独立页面。 -->
+      <SplashAuth
+        v-if="showSplashAuth"
+        ref="splashAuthRef"
+        :mode="splashAuthMode"
+        @success="onSplashAuthSuccess"
+      />
+    </keyrealm-splash>
 
     <el-dialog
       v-model="closeDialog"
