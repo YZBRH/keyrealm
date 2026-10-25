@@ -116,7 +116,9 @@
 
 ## 下载与安装
 
-### 通过预编译程序运行
+### 桌面版
+
+如果你是个人PC本地使用，请选择这个版本。
 
 预编译包采用 **启动器 + onedir** 布局：根目录的 `Keyrealm`（Windows 为 `Keyrealm.exe`）是启动器，
 应用本体与全部依赖在 `runtime/` 下。启动时直接加载磁盘文件，不再像单文件包那样每次解压整包，
@@ -162,13 +164,17 @@ PS：由于未签名，首次打开会被 Gatekeeper 拦，需要右键→「打
 
 
 
-#### CLI / Web 版（无桌面窗口）
+### CLI版
+
+如果你想要软件在服务器托管运行，请选择该版本。
 
 同一份程序支持多种运行模式，**不是两个分支**：
 
 - **桌面版**：默认打开窗口；也可用 `--cli` 执行命令，或用 `--web` 启动网页服务。
-- **CLI 版**：`Keyrealm-CLI`，默认就是**纯命令行**——执行一条命令、读写本地库、退出，
-  **不会打开任何端口**。浏览器界面是显式可选项：加 `--web` 才启动 HTTP 服务。
+
+- **CLI 版**：`Keyrealm-CLI`，默认就是**纯命令行**——执行一条命令、读写本地库、退出。
+  
+  浏览器界面是显式可选项：加 `--web` 才启动 HTTP 服务。
 
 从 Releases 下载带 `-cli` 后缀的包，解压后运行 `Keyrealm-CLI`（Windows 为 `Keyrealm-CLI.exe`）；
 同样需要保留同目录的 `runtime/`：
@@ -233,6 +239,8 @@ Keyrealm-CLI --web --token <固定令牌>       # 默认每次启动随机生成
 桌面版使用相同命令时加 `--cli` 前缀：`Keyrealm --cli list`、`Keyrealm --cli status`。
 桌面版同样支持 `--web` 启动网页服务。
 
+
+
 **主密码**：交互终端会提示输入；脚本里推荐用环境变量，避免出现在进程列表：
 
 ```shell
@@ -295,6 +303,8 @@ Keyrealm-CLI --data-dir /tmp/alt-data list
 
 ### 通过源码运行
 
+如果你想要进行二次开发，或者release发行版中的版本都和你的机器架构不符合，又或者你想体验最新的测试版，请选择此版本。
+
 基础环境要求：
 
 | 依赖    | 版本  | 说明           |
@@ -311,17 +321,20 @@ cd keyrealm
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-.venv/bin/python main.py --gui       # 打开桌面窗口（源码运行时必须显式指定）
+.venv/bin/python main.py --gui                   # 桌面窗口运行（Linux 默认：有 Qt 用 Qt，没有则退回 GTK）
+KEYREALM_GUI=gtk .venv/bin/python main.py --gui  # 指定走系统 GTK 运行
+.venv/bin/python main.py --web                   # 浏览器界面运行（会监听端口）
+.venv/bin/python main.py --cli status            # 命令行模式运行（无端口）
 ```
 
 如果你想要把他编译成二进制文件，参考追加执行命令：
 
 ```shell
 .venv/bin/pip install pyinstaller
-.venv/bin/python scripts/build.py --frontend
+.venv/bin/python scripts/build.py --frontend             # 默认打成 Qt 版
+.venv/bin/python scripts/build.py --frontend --gui gtk   # 打成 GTK 版
+.venv/bin/python scripts/build.py --frontend --cli       # CLI 版（无窗口；命令行操作，可选 --web）
 ```
-
-
 
 如果你是在 Linux 系统上运行的，还需要指定界面后端，它们之间的区别如下：
 
@@ -331,21 +344,6 @@ python -m venv .venv
 | 体积（实测） | 下载 ≈ 253 MB / 装完 ≈ **677 MB**             | 系统侧 ≈ **105 MB**，venv 侧 ≈ 0                             |
 | **打包分发** | **自包含**——PyInstaller 把 PySide6 整包收进去 | **可打包**——打成"专项档"（收进系统 gi/WebKit），见 [docs/LINUX_GTK_MATRIX.md](docs/LINUX_GTK_MATRIX.md) |
 | 适合         | 打包分发、给谁都能跑                          | 本机跑源码；或只在**同款机器**上分发                         |
-
-
-
-```shell
-# 源码运行（不指定模式时只打印启动方式，不会默认弹 GUI）
-python main.py --gui                 # 桌面窗口（Linux 默认：有 Qt 用 Qt，没有则退回 GTK）
-KEYREALM_GUI=gtk python main.py --gui  # 指定走系统 GTK
-python main.py --web                 # 浏览器界面（会监听端口）
-python main.py --cli status          # 命令行模式（无端口）
-
-# 打包
-python scripts/build.py --frontend               # 默认打成 Qt 版
-python scripts/build.py --frontend --gui gtk     # 打成 GTK 版
-python scripts/build.py --frontend --cli         # CLI 版（无窗口；命令行操作，可选 --web）
-```
 
 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
@@ -364,8 +362,6 @@ python scripts/build.py --frontend --cli         # CLI 版（无窗口；命令�
 
 将更新渠道设置为"测试版"时，将从仓库当中拉取最新的 commit 并进行源码编译成最新的二进制文件。
 
-
-
 如果是从 [Releases](../../releases) 中下载的预编译包运行的，我们推荐后续的所有更新都通过"正式版"方式更新。
 
 > **从 1.4.7 及更早版本升级**：1.5.0 起改为「启动器 + `runtime/`」布局，**不支持 1.4.7 的应用内升级**。
@@ -380,11 +376,7 @@ Keyrealm-CLI self-update install    # 下载/安装并重启
 Keyrealm-CLI self-update status     # 最近一次状态
 ```
 
-
-
 如果 [Releases](../../releases) 中没有对应的预编译包，通过"正式版"渠道更新可能会出问题，欢迎提交 Issue 或 PR 来说明需要支持的更多操作系统版本。
-
-
 
 ### 软件外更新
 
@@ -404,8 +396,6 @@ python scripts/migrations/m_1.2.1__to_1.2.2.py --apply
 
 python main.py --gui
 ```
-
-
 
 ---
 
