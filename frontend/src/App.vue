@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 // 按需引入后不再有 app.use(ElementPlus, { locale })，中文语言包改由根级
@@ -7,6 +7,8 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 
 import api, { EVENTS, onEvent } from '@/api'
+// 开屏动画：自包含 Web Component（Shadow DOM，零网络请求）。
+import '@/splash/keyrealm-splash.js'
 import { useAppStore } from '@/stores/app'
 import { useVaultStore } from '@/stores/vault'
 import { useMcpStore } from '@/stores/mcp'
@@ -17,6 +19,71 @@ const appStore = useAppStore()
 const vaultStore = useVaultStore()
 const mcpStore = useMcpStore()
 const proxyStore = useProxyStore()
+
+// ── 开屏动画 ────────────────────────────────────────────
+// 桌面按进程、Web 按标签页会话只播一次；禁用开关存在后端 settings。
+// 窗口过小时直接跳过：动画按大屏构图，窄窗口下观感差且拖慢启动。
+const SPLASH_MIN_WIDTH = 1024
+const SPLASH_MIN_HEIGHT = 640
+const splashEl = ref(null)
+const splashMounted = ref(true)
+const splashPlaying = ref(false)
+
+const isWebMode = !!(window.__KEYREALM_WEB__ || {}).token
+const SPLASH_SEEN_KEY = 'keyrealm.splash.seen'
+
+function viewportTooSmall() {
+  // 取不到尺寸（0）时不要误判成「小窗口」；正常桌面/浏览器都会有值。
+  const w = window.innerWidth || document.documentElement.clientWidth || 0
+  const h = window.innerHeight || document.documentElement.clientHeight || 0
+  return w > 0 && h > 0 && (w < SPLASH_MIN_WIDTH || h < SPLASH_MIN_HEIGHT)
+}
+
+async function initSplash() {
+  let show = true
+  if (isWebMode) {
+    // Web：一次浏览器标签页会话只播一次（刷新/路由不重播；新标签页视为一次新的启动）。
+    try {
+      if (sessionStorage.getItem(SPLASH_SEEN_KEY)) show = false
+      else {
+        const cfg = await api.getSplashDisabled()
+        // 即使本次因禁用不播，也记下会话标记：当前标签页里重新启用不会补播。
+        sessionStorage.setItem(SPLASH_SEEN_KEY, '1')
+        if (cfg && cfg.disabled) show = false
+      }
+    } catch { /* sessionStorage 不可用：按默认（播放）处理 */ }
+  } else {
+    // 桌面：由后端按进程认领，轻量模式重载页面不会重播。
+    let claim = null
+    try {
+      claim = await api.claimSplash()
+    } catch { /* 后端暂不可用：按默认（播放）处理，不因开屏失败影响主流程 */ }
+    if (claim && claim.show === false) show = false
+  }
+  if (!show) {
+    splashMounted.value = false
+    return
+  }
+  if (viewportTooSmall()) {
+    splashMounted.value = false
+    return
+  }
+  splashPlaying.value = true
+  await nextTick()
+  const el = splashEl.value
+  if (!el || typeof el.play !== 'function') {
+    splashMounted.value = false
+    splashPlaying.value = false
+    return
+  }
+  el.addEventListener('splash:done', onSplashDone, { once: true })
+  el.play()
+}
+
+function onSplashDone() {
+  splashPlaying.value = false
+  splashMounted.value = false
+}
 
 const disposers = []
 
@@ -149,6 +216,8 @@ async function showUpdateFailure() {
 }
 
 onMounted(() => {
+  initSplash().catch(() => {})
+
   disposers.push(
     onEvent(EVENTS.credentialUpdated, (detail) => vaultStore.applyCredentialUpdated(detail)),
   )
@@ -229,7 +298,7 @@ watch(
 <template>
   <!-- locale 由根级 config-provider 统一提供：按需引入后没有 app.use(ElementPlus) 了。
        该组件内部用 renderSlot 渲染，不会多包一层 DOM，不影响 #app 的布局。 -->
-  <el-config-provider :locale="zhCn">
+  <el-config-provider :locale="zhCn" :z-index="100000">
     <!-- 背景极光：三个缓慢漂移的光斑，纯装饰。内容层靠 #app 的 z-index 压在上面。 -->
     <div class="v-aurora" aria-hidden="true">
       <span class="blob b1" />
@@ -238,6 +307,13 @@ watch(
     </div>
 
     <router-view />
+
+    <!-- 开屏动画：原生 Web Component，隐藏状态不占位、不拦点击。 -->
+    <keyrealm-splash
+      v-if="splashMounted"
+      ref="splashEl"
+      :hidden="!splashPlaying"
+    />
 
     <el-dialog
       v-model="closeDialog"

@@ -7,7 +7,14 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 // pywebview 通过 file:// 加载 dist/index.html，必须使用相对 base。
 export default defineConfig({
   plugins: [
-    vue(),
+    vue({
+      template: {
+        compilerOptions: {
+          // 开屏动画是原生 Web Component（Shadow DOM 自隔离），不要按 Vue 组件解析。
+          isCustomElement: (tag) => tag === 'keyrealm-splash',
+        },
+      },
+    }),
     // Element Plus 按需引入：模板里出现的 el-* 组件（含 v-loading 指令）在编译期
     // 自动 import 组件本体与其样式，取代原先 main.js 里整包 app.use(ElementPlus)
     // + element-plus/dist/index.css。
