@@ -1310,8 +1310,8 @@ await window.pywebview.api.touch_activity()     // 前端有用户操作时上�
 await window.pywebview.api.get_light_mode()     // → { enabled: false }
 await window.pywebview.api.set_light_mode(true) // → { ok: true, enabled: true }
 
-// 开屏动画（"系统设置 → 外观"）：claim 每个进程只返回一次 show=true，
-// 轻量模式重载 / Web 刷新 / 多标签不会重复播放。
+// 开屏动画（"系统设置 → 外观"）：桌面用 claim（每进程一次）；
+// Web 用 get_splash_disabled + sessionStorage 按标签页会话控制。
 await window.pywebview.api.get_splash_disabled()    // → { disabled: false }
 await window.pywebview.api.set_splash_disabled(true)
 await window.pywebview.api.claim_splash()           // → { show, reason }
@@ -1323,9 +1323,10 @@ await window.pywebview.api.set_autostart(true)  // → { ok, enabled }；失败�
 
 > **开屏动画**：桌面端挂载时调用 `claim_splash()`（按进程只认领一次，轻量模式重载页面不重播）；
 > Web 端用 `sessionStorage` 按标签页会话只播一次（刷新不重播，新标签页视为新启动）。两端都要求
-> 未被禁用且窗口 **≥ 1024×640**，结束后从 DOM 移除。组件是自包含 Web Component
-> （`src/splash/keyrealm-splash.js`），等待阶段点击/Enter/ESC 进入；`prefers-reduced-motion` 下
-> 退化为静态画面。
+> 未被禁用且窗口 **≥ 1024×600**，结束后从 DOM 移除。组件是自包含 Web Component
+> （`src/splash/keyrealm-splash.js`）；保险库锁定/未创建时，**密码表单直接嵌在开屏右侧**
+> （`components/SplashAuth.vue`），解锁成功才播放转场；已解锁时显示「点击任意处进入」。
+> 「禁用开屏动画」开启时仍走原来的独立 Unlock / Setup 页面。`prefers-reduced-motion` 下退化为静态画面。
 
 > **锁定一律只看 `vault:locked` 事件**：`lock_vault()` 是唯一加锁出口，界面按钮 / 托盘菜单 /
 > 空闲自动锁都汇入它并由它广播。前端收到事件后调 `appStore.applyLocked()` 清空明文，
