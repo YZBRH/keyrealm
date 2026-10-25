@@ -26,19 +26,24 @@ const proxyStore = useProxyStore()
 // 窗口过小时直接跳过：动画按大屏构图，窄窗口下观感差且拖慢启动。
 const SPLASH_MIN_WIDTH = 1024
 const SPLASH_MIN_HEIGHT = 600
+const splashHost = ref(null)
 const splashEl = ref(null)
+const splashAuthTarget = ref(null)
 const splashAuthRef = ref(null)
+const splashRevealing = ref(false)
 const splashMounted = ref(true)
 const splashPlaying = ref(false)
+// 从首帧起就用开屏层盖住底层页面（此时开屏组件只是一块深色底），
+// 避免等待 claim/bootstrap 的几十毫秒里闪出旧解锁页的白字。
+const splashBlocking = ref(true)
 
 const splashAuthMode = computed(() => (appStore.initialized ? 'unlock' : 'setup'))
 // 是否需要在开屏里嵌密码表单：只在引导完成时判定一次。
 // 不能用 `!appStore.unlocked` 实时判断 —— 解锁成功后 store 会立刻变 true，
 // 表单会在 emit('success') 之前被卸载，宿主收不到成功事件。
 const splashAuthNeeded = ref(false)
-const splashAuthDone = ref(false)
 const showSplashAuth = computed(
-  () => splashPlaying.value && splashAuthNeeded.value && !splashAuthDone.value,
+  () => splashPlaying.value && splashAuthNeeded.value,
 )
 watch(
   () => appStore.bootstrapped,
@@ -58,21 +63,78 @@ function viewportTooSmall() {
   return w > 0 && h > 0 && (w < SPLASH_MIN_WIDTH || h < SPLASH_MIN_HEIGHT)
 }
 
+async function createSplashElement() {
+  // 自定义元素用 JS 主动实例化，避开「先渲染成 HTMLUnknownElement、再升级」的时序问题。
+  let Ctor = window.KeyrealmSplash || window.customElements?.get?.('keyrealm-splash')
+  if (!Ctor) {
+    try {
+      await window.customElements?.whenDefined?.('keyrealm-splash')
+      Ctor = window.KeyrealmSplash || window.customElements?.get?.('keyrealm-splash')
+    } catch { /* ignore */ }
+  }
+  if (!Ctor || !splashHost.value) {
+    splashMounted.value = false
+    splashPlaying.value = false
+    splashBlocking.value = false
+    return
+  }
+  const el = new Ctor()
+  splashEl.value = el
+  splashHost.value.appendChild(el)
+  splashAuthTarget.value = el
+  splashRevealing.value = false
+  await nextTick()
+  el.addEventListener('splash:done', onSplashDone, { once: true })
+  el.addEventListener('splash:reveal', () => { splashRevealing.value = true })
+  el.addEventListener('splash:auth', () => splashAuthRef.value?.focus?.())
+  try {
+    el.play()
+  } catch {
+    // 动画初始化失败不能把底层页面一直锁在 inert 状态
+    splashPlaying.value = false
+    splashMounted.value = false
+    splashBlocking.value = false
+  }
+}
+
+/** 挂载并播放一次开屏。启动与「总是展示」的托盘唤出共用。 */
+async function startSplash() {
+  if (viewportTooSmall()) {
+    splashMounted.value = false
+    splashBlocking.value = false
+    return
+  }
+  // 先拿到保险库状态：决定开场是「锁住等待密码」还是普通开锁动画。
+  try {
+    await appStore.bootstrap()
+  } catch {
+    splashMounted.value = false
+    splashBlocking.value = false
+    return
+  }
+  splashAuthNeeded.value = !appStore.unlocked
+  splashRevealing.value = false
+  splashMounted.value = true
+  splashBlocking.value = true
+  splashPlaying.value = true
+  await nextTick()
+  await createSplashElement()
+}
+
 async function initSplash() {
   let show = true
   if (isWebMode) {
-    // Web：一次浏览器标签页会话只播一次（刷新/路由不重播；新标签页视为一次新的启动）。
+    // Web：默认一次标签页会话只播一次。开启「总是展示」后每次刷新都播。
     try {
-      if (sessionStorage.getItem(SPLASH_SEEN_KEY)) show = false
-      else {
-        const cfg = await api.getSplashDisabled()
-        // 即使本次因禁用不播，也记下会话标记：当前标签页里重新启用不会补播。
-        sessionStorage.setItem(SPLASH_SEEN_KEY, '1')
-        if (cfg && cfg.disabled) show = false
-      }
-    } catch { /* sessionStorage 不可用：按默认（播放）处理 */ }
+      const cfg = await api.getSplashDisabled()
+      const always = Boolean(cfg && cfg.always) && !(cfg && cfg.disabled)
+      if (cfg && cfg.disabled) show = false
+      else if (!always && sessionStorage.getItem(SPLASH_SEEN_KEY)) show = false
+      // 即使本次因禁用不播，也记下会话标记：当前标签页里重新启用不会补播。
+      sessionStorage.setItem(SPLASH_SEEN_KEY, '1')
+    } catch { /* sessionStorage / 后端不可用：按默认（播放）处理 */ }
   } else {
-    // 桌面：由后端按进程认领，轻量模式重载页面不会重播。
+    // 桌面：由后端按进程认领；「总是展示」开启时后端每次加载都会返回 show=true。
     let claim = null
     try {
       claim = await api.claimSplash()
@@ -81,40 +143,36 @@ async function initSplash() {
   }
   if (!show) {
     splashMounted.value = false
+    splashBlocking.value = false
     return
   }
-  if (viewportTooSmall()) {
-    splashMounted.value = false
-    return
-  }
-  splashPlaying.value = true
-  await nextTick()
-  const el = splashEl.value
-  if (!el || typeof el.play !== 'function') {
-    splashMounted.value = false
-    splashPlaying.value = false
-    return
-  }
-  el.addEventListener('splash:done', onSplashDone, { once: true })
-  el.addEventListener('splash:auth', () => splashAuthRef.value?.focus?.())
-  try {
-    el.play()
-  } catch {
-    // 动画初始化失败不能把底层页面一直锁在 inert 状态
-    splashPlaying.value = false
-    splashMounted.value = false
-  }
+  await startSplash()
+}
+
+/** 桌面端从托盘唤出：按「总是展示开屏动画」设置决定是否重播。 */
+function onWindowRestored() {
+  if (isWebMode) return
+  api.getSplashDisabled()
+    .then((cfg) => {
+      if (!cfg || cfg.disabled || !cfg.always) return
+      if (splashPlaying.value) return
+      return startSplash()
+    })
+    .catch(() => {})
 }
 
 function onSplashDone() {
   splashPlaying.value = false
   splashMounted.value = false
+  splashBlocking.value = false
+  splashAuthTarget.value = null
+  splashEl.value = null
 }
 
 function onSplashAuthSuccess() {
-  splashAuthDone.value = true
+  // 主界面先渲染在遮罩下方；开屏自己播放「回中 → 放大 → 开锁 → 任意键进入」。
   router.push('/').catch(() => {})
-  splashEl.value?.enter?.()
+  splashEl.value?.authSuccess?.()
 }
 
 const disposers = []
@@ -280,6 +338,8 @@ onMounted(() => {
       closeDialog.value = true
     }),
   )
+  // 桌面端从托盘唤出：是否重播开屏由「总是展示开屏动画」决定（见 onWindowRestored）。
+  disposers.push(onEvent(EVENTS.windowRestored, () => { onWindowRestored() }))
   // 更新准备完成（后端不再自动退出）→ 询问是否立即重启。
   disposers.push(onEvent(EVENTS.updateReady, (detail) => { promptUpdateReady(detail) }))
   // 后端加锁（界面按钮 / 托盘 / 空闲自动锁）都会广播此事件，统一在这里清空明文。
@@ -340,15 +400,17 @@ watch(
 
     <router-view v-slot="{ Component }">
       <!-- 开屏遮罩期间锁住底层页面，避免密码表单被重复聚焦 / 误触。 -->
-      <component :is="Component" :inert="splashPlaying || null" />
+      <component :is="Component" :inert="splashBlocking || null" />
     </router-view>
 
-    <!-- 开屏动画：原生 Web Component，隐藏状态不占位、不拦点击。 -->
-    <keyrealm-splash
+    <!-- 开屏动画：由 JS 实例化的 Web Component，外层先铺深色底防旧页面闪回。 -->
+    <div
       v-if="splashMounted"
-      ref="splashEl"
-      :hidden="!splashPlaying"
-    >
+      ref="splashHost"
+      class="splash-host"
+      :class="{ 'is-revealing': splashRevealing }"
+    />
+    <Teleport v-if="splashAuthTarget" :to="splashAuthTarget">
       <!-- 密码表单作为开屏的一部分；禁用开屏 / 已解锁时不挂载，走原有独立页面。 -->
       <SplashAuth
         v-if="showSplashAuth"
@@ -356,7 +418,7 @@ watch(
         :mode="splashAuthMode"
         @success="onSplashAuthSuccess"
       />
-    </keyrealm-splash>
+    </Teleport>
 
     <el-dialog
       v-model="closeDialog"
@@ -386,6 +448,27 @@ watch(
 /* 全局基座（html/body/#app、滚动条、.page、.page-toolbar、.text-muted）已移到
    `src/styles/base.css`，那里按主题令牌统一控制。此处只留本组件独有的部分。
    注意：本块是**非 scoped** 的全局样式。 */
+
+/* 开屏宿主在自定义元素升级完成前也要盖住底层页面（防止旧解锁页白字闪回）。
+   data-revealing 由组件在进入转场时设置，让钥匙孔能透出主界面。 */
+keyrealm-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #07080c;
+}
+keyrealm-splash[data-revealing] {
+  background: transparent;
+}
+.splash-host {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #07080c;
+}
+.splash-host.is-revealing {
+  background: transparent;
+}
 
 /* 关闭确认弹窗里的两段文案 */
 .close-ask {

@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { Lock } from '@element-plus/icons-vue'
 
 import { useAppStore } from '@/stores/app'
+import AuthBackdrop from '@/components/AuthBackdrop.vue'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -76,14 +77,15 @@ async function submit() {
 
 <template>
   <div class="auth-screen">
-    <div class="auth-halo" aria-hidden="true" />
+    <AuthBackdrop />
 
-    <el-card class="auth-card" shadow="never">
+    <el-card class="auth-card auth-card--tactical" shadow="never">
       <div class="auth-brand">
         <span class="auth-mark">
           <img src="/favicon.svg" class="auth-mark-img" alt="Keyrealm" />
         </span>
-        <h1 class="v-grad-text">Keyrealm</h1>
+        <div class="auth-kicker"><span class="auth-dot" aria-hidden="true" />INITIALIZE VAULT</div>
+        <h1>创建保险库</h1>
         <p class="auth-subtitle">设置主密码（首次使用）</p>
       </div>
 
@@ -146,7 +148,7 @@ async function submit() {
 </template>
 
 <style scoped>
-/* 与 Unlock.vue 同一套外壳：全屏居中、背景透明，内容压在 App.vue 的极光之上。 */
+/* 与 Unlock.vue 同一套外壳：全屏居中，背景由 AuthBackdrop 静态铺开。 */
 .auth-screen {
   position: relative;
   display: flex;
@@ -155,18 +157,6 @@ async function submit() {
   height: 100vh;
   overflow: hidden;
   background: transparent;
-}
-
-/* 与 Unlock.vue 同款双色柔光，尺寸/配色的取舍见那边的注释。静态，不呼吸。 */
-.auth-halo {
-  position: absolute;
-  width: 900px;
-  height: 900px;
-  pointer-events: none;
-  filter: blur(64px);
-  opacity: var(--v-halo-opacity);
-  background: radial-gradient(closest-side, var(--v-halo-1), transparent 72%),
-    radial-gradient(closest-side at 68% 38%, var(--v-halo-2), transparent 72%);
 }
 
 /* 见 Unlock.vue 同处说明：挂 .el-card 提高优先级，内边距改由这里独占控制。 */
@@ -250,10 +240,143 @@ async function submit() {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .auth-card,
-  .auth-halo,
-  .auth-ring {
+  .auth-card {
     animation: none;
   }
+}
+
+/* ── 静态战术风格（与开屏密码面板一致，无动态元素） ───────────── */
+.auth-card.auth-card--tactical.el-card {
+  --el-card-padding: 0;
+  position: relative;
+  width: 420px;
+  padding: 24px 24px 20px;
+  border: 1px solid rgba(163, 230, 53, 0.2);
+  border-radius: 16px;
+  background:
+    radial-gradient(120% 90% at 12% 0%, rgba(163, 230, 53, 0.07), transparent 55%),
+    linear-gradient(180deg, rgba(10, 13, 18, 0.92), rgba(6, 8, 12, 0.86));
+  box-shadow:
+    0 26px 70px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #f4f4f5;
+  animation: none;
+  overflow: hidden;
+}
+.auth-card--tactical::before,
+.auth-card--tactical::after {
+  content: "";
+  position: absolute;
+  inset: auto;
+  width: 16px;
+  height: 16px;
+  background: none;
+  opacity: 1;
+  pointer-events: none;
+  border-color: rgba(163, 230, 53, 0.5);
+  border-style: solid;
+}
+.auth-card--tactical::before {
+  top: 9px;
+  left: 9px;
+  border-width: 1px 0 0 1px;
+}
+.auth-card--tactical::after {
+  right: 9px;
+  bottom: 9px;
+  border-width: 0 1px 1px 0;
+}
+.auth-kicker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', monospace;
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  color: rgba(163, 230, 53, 0.72);
+  text-transform: uppercase;
+}
+.auth-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #a3e635;
+  box-shadow: 0 0 10px rgba(163, 230, 53, 0.9);
+}
+.auth-card--tactical .auth-brand h1 {
+  margin: 8px 0 4px;
+  color: #f4f4f5;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.auth-card--tactical .auth-subtitle {
+  color: rgba(244, 244, 245, 0.5);
+  font-size: 11.5px;
+}
+.auth-card--tactical :deep(.el-form-item__label) {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: rgba(244, 244, 245, 0.48);
+  text-transform: uppercase;
+}
+.auth-card--tactical :deep(.el-input__wrapper) {
+  background: rgba(3, 5, 8, 0.58);
+  box-shadow: 0 0 0 1px rgba(244, 244, 245, 0.13) inset;
+  border-radius: 8px;
+}
+.auth-card--tactical :deep(.el-input__wrapper.is-focus) {
+  box-shadow:
+    0 0 0 1px rgba(163, 230, 53, 0.62) inset,
+    0 0 0 3px rgba(163, 230, 53, 0.1);
+}
+.auth-card--tactical :deep(.el-input__inner) {
+  height: 40px;
+  color: #f4f4f5;
+}
+.auth-card--tactical :deep(.el-input__inner::placeholder) {
+  color: rgba(244, 244, 245, 0.28);
+}
+.auth-card--tactical :deep(.el-input__suffix) {
+  color: rgba(244, 244, 245, 0.4);
+}
+.auth-card--tactical :deep(.el-form-item__error) {
+  color: #fca5a5;
+}
+.auth-card--tactical :deep(.el-alert) {
+  border: 1px solid rgba(163, 230, 53, 0.16);
+  border-radius: 8px;
+  background: rgba(163, 230, 53, 0.06);
+}
+.auth-card--tactical :deep(.el-alert__title) {
+  color: rgba(244, 244, 245, 0.6);
+  font-size: 11px;
+}
+.auth-card--tactical :deep(.el-alert .el-alert__icon) {
+  color: #a3e635;
+}
+.auth-card--tactical :deep(.el-button--primary) {
+  height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #a3e635, #4ade80);
+  color: #071009;
+  font-weight: 700;
+  box-shadow: none;
+}
+.auth-card--tactical :deep(.el-button--primary:hover) {
+  filter: brightness(1.07);
+  background: linear-gradient(90deg, #a3e635, #4ade80);
+}
+.auth-card--tactical .auth-foot {
+  color: rgba(244, 244, 245, 0.3);
+}
+.auth-card--tactical .auth-foot kbd {
+  border-color: rgba(244, 244, 245, 0.14);
+  background: rgba(244, 244, 245, 0.06);
+  color: rgba(244, 244, 245, 0.5);
 }
 </style>

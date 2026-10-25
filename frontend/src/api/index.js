@@ -115,6 +115,8 @@ export const EVENTS = {
   batchDone: 'vault:batch_verify_done',
   mcpStatus: 'vault:mcp_status',
   closeConfirm: 'vault:close_confirm',
+  // 桌面端从托盘唤出窗口。detail 为空；是否重播开屏由前端读取设置决定。
+  windowRestored: 'vault:window_restored',
   // 保险库被锁定（界面按钮 / 托盘 / 空闲自动锁都会经 lock_vault 广播）。
   // 消费方据此清空内存明文并跳回解锁页。
   vaultLocked: 'vault:locked',
@@ -263,9 +265,12 @@ export const api = {
   setLightMode: (enabled) => call('set_light_mode', enabled),
 
   // ── 开屏动画 ────────────────────────────────────────────
-  // claimSplash 每个进程只返回一次 show=true；禁用设置与已播放判断都在后端。
+  // claimSplash 每个进程只返回一次 show=true（「总是展示」开启时例外）；
+  // 禁用 / 总是展示 / 已播放判断都在后端。
+  // getSplashDisabled 返回 { disabled, always }。
   getSplashDisabled: () => call('get_splash_disabled'),
   setSplashDisabled: (disabled) => call('set_splash_disabled', disabled),
+  setSplashAlways: (always) => call('set_splash_always', always),
   claimSplash: () => call('claim_splash'),
 
   // ── 开机自启动 ──────────────────────────────────────────

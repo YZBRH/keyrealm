@@ -407,6 +407,9 @@ class VaultApi:
     def set_splash_disabled(self, disabled: bool):
         return api.set_splash_disabled(disabled)
 
+    def set_splash_always(self, always: bool):
+        return api.set_splash_always(always)
+
     def claim_splash(self):
         return api.claim_splash()
 
@@ -950,7 +953,16 @@ def _show_window():
         _window.maximize()
     elif was_minimized:
         _window.restore()
+    # 轻量模式会重载页面：新页面启动时自己判断「总是展示」，不必再推事件，
+    # 否则事件可能在开屏已开始后才到，造成重复播放。
+    was_released = _page_released
     _restore_page()
+    if not was_released:
+        # 普通托排查出：通知前端。是否重播由「总是展示开屏动画」设置决定；
+        # Timer 避免阻塞托盘线程（evaluate_js 需要 GUI 线程配合）。
+        timer = threading.Timer(0.25, lambda: api.push_event("vault:window_restored"))
+        timer.daemon = True
+        timer.start()
 
 
 def _lock_vault():

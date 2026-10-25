@@ -304,12 +304,15 @@ async function applyLightMode(value) {
 
 /* ── 开屏动画 ─────────────────────────────────────── */
 const splashDisabled = ref(false)
+const splashAlways = ref(false)
 const splashSaving = ref(false)
+const splashAlwaysSaving = ref(false)
 
 async function loadSplashDisabled() {
   try {
     const config = await api.getSplashDisabled()
     splashDisabled.value = Boolean(config.disabled)
+    splashAlways.value = Boolean(config.always)
   } catch (err) {
     ElMessage.error(err.message || '加载开屏动画设置失败')
   }
@@ -325,6 +328,19 @@ async function applySplashDisabled(value) {
     await loadSplashDisabled()
   } finally {
     splashSaving.value = false
+  }
+}
+
+async function applySplashAlways(value) {
+  splashAlwaysSaving.value = true
+  try {
+    await api.setSplashAlways(value)
+    ElMessage.success(value ? '已开启：每次打开页面都会播放开屏动画' : '已关闭：仅在启动时播放开屏动画')
+  } catch (err) {
+    ElMessage.error(err.message || '设置开屏动画失败')
+    await loadSplashDisabled()
+  } finally {
+    splashAlwaysSaving.value = false
   }
 }
 
@@ -793,6 +809,24 @@ onMounted(() => refreshAll(false))
           v-model="splashDisabled"
           :loading="splashSaving"
           @change="applySplashDisabled"
+        />
+      </div>
+
+      <el-divider />
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">总是展示开屏动画</div>
+          <div class="setting-desc">
+            每次打开页面（桌面端从托盘恢复、Web 端刷新页面）都重新播放开屏动画。
+            「禁用开屏动画」开启时该选项不可用。
+          </div>
+        </div>
+        <el-switch
+          v-model="splashAlways"
+          :loading="splashAlwaysSaving"
+          :disabled="splashDisabled"
+          @change="applySplashAlways"
         />
       </div>
     </el-card>

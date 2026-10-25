@@ -129,6 +129,7 @@ function createState() {
     autoLockMinutes: 0,
     lightMode: false,
     splashDisabled: false,
+    splashAlways: false,
     splashClaimed: false,
     autostartEnabled: true,
     treeOrder: { categories: [], plugins: [] },
@@ -799,7 +800,7 @@ export function createMockApi() {
     // ── 开屏动画 ──────────────────────────────────────────
     async get_splash_disabled() {
       await delay(40)
-      return { disabled: state.splashDisabled }
+      return { disabled: state.splashDisabled, always: state.splashAlways }
     },
 
     async set_splash_disabled(disabled) {
@@ -808,13 +809,20 @@ export function createMockApi() {
       return { ok: true, disabled: state.splashDisabled }
     },
 
+    async set_splash_always(always) {
+      await delay(40)
+      state.splashAlways = Boolean(always)
+      return { ok: true, always: state.splashAlways }
+    },
+
     async claim_splash() {
       await delay(40)
       const already = state.splashClaimed
       if (!already) state.splashClaimed = true
-      if (already) return { show: false, reason: 'already' }
-      if (state.splashDisabled) return { show: false, reason: 'disabled' }
-      return { show: true, reason: 'startup' }
+      if (state.splashDisabled) return { show: false, reason: 'disabled', always: false }
+      if (state.splashAlways) return { show: true, reason: 'always', always: true }
+      if (already) return { show: false, reason: 'already', always: false }
+      return { show: true, reason: 'startup', always: false }
     },
 
     // ── 开机自启动 ────────────────────────────────────────

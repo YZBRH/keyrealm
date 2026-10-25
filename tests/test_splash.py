@@ -23,9 +23,10 @@ from backend import api  # noqa: E402
 
 
 def test_default_enabled_and_single_claim():
-    assert api.get_splash_disabled() == {"disabled": False}
+    assert api.get_splash_disabled() == {"disabled": False, "always": False}
     first = api.claim_splash()
     assert first["show"] is True and first["reason"] == "startup"
+    assert first["always"] is False
     second = api.claim_splash()
     assert second["show"] is False and second["reason"] == "already"
 
@@ -35,17 +36,35 @@ def test_disable_consumes_startup_slot():
     # 之后重新启用不会在同一个进程里补播。
     api._splash_claimed = False
     assert api.set_splash_disabled(True)["ok"] is True
-    assert api.get_splash_disabled() == {"disabled": True}
+    assert api.get_splash_disabled() == {"disabled": True, "always": False}
     first = api.claim_splash()
     assert first["show"] is False and first["reason"] == "disabled"
     assert api.set_splash_disabled(False)["ok"] is True
     assert api.claim_splash()["show"] is False
 
 
+def test_always_replays_and_disable_wins():
+    api._splash_claimed = False
+    assert api.set_splash_always(True)["ok"] is True
+    assert api.get_splash_disabled() == {"disabled": False, "always": True}
+    # 开启「总是展示」后，同一进程内每次都播放。
+    first = api.claim_splash()
+    assert first["show"] is True and first["reason"] == "always"
+    second = api.claim_splash()
+    assert second["show"] is True and second["reason"] == "always"
+    # 禁用优先：即使「总是展示」还开着也不播。
+    assert api.set_splash_disabled(True)["ok"] is True
+    blocked = api.claim_splash()
+    assert blocked["show"] is False and blocked["reason"] == "disabled"
+    assert api.set_splash_disabled(False)["ok"] is True
+    assert api.set_splash_always(False)["ok"] is True
+
+
 def main():
     test_default_enabled_and_single_claim()
     test_disable_consumes_startup_slot()
-    print("2 passed, 0 failed")
+    test_always_replays_and_disable_wins()
+    print("3 passed, 0 failed")
 
 
 if __name__ == "__main__":

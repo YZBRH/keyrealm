@@ -1468,9 +1468,12 @@ def set_light_mode(enabled) -> dict:
 
 # ── 开屏动画 ──────────────────────────────────────────────
 # 桌面（pywebview）与 Web（浏览器）共用。设置键 splash_disabled 默认关闭（即默认播放）；
+# splash_always 默认关闭，开启后每次打开页面都重播（桌面托盘唤出 / Web 刷新）。
+# 禁用优先：splash_disabled 开启时 splash_always 不生效。
 # 每个进程只允许认领一次，避免轻量模式重载页面、Web 刷新/多标签时重复播放。
 
 SPLASH_DISABLED_KEY = "splash_disabled"
+SPLASH_ALWAYS_KEY = "splash_always"
 _splash_claimed = False
 _splash_claim_lock = threading.Lock()
 
@@ -1480,9 +1483,17 @@ def read_splash_disabled() -> bool:
     return (db.get_setting(SPLASH_DISABLED_KEY, "0") or "").strip() == "1"
 
 
+def read_splash_always() -> bool:
+    """读「总是展示开屏动画」开关；值异常时按关闭处理。"""
+    return (db.get_setting(SPLASH_ALWAYS_KEY, "0") or "").strip() == "1"
+
+
 def get_splash_disabled() -> dict:
-    """返回「禁用开屏动画」开关（供系统设置展示）。"""
-    return {"disabled": read_splash_disabled()}
+    """返回开屏动画相关开关（供系统设置展示）。
+
+    同时返回 always，前端据此决定是否在刷新 / 托盘唤出时重播。
+    """
+    return {"disabled": read_splash_disabled(), "always": read_splash_always()}
 
 
 def set_splash_disabled(disabled) -> dict:
@@ -1493,25 +1504,38 @@ def set_splash_disabled(disabled) -> dict:
     return {"ok": True, "disabled": value}
 
 
+def set_splash_always(always) -> dict:
+    """持久化「总是展示开屏动画」。禁用开屏时该值保留但不生效。"""
+    value = bool(always)
+    db.set_setting(SPLASH_ALWAYS_KEY, "1" if value else "0")
+    _log.info("开屏动画已设置为%s", "每次展示" if value else "仅启动时展示")
+    return {"ok": True, "always": value}
+
+
 def claim_splash() -> dict:
     """本次进程是否播放开屏动画（前端在应用挂载时调用一次）。
 
     - 用户已禁用 → 不播；
-    - 本进程已经播放过（轻量模式恢复页面 / Web 刷新 / 多标签）→ 不播；
+    - 已开启「总是展示」→ 每次页面加载都播（轻量模式恢复页面也会重播）；
+    - 否则本进程已播放过（轻量模式恢复页面 / Web 多标签）→ 不播；
     - 窗口分辨率由前端判断（后端拿不到实际窗口尺寸）。
     """
     global _splash_claimed
+    disabled = read_splash_disabled()
+    always = read_splash_always() and not disabled
     with _splash_claim_lock:
         already = _splash_claimed
         if not already:
             # 即使本次因「禁用」不播，也消耗掉本次启动的播放机会：
             # 用户在设置里重新启用后，不应在同一个进程的页面重载/轻量模式恢复时补播。
             _splash_claimed = True
+    if disabled:
+        return {"show": False, "reason": "disabled", "always": False}
+    if always:
+        return {"show": True, "reason": "always", "always": True}
     if already:
-        return {"show": False, "reason": "already"}
-    if read_splash_disabled():
-        return {"show": False, "reason": "disabled"}
-    return {"show": True, "reason": "startup"}
+        return {"show": False, "reason": "already", "always": False}
+    return {"show": True, "reason": "startup", "always": False}
 
 
 # ── 空闲自动锁定 ──────────────────────────────────────────

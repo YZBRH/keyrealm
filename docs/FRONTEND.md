@@ -880,6 +880,9 @@ store 随后重拉分组 / 插件。**不走「前端 for 循环调单条删除�
 │       └──────────────┘ └──────────────┘ └──────────────┘   │
 │  禁用开屏动画：[ ○── ]                                      │
 │     启动时播放开屏动画；默认关闭，修改后下次启动生效。      │
+│  总是展示开屏动画：[ ○── ]                                  │
+│     每次打开页面（托盘唤出 / Web 刷新）都重播；禁用开屏时   │
+│     不可用。                                                │
 │                                                             │
 │  ── 安全 ──                                                 │
 │  主密码                                              [ 修改主密码 ] │
@@ -1312,9 +1315,10 @@ await window.pywebview.api.set_light_mode(true) // → { ok: true, enabled: true
 
 // 开屏动画（"系统设置 → 外观"）：桌面用 claim（每进程一次）；
 // Web 用 get_splash_disabled + sessionStorage 按标签页会话控制。
-await window.pywebview.api.get_splash_disabled()    // → { disabled: false }
+await window.pywebview.api.get_splash_disabled()    // → { disabled: false, always: false }
 await window.pywebview.api.set_splash_disabled(true)
-await window.pywebview.api.claim_splash()           // → { show, reason }
+await window.pywebview.api.set_splash_always(true)  // 每次打开页面都重播；禁用时无效
+await window.pywebview.api.claim_splash()           // → { show, reason, always }
 
 // 开机自启动（"系统设置 → 窗口与关闭"）：直接增删操作系统自启条目，不落库
 await window.pywebview.api.get_autostart()      // → { supported, enabled, platform, target }
@@ -1322,11 +1326,14 @@ await window.pywebview.api.set_autostart(true)  // → { ok, enabled }；失败�
 ```
 
 > **开屏动画**：桌面端挂载时调用 `claim_splash()`（按进程只认领一次，轻量模式重载页面不重播）；
-> Web 端用 `sessionStorage` 按标签页会话只播一次（刷新不重播，新标签页视为新启动）。两端都要求
-> 未被禁用且窗口 **≥ 1024×600**，结束后从 DOM 移除。组件是自包含 Web Component
-> （`src/splash/keyrealm-splash.js`）；保险库锁定/未创建时，**密码表单直接嵌在开屏右侧**
+> Web 端用 `sessionStorage` 按标签页会话只播一次（刷新不重播，新标签页视为新启动）。
+> 开启「总是展示开屏动画」后上述限制放宽：桌面端后端会把 `claim_splash()` 的 `show` 始终置为
+> true，并在托盘唤出时推送 `vault:window_restored` 事件由前端重播；Web 端忽略 sessionStorage
+> 标记，每次刷新都播。两端都要求未被禁用且窗口 **≥ 1024×600**，结束后从 DOM 移除。组件是自包含
+> Web Component（`src/splash/keyrealm-splash.js`）；保险库锁定/未创建时，**密码表单直接嵌在开屏右侧**
 > （`components/SplashAuth.vue`），解锁成功才播放转场；已解锁时显示「点击任意处进入」。
-> 「禁用开屏动画」开启时仍走原来的独立 Unlock / Setup 页面。`prefers-reduced-motion` 下退化为静态画面。
+> 「禁用开屏动画」优先于「总是展示」，开启时仍走独立 Unlock / Setup 页面（`components/AuthBackdrop.vue`
+> 提供静态星野背景）。`prefers-reduced-motion` 下退化为静态画面。
 
 > **锁定一律只看 `vault:locked` 事件**：`lock_vault()` 是唯一加锁出口，界面按钮 / 托盘菜单 /
 > 空闲自动锁都汇入它并由它广播。前端收到事件后调 `appStore.applyLocked()` 清空明文，
@@ -1453,6 +1460,7 @@ await window.pywebview.api.set_autostart(true)  // → { ok, enabled }；失败�
 | `vault:batch_verify_done` | 批量验证完成 | `{total, valid, invalid, error, skipped}`（skipped = 因 `batch_verify=false` 被跳过的条数）；被取消时额外带 `canceled: true` 与 `done: <已处理条数>` |
 | `vault:mcp_status` | MCP 服务状态变化 | `{status, port}` |
 | `vault:close_confirm` | 用户点击关闭且关闭行为为"询问" | `{}`（前端弹出退出/后台选择框） |
+| `vault:window_restored` | 桌面端从托盘唤出窗口 | `{}`（前端读取「总是展示开屏动画」决定是否重播；轻量模式重载页面时不推送） |
 | `vault:locked` | 保险库被锁定（界面按钮 / 托盘菜单 / 空闲自动锁**任一入口**） | `{}`（前端清空明文并跳回解锁页） |
 | `vault:tasks` | 某个后台任务状态变化 | 该条任务的快照（不是全量列表），前端就地更新/插入对应行 |
 | `vault:plugins_changed` | 插件目录扫描结果变化 | 由 `plugin_manager` 推送（前端重拉插件列表） |

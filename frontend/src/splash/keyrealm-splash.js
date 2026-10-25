@@ -356,21 +356,36 @@
   .kr-tagline::after{transform:scaleX(-1)}
   .kr-tagline i{font-style:normal; color:rgba(163,230,53,.72); letter-spacing:0}
 
-  .kr-auth{grid-area:auth; align-self:center; justify-self:center; position:relative;
-    z-index:23; width:100%; max-width:380px; pointer-events:none;
-    opacity:0; transform:translateY(12px); cursor:default;
-    transition:opacity .35s ease,transform .35s ease}
-  .kr-auth.ready{opacity:1; transform:none; pointer-events:auto}
+  .kr-boot{display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:12px}
+  .kr-boot-line{position:relative; width:min(260px,52vw); height:12px;
+    text-align:center; font-family:var(--kr-mono); font-size:8.5px;
+    letter-spacing:.2em; color:rgba(244,244,245,.38)}
+  .kr-boot-line span{position:absolute; inset:0; text-align:center}
+  /* 三段状态文字叠在同一位置，只保留最后一段，避免同时出现糊成一片 */
+  .kr-boot-line .s1,.kr-boot-line .s2{display:none}
+  .kr-bar{width:min(180px,40vw); height:1px; overflow:hidden;
+    background:rgba(244,244,245,.12)}
+  .kr-bar i{display:block; height:100%; transform-origin:left;
+    background:linear-gradient(90deg,rgba(163,230,53,.2),var(--kr-primary),rgba(34,211,238,.4))}
+  .kr-meta{display:flex; justify-content:space-between; width:min(180px,40vw);
+    font-family:var(--kr-mono); font-size:8px; letter-spacing:.14em;
+    color:rgba(244,244,245,.26)}
 
-  .kr-root.has-auth .kr-stage{display:grid;
-    grid-template-columns:minmax(0,1fr) minmax(320px,390px);
-    grid-template-areas:"dial auth" "copy auth";
-    align-items:center; justify-items:center;
-    column-gap:clamp(24px,5vw,80px); row-gap:0; padding:3vh 4vw}
-  .kr-root.has-auth .kr-dial-wrap{grid-area:dial; width:min(47vmin,440px);
-    transition:width .55s cubic-bezier(.4,0,.2,1)}
-  .kr-root.has-auth .kr-copy{grid-area:copy; margin-top:clamp(8px,1.6vh,16px)}
+  .kr-dial-wrap{transition:transform .9s cubic-bezier(.4,0,.2,1)}
+  .kr-copy{transition:transform .9s cubic-bezier(.4,0,.2,1)}
+  .kr-auth{position:absolute; z-index:23; top:50%; right:clamp(24px,5vw,76px);
+    width:min(370px,86vw); pointer-events:none; opacity:0; cursor:default;
+    transform:translate(26px,-50%);
+    transition:opacity .45s ease,transform .6s cubic-bezier(.4,0,.2,1)}
+  /* 开场：徽记居中、锁保持闭合；进入等待后在 _startHold 里加 has-auth，
+     徽记左移缩小、品牌字跟随，密码表单从右侧淡入。 */
+  .kr-root.has-auth .kr-dial-wrap{transform:translateX(-19vw) scale(.72)}
+  .kr-root.has-auth .kr-copy{transform:translate(-19vw,-9vmin)}
+  .kr-root.has-auth .kr-auth{opacity:1; transform:translate(0,-50%); pointer-events:auto}
   .kr-root.has-auth .kr-hold{display:none!important}
+  .kr-root.is-entering .kr-dial-wrap,
+  .kr-root.is-entering .kr-copy,
+  .kr-root.is-entering .kr-auth{transition:none}
 
   /* ── 等待进入：3s 倒计时 / 点击任意处 ──────────────── */
   .kr-hold{position:absolute; left:50%; bottom:clamp(44px,7.2vh,68px); z-index:22;
@@ -561,7 +576,7 @@
 
         <button class="kr-hold" type="button" part="enter" aria-label="进入 Keyrealm">
           <span class="kr-hold-dot" aria-hidden="true"></span>
-          <span>点击任意处进入</span>
+          <span class="kr-hold-text">点击任意处进入</span>
           <span class="kr-hold-sep" aria-hidden="true"></span>
           <span class="kr-hold-hint">ENTER ↵</span>
           <span class="kr-hold-bar" aria-hidden="true"><i></i></span>
@@ -583,6 +598,8 @@
   class KeyrealmSplash extends HTMLElement {
     constructor() {
       super();
+      /* 宿主从挂载第一帧起就是深色底：开屏层在等待 claim/bootstrap 时也盖住旧页面 */
+      this.style.backgroundColor = '#07080c';
       this.attachShadow({ mode: 'open' });
       this.shadowRoot.innerHTML = '<style>' + STYLE + '</style>' + MARKUP;
 
@@ -618,7 +635,7 @@
       this._skipBtn.addEventListener('click', () => this.skip());
       /* 等待阶段：点击画面任意处立即进入（进入按钮的点击也会冒泡到这里） */
       this._root.addEventListener('click', () => {
-        if (this._holding && !this._auth) this._enter('click');
+        if (this._holding && (this._readyToEnter || !this._auth)) this._enter('click');
       });
     }
 
@@ -648,6 +665,13 @@
       if (this._state === 'playing') return;
       this._reset();
       this._detectAuth();
+      if (this._auth) {
+        var s3 = this._q('.s3');
+        if (s3) s3.textContent = 'AWAITING PASSPHRASE';
+      }
+      /* 首帧到 .kr-root 淡入之间的短暂空档也要盖住底层页面（否则会闪出旧解锁页的白字）。
+         进入转场时再清空，钥匙孔才能透出主界面。 */
+      this.style.backgroundColor = '#07080c';
       this.hidden = false;
       this._state = 'playing';
       this._done = false;
@@ -757,10 +781,17 @@
       this._revealing = false;
       this._holding = false;
       this._entering = false;
+      this._authUnlocked = false;
+      this._readyToEnter = false;
       this._state = 'idle';
+      this.style.backgroundColor = '';
+      delete this.dataset.revealing;
       this._mask.classList.remove('is-revealing');
-      this._root.classList.remove('is-reduced');
-      this._root.classList.remove('is-holding');
+      this._root.classList.remove('is-reduced', 'is-holding', 'is-entering',
+                                   'has-auth', 'auth-unlocked');
+      this._setHoldText('点击任意处进入', 'ENTER ↵');
+      var s3 = this._q('.s3');
+      if (s3) s3.textContent = 'VAULT READY';
       this._root.style.opacity = '';
       this.style.opacity = '';
       this.style.removeProperty('--kr-hole');
@@ -834,8 +865,10 @@
       this._done = true;
       this._revealing = false;
       this._holding = false;
+      this._readyToEnter = false;
       this._state = 'done';
-      this._root.classList.remove('is-holding');
+      this.style.backgroundColor = '';
+      this._root.classList.remove('is-holding', 'is-entering');
       this._cleanup();
       this.hidden = true;
       this.dispatchEvent(new CustomEvent('splash:done', { bubbles: true, composed: true }));
@@ -922,34 +955,37 @@
       this._anim(q('.kr-mark-lines'), [
         { opacity: 1 }, { opacity: 0 }
       ], { start: 1840, end: 2080, easing: EASE });
-      this._anim(q('.kr-keyhole-glow-fill'), [
-        { opacity: 0 }, { opacity: .95 }, { opacity: .32 }
-      ], { start: UNLOCK_AT - 40, end: UNLOCK_AT + 620, easing: EASE });
+      /* 需要密码时，开场保持「锁住」：开锁动画推迟到 authSuccess() 之后 */
+      if (!this._auth) {
+        this._anim(q('.kr-keyhole-glow-fill'), [
+          { opacity: 0 }, { opacity: .95 }, { opacity: .32 }
+        ], { start: UNLOCK_AT - 40, end: UNLOCK_AT + 620, easing: EASE });
 
-      /* 开锁：锁梁弹开（线框 + 实体同步） + 徽记脉冲 + 两道能量环 */
-      qa('.kr-shackle').forEach(function (el) {
-        self._anim(el, [
-          { transform: 'rotate(0deg) translate(0,0)' },
-          { transform: 'rotate(-21deg) translate(-1px,-2px)' }
-        ], { start: UNLOCK_AT, end: UNLOCK_AT + 260, easing: SPRING });
-      });
-      this._anim(q('.kr-mark'), [
-        { transform: 'scale(1)' }, { transform: 'scale(1.075)' }, { transform: 'scale(1)' }
-      ], { start: UNLOCK_AT, end: UNLOCK_AT + 380, easing: EASE });
-      this._anim(q('.kr-bloom'), [
-        { opacity: 0, transform: 'translate(-50%,-50%) scale(.22)' },
-        { opacity: .85, offset: .22, transform: 'translate(-50%,-50%) scale(.7)' },
-        { opacity: 0, transform: 'translate(-50%,-50%) scale(1.18)' }
-      ], { start: UNLOCK_AT - 40, end: UNLOCK_AT + 680, easing: 'cubic-bezier(.16,.7,.3,1)' });
+        /* 开锁：锁梁弹开（线框 + 实体同步） + 徽记脉冲 + 两道能量环 */
+        qa('.kr-shackle').forEach(function (el) {
+          self._anim(el, [
+            { transform: 'rotate(0deg) translate(0,0)' },
+            { transform: 'rotate(-21deg) translate(-1px,-2px)' }
+          ], { start: UNLOCK_AT, end: UNLOCK_AT + 260, easing: SPRING });
+        });
+        this._anim(q('.kr-mark'), [
+          { transform: 'scale(1)' }, { transform: 'scale(1.075)' }, { transform: 'scale(1)' }
+        ], { start: UNLOCK_AT, end: UNLOCK_AT + 380, easing: EASE });
+        this._anim(q('.kr-bloom'), [
+          { opacity: 0, transform: 'translate(-50%,-50%) scale(.22)' },
+          { opacity: .85, offset: .22, transform: 'translate(-50%,-50%) scale(.7)' },
+          { opacity: 0, transform: 'translate(-50%,-50%) scale(1.18)' }
+        ], { start: UNLOCK_AT - 40, end: UNLOCK_AT + 680, easing: 'cubic-bezier(.16,.7,.3,1)' });
 
-      [q('#kr-p1'), q('#kr-p2')].forEach(function (el, i) {
-        self._anim(el, [
-          { transform: 'translate(-50%,-50%) scale(.2)', opacity: 0 },
-          { opacity: .85, offset: .16 },
-          { transform: 'translate(-50%,-50%) scale(1.8)', opacity: 0 }
-        ], { start: UNLOCK_AT + i * 150, end: UNLOCK_AT + i * 150 + 900,
-             easing: 'cubic-bezier(.16,.7,.3,1)' });
-      });
+        [q('#kr-p1'), q('#kr-p2')].forEach(function (el, i) {
+          self._anim(el, [
+            { transform: 'translate(-50%,-50%) scale(.2)', opacity: 0 },
+            { opacity: .85, offset: .16 },
+            { transform: 'translate(-50%,-50%) scale(1.8)', opacity: 0 }
+          ], { start: UNLOCK_AT + i * 150, end: UNLOCK_AT + i * 150 + 900,
+               easing: 'cubic-bezier(.16,.7,.3,1)' });
+        });
+      }
 
       /* 品牌字：逐字母浮起 */
       qa('.kr-word .L').forEach(function (el, i) {
@@ -987,7 +1023,7 @@
       var self = this;
       var s = this._scale;
       this._timers.push(setTimeout(function () { self._startHold(); }, HOLD_AT * s));
-      if (this.hasAttribute('sound')) {
+      if (!this._auth && this.hasAttribute('sound')) {
         this._timers.push(setTimeout(function () { self._playUnlockSound(); }, UNLOCK_AT * s));
       }
     }
@@ -1009,8 +1045,9 @@
       ], { start: 0, end: 240, easing: 'ease-out', real: true });
 
       if (this._auth) {
+        /* 徽记从正中左移缩小，密码表单从右侧淡入 */
+        this._root.classList.add('has-auth');
         this._revealAuth();
-        /* 集成密码表单时保留「跳过」作为回退到独立解锁页的出口 */
         return;
       }
 
@@ -1031,23 +1068,20 @@
       var slot = this._authSlot;
       var assigned = slot ? slot.assignedElements({ flatten: true }) : [];
       this._auth = assigned.length > 0;
-      /* 进入转场开始后，即使宿主移除表单也不要把布局切回 CTA —— 否则放大动画会跳一下 */
-      if (!this._entering) {
-        if (this._root) this._root.classList.toggle('has-auth', this._auth);
-        if (this._holdEl) this._holdEl.style.display = this._auth ? 'none' : '';
-      }
-      if (this._authWrap && !this._auth) {
-        this._authWrap.classList.remove('ready');
-        this._authWrap.inert = true;
-      }
+      if (this._authWrap && !this._auth) this._authWrap.inert = true;
     }
 
     _onAuthSlotChange() {
       var wasAuth = this._auth;
       this._detectAuth();
-      if (this._entering) return;
-      if (this._holding && this._auth) this._revealAuth();
-      else if (this._holding && wasAuth && !this._auth) this._restoreHold();
+      if (this._entering || this._authUnlocked) return;
+      if (this._holding && this._auth) {
+        this._root.classList.add('has-auth');
+        this._revealAuth();
+      } else if (this._holding && wasAuth && !this._auth) {
+        this._root.classList.remove('has-auth');
+        this._restoreHold();
+      }
     }
 
     _revealAuth() {
@@ -1059,12 +1093,92 @@
     }
 
     _restoreHold() {
-      if (!this._holdEl || this._auth || this._entering) return;
+      if (!this._holdEl || this._auth || this._entering || this._authUnlocked) return;
+      this._setHoldText('点击任意处进入', 'ENTER ↵');
       this._holdEl.style.display = '';
       this._holdEl.classList.add('ready');
       this._holdEl.style.opacity = '1';
       this._holdEl.style.transform = 'translate(-50%,0)';
       this._holdEl.style.pointerEvents = 'auto';
+    }
+
+    _setHoldText(text, hint) {
+      if (!this._holdEl) return;
+      var label = this._holdEl.querySelector('.kr-hold-text');
+      var hintEl = this._holdEl.querySelector('.kr-hold-hint');
+      if (label) label.textContent = text;
+      if (hintEl) hintEl.textContent = hint;
+    }
+
+    /** 宿主的密码表单校验通过后调用：收表单 → 徽记回中放大 → 开锁 → 等待任意键进入。 */
+    authSuccess() {
+      if (this._state !== 'playing' || !this._auth || this._authUnlocked) return;
+      this._authUnlocked = true;
+      this._root.classList.remove('has-auth');
+      if (this._authWrap) {
+        this._authWrap.inert = true;
+        this._authWrap.classList.remove('ready');
+      }
+
+      var self = this;
+      if (this._reduce) {
+        this._showFinalHold();
+        return;
+      }
+      this._after(880, function () {
+        if (self._state !== 'playing' || self._entering) return;
+        self._playUnlockSequence();
+        self._after(620, function () { self._showFinalHold(); });
+      });
+    }
+
+    _playUnlockSequence() {
+      var self = this;
+      var q = function (s) { return self._q(s); };
+      var qa = function (s) { return self._qAll(s); };
+      var EASE = 'cubic-bezier(.22,.61,.36,1)';
+      var SPRING = 'cubic-bezier(.34,1.4,.5,1)';
+
+      if (this.hasAttribute('sound')) this._playUnlockSound();
+
+      this._anim(q('.kr-keyhole-glow-fill'), [
+        { opacity: 0 }, { opacity: .95 }, { opacity: .32 }
+      ], { start: 0, end: 660, easing: EASE });
+      qa('.kr-shackle').forEach(function (el) {
+        self._anim(el, [
+          { transform: 'rotate(0deg) translate(0,0)' },
+          { transform: 'rotate(-21deg) translate(-1px,-2px)' }
+        ], { start: 0, end: 260, easing: SPRING });
+      });
+      this._anim(q('.kr-mark'), [
+        { transform: 'scale(1)' }, { transform: 'scale(1.075)' }, { transform: 'scale(1)' }
+      ], { start: 0, end: 380, easing: EASE });
+      this._anim(q('.kr-bloom'), [
+        { opacity: 0, transform: 'translate(-50%,-50%) scale(.22)' },
+        { opacity: .85, offset: .22, transform: 'translate(-50%,-50%) scale(.7)' },
+        { opacity: 0, transform: 'translate(-50%,-50%) scale(1.18)' }
+      ], { start: 0, end: 720, easing: 'cubic-bezier(.16,.7,.3,1)' });
+      [q('#kr-p1'), q('#kr-p2')].forEach(function (el, i) {
+        self._anim(el, [
+          { transform: 'translate(-50%,-50%) scale(.2)', opacity: 0 },
+          { opacity: .85, offset: .16 },
+          { transform: 'translate(-50%,-50%) scale(1.8)', opacity: 0 }
+        ], { start: i * 150, end: i * 150 + 900, easing: 'cubic-bezier(.16,.7,.3,1)' });
+      });
+      this._burst();
+    }
+
+    _showFinalHold() {
+      if (!this._holdEl) return;
+      this._setHoldText('按任意键进入', 'ANY KEY');
+      this._holdEl.style.display = '';
+      this._holdEl.classList.add('ready');
+      this._holdEl.style.pointerEvents = 'auto';
+      this._readyToEnter = true;
+      this._anim(this._holdEl, [
+        { opacity: 0, transform: 'translate(-50%,10px)' },
+        { opacity: 1, transform: 'translate(-50%,0)' }
+      ], { start: 0, end: 460, easing: 'cubic-bezier(.22,.61,.36,1)', real: true });
     }
 
     _enter(mode) {
@@ -1076,6 +1190,10 @@
       }
       this._entering = true;
       this._holding = false;
+      this._readyToEnter = false;
+      this.dataset.revealing = '1';
+      this.style.backgroundColor = '';
+      this._root.classList.add('is-entering');
       this._root.classList.remove('is-holding');
       this._clearTimers();
 
@@ -1259,7 +1377,11 @@
         if (self._state !== 'playing' || self._entering) return;
         self._holding = true;
         root.classList.add('is-holding');
-        if (self._auth) { self._revealAuth(); return; }
+        if (self._auth) {
+          root.classList.add('has-auth');
+          self._revealAuth();
+          return;
+        }
         var hold = self._holdEl;
         hold.classList.add('ready');
         hold.style.opacity = '1';
@@ -1286,7 +1408,7 @@
       this._py = 0;
       this._parallaxOn = !!window.matchMedia &&
         matchMedia('(pointer:fine)').matches && !this._reduce;
-      this._unlockAt = UNLOCK_AT * this._scale;
+      this._unlockAt = this._auth ? Infinity : UNLOCK_AT * this._scale;
     }
 
     _resizeCanvas() {
@@ -1508,6 +1630,12 @@
     _bindGlobal() {
       var self = this;
       this._onKey = function (e) {
+        if (self._holding && self._readyToEnter &&
+            !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          self._enter('key');
+          return;
+        }
         if (self._holding && !self._auth &&
             (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
           e.preventDefault();

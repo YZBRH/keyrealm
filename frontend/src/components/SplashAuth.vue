@@ -92,7 +92,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="sa">
+  <div class="sa" :class="{ 'has-error': !!error }">
     <div class="sa-corner sa-corner-tl" aria-hidden="true" />
     <div class="sa-corner sa-corner-br" aria-hidden="true" />
 
@@ -117,6 +117,7 @@ async function submit() {
             :placeholder="isSetup ? '至少 8 个字符' : '输入主密码'"
             spellcheck="false"
             :disabled="busy"
+            @input="error = ''"
           />
           <button class="sa-eye" type="button" tabindex="-1" @click="showPassword = !showPassword">
             {{ showPassword ? '隐藏' : '显示' }}
@@ -135,6 +136,7 @@ async function submit() {
               placeholder="再次输入以确认"
               spellcheck="false"
               :disabled="busy"
+              @input="error = ''"
             />
           </span>
         </label>
@@ -153,7 +155,10 @@ async function submit() {
         </div>
       </template>
 
-      <p v-if="error" class="sa-error" role="alert">{{ error }}</p>
+      <p v-if="error" class="sa-error" role="alert">
+        <span class="sa-error-code">{{ isSetup ? 'CHECK FAILED' : 'ACCESS DENIED' }}</span>
+        <span class="sa-error-msg">{{ error }}</span>
+      </p>
 
       <button class="sa-submit" type="submit" :disabled="busy">
         <span>{{ busy ? '处理中…' : isSetup ? '创建保险库' : '解锁' }}</span>
@@ -326,14 +331,40 @@ async function submit() {
   color: rgba(244, 244, 245, 0.4);
 }
 
+.sa.has-error {
+  border-color: rgba(248, 113, 113, 0.38);
+  box-shadow:
+    0 26px 70px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 0 0 1px rgba(248, 113, 113, 0.06);
+}
+
 .sa-error {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   margin: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(248, 113, 113, 0.28);
-  border-radius: 7px;
-  background: rgba(248, 113, 113, 0.08);
-  color: #fca5a5;
+  padding: 8px 11px;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-left: 2px solid rgba(248, 113, 113, 0.72);
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.13), rgba(248, 113, 113, 0.03));
+  animation: sa-error-in 0.28s ease-out both;
+}
+.sa-error-code {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.22em;
+  color: #f87171;
+}
+.sa-error-msg {
+  color: rgba(254, 202, 202, 0.92);
   font-size: 11px;
+  line-height: 1.4;
+}
+@keyframes sa-error-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .sa-submit {
