@@ -520,7 +520,7 @@ def upsert_plugin(
     plugin_path: str, author: str = "", description: str = "",
     icon: str = "🔑",
     category: str = "", category_name: str = "", batch_verify: bool = True,
-    enabled: bool = True,
+    enabled: bool = True, *, commit: bool = True,
 ):
     # enabled 只是 plugins/.state.json 的**只读镜像**（由 plugin_manager.sync_plugins 写入），
     # 不参与任何功能判定。默认 True 让不带该参数的调用方（如 scripts/check_schema.py）保持原语义。
@@ -543,7 +543,14 @@ def upsert_plugin(
              json.dumps(fields_schema, ensure_ascii=False), plugin_path,
              category, category_name or category, int(batch_verify), int(enabled), _now()),
         )
-        conn.commit()
+        if commit:
+            conn.commit()
+
+
+def commit() -> None:
+    """提交当前连接的挂起事务（批量写插件记录后调用一次）。"""
+    with _lock:
+        get_conn().commit()
 
 
 def delete_plugin_record(credential_type: str):

@@ -30,7 +30,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Optional
 
-from . import api, backup, bootstrap, mcp_server, paths, proxy_store, single_instance, tls_store, updater, version
+from . import api, backup, bootstrap, mcp_server, paths, plugin_manager, proxy_store, single_instance, tls_store, updater, version
 
 
 class CliError(Exception):
@@ -338,7 +338,7 @@ def cmd_init(args) -> int:
 def cmd_status(args) -> int:
     initialized = bool(api.is_initialized().get("initialized"))
     unlocked = bool(api.is_unlocked().get("unlocked"))
-    plugins = api.list_plugins()
+    plugins = plugin_manager.list_installed_plugins(sync=False)   # bootstrap 已同步过
     proxies = api.list_proxies()
     tls = api.get_tls_options()
     payload = {
@@ -1403,7 +1403,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--search", help="关键词（多个词需全部命中）")
     p.set_defaults(func=cmd_logs)
 
-    p = _sub(sub, "version", help="显示版本")
+    p = _sub(sub, "version", help="显示版本", no_init=True)
     p.set_defaults(func=cmd_version)
 
     return parser

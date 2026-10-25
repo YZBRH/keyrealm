@@ -380,6 +380,7 @@ def sync_plugins():
                 category_name=_category_display(category, cat_meta),
                 batch_verify=manifest.batch_verify,
                 enabled=is_on,
+                commit=False,
             )
             if is_on:
                 load_plugin(ct)
@@ -390,6 +391,7 @@ def sync_plugins():
         except Exception as e:
             _log.error("插件加载失败 %s (%s): %s", plugin_dir, ct, e)
 
+    db.commit()          # 批量 upsert 一次提交；逐插件 commit 会让启动多花数百毫秒
     for record in db.list_plugins():
         ct = record["credential_type"]
         if ct in found:
@@ -721,9 +723,13 @@ def stream_plugin_action(credential_type: str, action_id: str, params: dict, dat
                                   on_progress, should_cancel)
 
 
-def list_installed_plugins() -> list[dict]:
-    """列出所有插件（含凭据数量）；先做一次目录扫描同步，使新放入的插件即时可见"""
-    sync_plugins()
+def list_installed_plugins(*, sync: bool = True) -> list[dict]:
+    """列出所有插件（含凭据数量）；默认先做一次目录扫描同步，使新放入的插件即时可见。
+
+    ``sync=False`` 供已经同步过的调用方（如 CLI ``status``）避免重复扫描与重复写库。
+    """
+    if sync:
+        sync_plugins()
     plugins = db.list_plugins()
     for p in plugins:
         creds = db.list_credentials(credential_type=p["credential_type"])

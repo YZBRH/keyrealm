@@ -129,6 +129,50 @@ except ValueError as _exc:
     print(f"数据目录配置错误：{_exc}", file=sys.stderr, flush=True)
     sys.exit(2)
 
+
+def _attach_parent_console() -> None:
+    """Windows 窗口化程序在命令行里被调用时，接上父进程的控制台。
+
+    启动器已先 `AttachConsole(-1)`；运行时作为它的子进程，这里附着到启动器的控制台，
+    让 `--version` / `--help` / `--print-paths` 这类不走 CLI 入口的路径也能正常输出。
+    双击启动（没有父控制台）时失败即可，不会凭空多出黑框。
+    """
+    if os.name != "nt" or (sys.stdout is not None and sys.stderr is not None):
+        return
+    try:
+        import ctypes
+        import msvcrt
+
+        kernel32 = ctypes.windll.kernel32
+        # 已经附着到父控制台时 AttachConsole 会返回 ERROR_ACCESS_DENIED；窗口化进程的
+        # sys.stdout 仍可能是 None，所以无论返回值如何都要继续打开 CONOUT$。
+        if not kernel32.GetConsoleWindow():
+            kernel32.AttachConsole(-1)                    # ATTACH_PARENT_PROCESS
+        out = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        err = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        sys.stdout, sys.stderr = out, err
+        kernel32.SetStdHandle.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        kernel32.SetStdHandle.restype = ctypes.c_int
+        kernel32.SetStdHandle(-11, ctypes.c_void_p(msvcrt.get_osfhandle(out.fileno())))
+        kernel32.SetStdHandle(-12, ctypes.c_void_p(msvcrt.get_osfhandle(err.fileno())))
+        try:
+            inp = open("CONIN$", "r", encoding="utf-8", errors="replace")
+            sys.stdin = inp
+            kernel32.SetStdHandle(-10, ctypes.c_void_p(msvcrt.get_osfhandle(inp.fileno())))
+        except OSError:
+            pass
+    except Exception:  # noqa: BLE001 - 无父控制台时静默降级
+        pass
+
+
+# `--version` 是最常见的探测命令：在导入 backend.api / 插件 / 调度器等重模块之前直接返回。
+if __name__ == "__main__" and sys.argv[1:] == ["--version"]:
+    if os.name == "nt":
+        _attach_parent_console()
+    from backend import version as _version
+    print(f"Keyrealm {_version.version_string()}")
+    sys.exit(0)
+
 # 桌面专用依赖（pywebview / pystray）**不在模块级导入**：CLI 版不打包它们，
 # 而 Web/CLI 模式也必须能在没有图形环境的服务器上启动（无 DISPLAY 时 import pystray 会直接抛异常）。
 #   · `webview` 在 main()（桌面模式）里按需导入；
@@ -1099,41 +1143,6 @@ def main():
         sys.exit(1)
     log.info("应用退出")
     _exit_cleanly()
-
-
-def _attach_parent_console() -> None:
-    """Windows 窗口化程序在命令行里被调用时，接上父进程的控制台。
-
-    启动器已先 `AttachConsole(-1)`；运行时作为它的子进程，这里附着到启动器的控制台，
-    让 `--version` / `--help` / `--print-paths` 这类不走 CLI 入口的路径也能正常输出。
-    双击启动（没有父控制台）时失败即可，不会凭空多出黑框。
-    """
-    if os.name != "nt" or (sys.stdout is not None and sys.stderr is not None):
-        return
-    try:
-        import ctypes
-        import msvcrt
-
-        kernel32 = ctypes.windll.kernel32
-        # 已经附着到父控制台时 AttachConsole 会返回 ERROR_ACCESS_DENIED；窗口化进程的
-        # sys.stdout 仍可能是 None，所以无论返回值如何都要继续打开 CONOUT$。
-        if not kernel32.GetConsoleWindow():
-            kernel32.AttachConsole(-1)                    # ATTACH_PARENT_PROCESS
-        out = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
-        err = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
-        sys.stdout, sys.stderr = out, err
-        kernel32.SetStdHandle.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
-        kernel32.SetStdHandle.restype = ctypes.c_int
-        kernel32.SetStdHandle(-11, ctypes.c_void_p(msvcrt.get_osfhandle(out.fileno())))
-        kernel32.SetStdHandle(-12, ctypes.c_void_p(msvcrt.get_osfhandle(err.fileno())))
-        try:
-            inp = open("CONIN$", "r", encoding="utf-8", errors="replace")
-            sys.stdin = inp
-            kernel32.SetStdHandle(-10, ctypes.c_void_p(msvcrt.get_osfhandle(inp.fileno())))
-        except OSError:
-            pass
-    except Exception:  # noqa: BLE001 - 无父控制台时静默降级
-        pass
 
 
 if __name__ == "__main__":
