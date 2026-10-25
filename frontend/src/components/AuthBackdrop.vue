@@ -8,6 +8,9 @@
     <div class="ab-glow" />
     <div class="ab-rings"><span /><span /><span /></div>
     <div class="ab-vignette" />
+    <div class="ab-frame" aria-hidden="true">
+      <i /><i /><i /><i />
+    </div>
     <div class="ab-hud ab-hud-tl"><b>KEYREALM</b><i>//</i>LOCAL VAULT</div>
     <div class="ab-hud ab-hud-br">AES-256-GCM <i>·</i> LOCAL ONLY</div>
   </div>
@@ -116,6 +119,42 @@
     rgba(0, 0, 0, 0.42) 76%,
     rgba(0, 0, 0, 0.72) 100%
   );
+}
+
+/* 四角取景框，与开屏的边角 HUD 一致 */
+.ab-frame {
+  position: absolute;
+  inset: 14px;
+}
+.ab-frame i {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 0 solid rgba(163, 230, 53, 0.16);
+}
+.ab-frame i:nth-child(1) {
+  top: 0;
+  left: 0;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.ab-frame i:nth-child(2) {
+  top: 0;
+  right: 0;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+.ab-frame i:nth-child(3) {
+  bottom: 0;
+  left: 0;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+.ab-frame i:nth-child(4) {
+  bottom: 0;
+  right: 0;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
 }
 
 /* 四角 HUD 文案，呼应开屏 */

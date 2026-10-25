@@ -27,7 +27,11 @@ async function submit() {
   if (!formRef.value) return
   try {
     await formRef.value.validate()
-  } catch {
+  } catch (fields) {
+    // 表单校验失败也弹一条全局提示：错误不能只藏在密码栏里
+    const first = fields && Object.values(fields)[0]
+    const msg = (Array.isArray(first) ? first[0]?.message : first?.message) || '请输入主密码'
+    ElMessage.error(msg)
     return
   }
 
@@ -327,6 +331,18 @@ onMounted(() => {
 }
 .auth-card--tactical :deep(.el-alert .el-alert__icon) {
   color: #a3e635;
+}
+/* 解锁失败是错误态：不能被上面的绿色战术样式盖成绿色 */
+.auth-card--tactical :deep(.el-alert--error) {
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  border-left: 2px solid rgba(248, 113, 113, 0.72);
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.14), rgba(248, 113, 113, 0.03));
+}
+.auth-card--tactical :deep(.el-alert--error .el-alert__title) {
+  color: rgba(254, 202, 202, 0.92);
+}
+.auth-card--tactical :deep(.el-alert--error .el-alert__icon) {
+  color: #f87171;
 }
 .auth-card--tactical :deep(.el-button--primary) {
   height: 42px;

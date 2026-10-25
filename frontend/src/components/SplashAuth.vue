@@ -7,7 +7,7 @@ const props = defineProps({
   // 'unlock' | 'setup'
   mode: { type: String, default: 'unlock' },
 })
-const emit = defineEmits(['success'])
+const emit = defineEmits(['success', 'error'])
 
 const appStore = useAppStore()
 
@@ -18,6 +18,13 @@ const busy = ref(false)
 const error = ref('')
 
 const isSetup = computed(() => props.mode === 'setup')
+const errorCode = computed(() => (isSetup.value ? 'CHECK FAILED' : 'ACCESS DENIED'))
+
+/** 统一失败出口：面板内保留详细错误，同时通知开屏做全屏级反馈。 */
+function fail(message) {
+  error.value = message
+  emit('error', { code: errorCode.value, message })
+}
 
 const strength = computed(() => {
   const value = form.password
@@ -61,16 +68,16 @@ async function submit() {
   error.value = ''
   const password = form.password
   if (!password) {
-    error.value = '请输入主密码'
+    fail('请输入主密码')
     return
   }
   if (isSetup.value) {
     if (password.length < 8) {
-      error.value = '主密码至少需要 8 个字符'
+      fail('主密码至少需要 8 个字符')
       return
     }
     if (password !== form.confirm) {
-      error.value = '两次输入的密码不一致'
+      fail('两次输入的密码不一致')
       return
     }
   }
@@ -81,10 +88,11 @@ async function submit() {
     reset()
     emit('success')
   } catch (err) {
-    error.value = err.message || (isSetup.value ? '创建失败' : '解锁失败')
+    const message = err.message || (isSetup.value ? '创建失败' : '解锁失败')
     form.password = ''
     form.confirm = ''
     focus()
+    fail(message)
   } finally {
     busy.value = false
   }
@@ -337,6 +345,13 @@ async function submit() {
     0 26px 70px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     inset 0 0 0 1px rgba(248, 113, 113, 0.06);
+  animation: sa-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+@keyframes sa-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
 }
 
 .sa-error {

@@ -175,6 +175,11 @@ function onSplashAuthSuccess() {
   splashEl.value?.authSuccess?.()
 }
 
+function onSplashAuthError(detail) {
+  // 表单内的详细错误照常显示；这里再触发开屏的全屏级反馈。
+  splashEl.value?.authError?.(detail)
+}
+
 const disposers = []
 
 // 关闭窗口确认弹窗（由后端关闭事件 vault:close_confirm 触发）
@@ -417,6 +422,7 @@ watch(
         ref="splashAuthRef"
         :mode="splashAuthMode"
         @success="onSplashAuthSuccess"
+        @error="onSplashAuthError"
       />
     </Teleport>
 

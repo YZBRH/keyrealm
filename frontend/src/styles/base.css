@@ -845,9 +845,24 @@ html.dark :is(
   animation: v-msg-in var(--v-slow) var(--v-spring);
 }
 
+/* 居中消息条靠 translateX(-50%) 定中，入场动画必须把它一并写进 transform，
+   否则动画期间会覆盖这条居中变换：消息先偏右半宽，动画结束再闪回正中间。 */
+.el-message.is-center {
+  animation-name: v-msg-in-center;
+}
+
 .el-message__content {
   color: var(--v-text) !important;
   font-size: 13px;
+}
+
+/* 错误提示沿用红色语义，不要被主题的绿色玻璃描边带偏 */
+.el-message.el-message--error {
+  border-color: rgba(248, 113, 113, 0.3);
+  background: color-mix(in srgb, var(--v-bg-overlay) 88%, rgba(248, 113, 113, 0.12));
+}
+.el-message.el-message--error .el-message__content {
+  color: rgba(254, 202, 202, 0.95) !important;
 }
 
 .el-message-box {
@@ -983,6 +998,12 @@ html.dark :is(
 @keyframes v-msg-in {
   0% { opacity: 0; transform: translateY(-14px) scale(0.94); }
   100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 居中消息条专用：保留 translateX(-50%)，避免入场时横向跳动 */
+@keyframes v-msg-in-center {
+  0% { opacity: 0; transform: translate(-50%, -14px) scale(0.94); }
+  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
 }
 
 @keyframes v-grow-in {

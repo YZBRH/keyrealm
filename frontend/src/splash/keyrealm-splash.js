@@ -293,6 +293,33 @@
   .kr-ruler-l{left:12px}
   .kr-ruler-r{right:12px}
 
+  /* 四角框线：给全屏画面一个“取景框”，宽屏下也不至于太空 */
+  .kr-frame{position:absolute; inset:14px; z-index:20; pointer-events:none}
+  .kr-frame i{position:absolute; width:24px; height:24px; opacity:0;
+    border:0 solid rgba(163,230,53,.22)}
+  .kr-frame .kr-fr-tl{top:0; left:0; border-top-width:1px; border-left-width:1px}
+  .kr-frame .kr-fr-tr{top:0; right:0; border-top-width:1px; border-right-width:1px}
+  .kr-frame .kr-fr-bl{bottom:0; left:0; border-bottom-width:1px; border-left-width:1px}
+  .kr-frame .kr-fr-br{bottom:0; right:0; border-bottom-width:1px; border-right-width:1px}
+
+  /* 底部状态尺：两侧刻度夹一行低亮度说明，压住画面下缘 */
+  .kr-baseline{position:absolute; z-index:20; left:50%; bottom:20px;
+    transform:translateX(-50%); display:flex; align-items:center; gap:16px;
+    opacity:0; pointer-events:none; white-space:nowrap;
+    font-family:var(--kr-mono); font-size:8px; letter-spacing:.26em;
+    color:rgba(244,244,245,.2)}
+  .kr-baseline b{font-weight:400; color:rgba(163,230,53,.5)}
+  .kr-baseline .tick{width:clamp(40px,14vw,220px); height:7px;
+    background:repeating-linear-gradient(90deg,rgba(163,230,53,.2) 0 1px,transparent 1px 12px);
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 25%,#000 75%,transparent);
+    mask-image:linear-gradient(90deg,transparent,#000 25%,#000 75%,transparent)}
+
+  /* 认证失败：屏幕边缘泛红（不改徽记颜色） */
+  .kr-deny-veil{position:absolute; inset:0; z-index:22; pointer-events:none; opacity:0;
+    transition:opacity .3s ease;
+    background:radial-gradient(ellipse at 50% 50%,transparent 38%,rgba(248,113,113,.16) 100%)}
+  .kr-root.is-denied .kr-deny-veil{opacity:1}
+
   /* ── 舞台 ────────────────────────────────────────────── */
   .kr-stage{position:absolute; inset:0; z-index:10; display:flex; flex-direction:column;
     align-items:center; justify-content:center; padding:3vh 24px 5vh}
@@ -322,7 +349,7 @@
   .kr-s2{stop-color:var(--kr-green)}
   .kr-s3{stop-color:var(--kr-cyan)}
   .kr-shackle{transform-box:fill-box; transform-origin:0% 100%}
-  .kr-mark-fill{opacity:.08; transform-box:fill-box; transform-origin:50% 50%;
+  .kr-mark-fill{opacity:0; transform-box:fill-box; transform-origin:50% 50%;
     will-change:transform,opacity}
   .kr-keyhole-glow-fill{opacity:0}
 
@@ -343,15 +370,15 @@
     align-items:center; margin-top:clamp(10px,2vh,22px); text-align:center;
     pointer-events:none}
   .kr-word{display:flex; align-items:baseline; gap:.06em; padding-left:.3em;
-    font-family:var(--kr-mono); font-size:clamp(12px,1.5vmin,17px);
+    font-family:var(--kr-mono); font-size:clamp(20px,2.6vmin,30px);
     font-weight:600; letter-spacing:.3em; color:var(--kr-ink);
-    text-shadow:0 0 18px rgba(163,230,53,.14)}
+    text-shadow:0 0 26px rgba(163,230,53,.19)}
   .kr-word .L{display:inline-block; will-change:transform,opacity,filter}
   .kr-word .L.k{color:var(--kr-primary)}
-  .kr-tagline{display:flex; align-items:center; justify-content:center; gap:9px;
-    margin-top:9px; font-family:var(--kr-mono); font-size:9.5px;
-    letter-spacing:.24em; color:rgba(244,244,245,.46)}
-  .kr-tagline::before,.kr-tagline::after{content:""; width:16px; height:1px;
+  .kr-tagline{display:flex; align-items:center; justify-content:center; gap:13px;
+    margin-top:14px; font-family:var(--kr-mono); font-size:clamp(13px,1.75vmin,18px);
+    letter-spacing:.22em; color:rgba(244,244,245,.58)}
+  .kr-tagline::before,.kr-tagline::after{content:""; width:26px; height:1px;
     background:linear-gradient(90deg,transparent,rgba(163,230,53,.58))}
   .kr-tagline::after{transform:scaleX(-1)}
   .kr-tagline i{font-style:normal; color:rgba(163,230,53,.72); letter-spacing:0}
@@ -373,15 +400,22 @@
 
   .kr-dial-wrap{transition:transform .9s cubic-bezier(.4,0,.2,1)}
   .kr-copy{transition:transform .9s cubic-bezier(.4,0,.2,1)}
-  .kr-auth{position:absolute; z-index:23; top:50%; right:clamp(24px,5vw,76px);
+  /* 密码栏跟着徽记走，而不是贴屏幕右缘：宽屏下右缘锚定会把两者拉得很远。
+     徽记缩放后可视半宽 = 0.36 × min(72vmin,740px) = min(25.92vmin,266.4px)；
+     间距取 clamp(48px,8vmin,96px)，整组（徽记 + 间距 + 表单）以视口中心对称排布。 */
+  .kr-auth{position:absolute; z-index:23; top:50%; left:50%;
     width:min(370px,86vw); pointer-events:none; opacity:0; cursor:default;
-    transform:translate(26px,-50%);
+    transform:translate(calc(-50% + min(25.92vmin,266.4px) + clamp(24px,4vmin,48px) + 26px),-50%);
     transition:opacity .45s ease,transform .6s cubic-bezier(.4,0,.2,1)}
   /* 开场：徽记居中、锁保持闭合；进入等待后在 _startHold 里加 has-auth，
      徽记左移缩小、品牌字跟随，密码表单从右侧淡入。 */
-  .kr-root.has-auth .kr-dial-wrap{transform:translateX(-19vw) scale(.72)}
-  .kr-root.has-auth .kr-copy{transform:translate(-19vw,-9vmin)}
-  .kr-root.has-auth .kr-auth{opacity:1; transform:translate(0,-50%); pointer-events:auto}
+  .kr-root.has-auth .kr-dial-wrap{
+    transform:translateX(calc((min(370px,86vw) + clamp(48px,8vmin,96px)) * -0.5)) scale(.72)}
+  .kr-root.has-auth .kr-copy{
+    transform:translate(calc((min(370px,86vw) + clamp(48px,8vmin,96px)) * -0.5),-9vmin)}
+  .kr-root.has-auth .kr-auth{
+    opacity:1; pointer-events:auto;
+    transform:translate(calc(-50% + min(25.92vmin,266.4px) + clamp(24px,4vmin,48px)),-50%)}
   .kr-root.has-auth .kr-hold{display:none!important}
   .kr-root.is-entering .kr-dial-wrap,
   .kr-root.is-entering .kr-copy,
@@ -427,6 +461,11 @@
   .kr-root.is-reduced .kr-skip,
   .kr-root.is-reduced .kr-hole-ring{display:none}
   .kr-root.is-reduced .kr-dial-wrap{filter:none; transform:none}
+  /* 减少动效时仍要保留「徽记左移 + 表单在右」的布局，否则两者会重叠。 */
+  .kr-root.is-reduced.has-auth .kr-dial-wrap{
+    transform:translateX(calc((min(370px,86vw) + clamp(48px,8vmin,96px)) * -0.5)) scale(.72)}
+  .kr-root.is-reduced.has-auth .kr-copy{
+    transform:translate(calc((min(370px,86vw) + clamp(48px,8vmin,96px)) * -0.5),-9vmin)}
   .kr-root.is-reduced .kr-mark-fill{opacity:1; transform:none}
   .kr-root.is-reduced .kr-mark-lines{opacity:0}
   .kr-root.is-reduced .kr-keyhole-glow-fill{opacity:.45}
@@ -472,6 +511,18 @@
       <div class="kr-corner kr-corner-tr" aria-hidden="true">LOCAL SESSION <b>·</b> 0x1F</div>
       <div class="kr-ruler kr-ruler-l" aria-hidden="true"></div>
       <div class="kr-ruler kr-ruler-r" aria-hidden="true"></div>
+
+      <div class="kr-frame" aria-hidden="true">
+        <i class="kr-fr-tl"></i><i class="kr-fr-tr"></i>
+        <i class="kr-fr-bl"></i><i class="kr-fr-br"></i>
+      </div>
+      <div class="kr-baseline" aria-hidden="true">
+        <span class="tick"></span>
+        <span>LOCAL-ONLY VAULT <b>//</b> AES-256-GCM</span>
+        <span class="tick"></span>
+      </div>
+
+      <div class="kr-deny-veil" aria-hidden="true"></div>
 
       <div class="kr-stage">
         <div class="kr-dial-wrap">
@@ -617,6 +668,7 @@
       }
       this._tunnel = this.shadowRoot.querySelector('.kr-tunnel');
       this._flashEl = this.shadowRoot.querySelector('.kr-flash');
+      this._denyTimer = null;
 
       this._state = 'idle';
       this._anims = [];
@@ -788,7 +840,11 @@
       delete this.dataset.revealing;
       this._mask.classList.remove('is-revealing');
       this._root.classList.remove('is-reduced', 'is-holding', 'is-entering',
-                                   'has-auth', 'auth-unlocked');
+                                   'has-auth', 'auth-unlocked', 'is-denied');
+      if (this._denyTimer) {
+        clearTimeout(this._denyTimer);
+        this._denyTimer = null;
+      }
       this._setHoldText('点击任意处进入', 'ENTER ↵');
       var s3 = this._q('.s3');
       if (s3) s3.textContent = 'VAULT READY';
@@ -912,6 +968,11 @@
       qa('.kr-ruler').forEach(function (el) {
         self._anim(el, [{ opacity: 0 }, { opacity: .55 }], { start: 1000, end: 1600, easing: EASE });
       });
+      qa('.kr-frame i').forEach(function (el) {
+        self._anim(el, [{ opacity: 0 }, { opacity: 1 }], { start: 900, end: 1500, easing: EASE });
+      });
+      this._anim(q('.kr-baseline'), [{ opacity: 0 }, { opacity: 1 }],
+        { start: 1100, end: 1700, easing: EASE });
       if (this.getAttribute('skippable') !== 'false') {
         this._anim(q('.kr-skip'), [
           { opacity: 0, transform: 'translateY(6px)' },
@@ -949,7 +1010,7 @@
 
       /* 真实 Logo 实体凝实：线框淡出，白色徽记浮现 */
       this._anim(q('.kr-mark-fill'), [
-        { opacity: .08, transform: 'scale(.985)' },
+        { opacity: 0, transform: 'scale(.985)' },
         { opacity: 1, transform: 'scale(1)' }
       ], { start: 1780, end: 2190, easing: SPRING });
       this._anim(q('.kr-mark-lines'), [
@@ -1110,10 +1171,29 @@
       if (hintEl) hintEl.textContent = hint;
     }
 
+    /** 宿主的密码表单报错时调用：屏幕边缘泛红 + 徽记红光，2.2s 后自动收起。 */
+    authError() {
+      if (this._state !== 'playing' || !this._auth) return;
+      this._root.classList.remove('is-denied');
+      // 连续提交同一个错误时也要能重新闪一下
+      void this._root.offsetWidth;
+      this._root.classList.add('is-denied');
+      var self = this;
+      if (this._denyTimer) clearTimeout(this._denyTimer);
+      this._denyTimer = setTimeout(function () {
+        if (self._root) self._root.classList.remove('is-denied');
+      }, 2200);
+    }
+
     /** 宿主的密码表单校验通过后调用：收表单 → 徽记回中放大 → 开锁 → 等待任意键进入。 */
     authSuccess() {
       if (this._state !== 'playing' || !this._auth || this._authUnlocked) return;
       this._authUnlocked = true;
+      if (this._denyTimer) {
+        clearTimeout(this._denyTimer);
+        this._denyTimer = null;
+      }
+      this._root.classList.remove('is-denied');
       this._root.classList.remove('has-auth');
       if (this._authWrap) {
         this._authWrap.inert = true;

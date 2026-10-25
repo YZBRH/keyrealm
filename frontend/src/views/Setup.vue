@@ -58,7 +58,11 @@ async function submit() {
   if (!formRef.value) return
   try {
     await formRef.value.validate()
-  } catch {
+  } catch (fields) {
+    // 校验失败不只标红字段，额外给一条全局提示，避免只有小字提示被忽略
+    const first = fields && Object.values(fields)[0]
+    const msg = (Array.isArray(first) ? first[0]?.message : first?.message) || '请检查主密码输入'
+    ElMessage.error(msg)
     return
   }
 
