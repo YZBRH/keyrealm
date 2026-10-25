@@ -1466,6 +1466,54 @@ def set_light_mode(enabled) -> dict:
     return {"ok": True, "enabled": value}
 
 
+# ── 开屏动画 ──────────────────────────────────────────────
+# 桌面（pywebview）与 Web（浏览器）共用。设置键 splash_disabled 默认关闭（即默认播放）；
+# 每个进程只允许认领一次，避免轻量模式重载页面、Web 刷新/多标签时重复播放。
+
+SPLASH_DISABLED_KEY = "splash_disabled"
+_splash_claimed = False
+_splash_claim_lock = threading.Lock()
+
+
+def read_splash_disabled() -> bool:
+    """读「禁用开屏动画」开关；值异常时按未禁用处理。"""
+    return (db.get_setting(SPLASH_DISABLED_KEY, "0") or "").strip() == "1"
+
+
+def get_splash_disabled() -> dict:
+    """返回「禁用开屏动画」开关（供系统设置展示）。"""
+    return {"disabled": read_splash_disabled()}
+
+
+def set_splash_disabled(disabled) -> dict:
+    """持久化「禁用开屏动画」。下次启动生效；当前进程已经认领过就不会再播。"""
+    value = bool(disabled)
+    db.set_setting(SPLASH_DISABLED_KEY, "1" if value else "0")
+    _log.info("开屏动画已%s", "禁用" if value else "启用")
+    return {"ok": True, "disabled": value}
+
+
+def claim_splash() -> dict:
+    """本次进程是否播放开屏动画（前端在应用挂载时调用一次）。
+
+    - 用户已禁用 → 不播；
+    - 本进程已经播放过（轻量模式恢复页面 / Web 刷新 / 多标签）→ 不播；
+    - 窗口分辨率由前端判断（后端拿不到实际窗口尺寸）。
+    """
+    global _splash_claimed
+    with _splash_claim_lock:
+        already = _splash_claimed
+        if not already:
+            # 即使本次因「禁用」不播，也消耗掉本次启动的播放机会：
+            # 用户在设置里重新启用后，不应在同一个进程的页面重载/轻量模式恢复时补播。
+            _splash_claimed = True
+    if already:
+        return {"show": False, "reason": "already"}
+    if read_splash_disabled():
+        return {"show": False, "reason": "disabled"}
+    return {"show": True, "reason": "startup"}
+
+
 # ── 空闲自动锁定 ──────────────────────────────────────────
 # "一段时间未操作后自动锁定数据库"。设置项 auto_lock_minutes 存 settings 表（0 = 关闭）；
 # 判定与看门狗线程在 backend/idle_lock.py，这里只负责读写设置、接收前端活动上报。

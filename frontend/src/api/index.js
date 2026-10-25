@@ -262,6 +262,12 @@ export const api = {
   getLightMode: () => call('get_light_mode'),
   setLightMode: (enabled) => call('set_light_mode', enabled),
 
+  // ── 开屏动画 ────────────────────────────────────────────
+  // claimSplash 每个进程只返回一次 show=true；禁用设置与已播放判断都在后端。
+  getSplashDisabled: () => call('get_splash_disabled'),
+  setSplashDisabled: (disabled) => call('set_splash_disabled', disabled),
+  claimSplash: () => call('claim_splash'),
+
   // ── 开机自启动 ──────────────────────────────────────────
   // 读写的是操作系统自启条目（Windows 注册表 Run / macOS LaunchAgent / Linux XDG
   // autostart），系统侧即唯一事实来源，后端不落 settings。

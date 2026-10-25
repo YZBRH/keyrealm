@@ -302,6 +302,32 @@ async function applyLightMode(value) {
   }
 }
 
+/* ── 开屏动画 ─────────────────────────────────────── */
+const splashDisabled = ref(false)
+const splashSaving = ref(false)
+
+async function loadSplashDisabled() {
+  try {
+    const config = await api.getSplashDisabled()
+    splashDisabled.value = Boolean(config.disabled)
+  } catch (err) {
+    ElMessage.error(err.message || '加载开屏动画设置失败')
+  }
+}
+
+async function applySplashDisabled(value) {
+  splashSaving.value = true
+  try {
+    await api.setSplashDisabled(value)
+    ElMessage.success(value ? '已禁用开屏动画（下次启动生效）' : '已启用开屏动画（下次启动生效）')
+  } catch (err) {
+    ElMessage.error(err.message || '设置开屏动画失败')
+    await loadSplashDisabled()
+  } finally {
+    splashSaving.value = false
+  }
+}
+
 /* ── 开机自启动 ────────────────────────────────────── */
 // 状态以**操作系统**的自启条目为准（后端每次现读），前端不做本地记忆，
 // 免得用户手动删掉系统条目后界面还显示"已开启"。
@@ -716,6 +742,7 @@ async function refreshAll(showSpinner = true) {
       loadCloseAction(),
       loadAutoLock(),
       loadLightMode(),
+      loadSplashDisabled(),
       loadAutostart(),
       loadTls(),
       loadUpdateChannel(),
@@ -752,6 +779,22 @@ onMounted(() => refreshAll(false))
       </div>
 
       <ThemePicker />
+
+      <el-divider />
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">禁用开屏动画</div>
+          <div class="setting-desc">
+            启动时不再播放开屏动画；修改后下次启动生效。窗口分辨率过小时也会自动跳过。
+          </div>
+        </div>
+        <el-switch
+          v-model="splashDisabled"
+          :loading="splashSaving"
+          @change="applySplashDisabled"
+        />
+      </div>
     </el-card>
 
     <el-card shadow="never">

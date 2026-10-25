@@ -128,6 +128,8 @@ function createState() {
     closeAction: 'ask',
     autoLockMinutes: 0,
     lightMode: false,
+    splashDisabled: false,
+    splashClaimed: false,
     autostartEnabled: true,
     treeOrder: { categories: [], plugins: [] },
     // 代理注册表。id 是 **UUID 字符串**（与后端一致，其它模块一律按 id 引用），不是自增整数。
@@ -792,6 +794,27 @@ export function createMockApi() {
       await delay(40)
       state.lightMode = Boolean(enabled)
       return { ok: true, enabled: state.lightMode }
+    },
+
+    // ── 开屏动画 ──────────────────────────────────────────
+    async get_splash_disabled() {
+      await delay(40)
+      return { disabled: state.splashDisabled }
+    },
+
+    async set_splash_disabled(disabled) {
+      await delay(40)
+      state.splashDisabled = Boolean(disabled)
+      return { ok: true, disabled: state.splashDisabled }
+    },
+
+    async claim_splash() {
+      await delay(40)
+      const already = state.splashClaimed
+      if (!already) state.splashClaimed = true
+      if (already) return { show: false, reason: 'already' }
+      if (state.splashDisabled) return { show: false, reason: 'disabled' }
+      return { show: true, reason: 'startup' }
     },
 
     // ── 开机自启动 ────────────────────────────────────────

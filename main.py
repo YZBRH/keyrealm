@@ -400,6 +400,16 @@ class VaultApi:
     def set_light_mode(self, enabled: bool):
         return api.set_light_mode(enabled)
 
+    # ── 开屏动画 ──────────────────────────────────────────
+    def get_splash_disabled(self):
+        return api.get_splash_disabled()
+
+    def set_splash_disabled(self, disabled: bool):
+        return api.set_splash_disabled(disabled)
+
+    def claim_splash(self):
+        return api.claim_splash()
+
     # ── 开机自启动 ────────────────────────────────────────
     def get_autostart(self):
         return api.get_autostart()
