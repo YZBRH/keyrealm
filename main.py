@@ -177,7 +177,7 @@ if __name__ == "__main__" and sys.argv[1:] == ["--version"]:
 # 而 Web/CLI 模式也必须能在没有图形环境的服务器上启动（无 DISPLAY 时 import pystray 会直接抛异常）。
 #   · `webview` 在 main()（桌面模式）里按需导入；
 #   · `tray` 见下方模块级 `tray = None`，同样由 main() 注入。
-from backend import api, autostart, database as db, idle_lock, logger, mcp_server, plugin_manager, scheduler, single_instance
+from backend import api, autostart, database as db, idle_lock, logger, mcp_server, plugin_manager, scheduler, single_instance, webview_cache
 from backend import vault_proxy_ctx, vault_tls_ctx
 from backend.paths import app_dir, is_frozen, resource_dir
 
@@ -1102,6 +1102,13 @@ def main():
         sys.exit(0)
 
     log = _start_services("desktop")
+
+    # 构建版本变化（升级 / 测试版更新）时清掉 WebView 的页面/脚本缓存，
+    # 否则可能后端已是新 commit、界面还停在旧版本。保留 Local Storage 等界面偏好。
+    try:
+        webview_cache.clear_if_build_changed(db.DATA_DIR / "webview")
+    except Exception as exc:  # noqa: BLE001 - 缓存清理失败不能影响启动
+        log.debug("清理 WebView 缓存失败：%s", exc)
 
     # 旧版本写入的自启条目没有 --autostart；启动时刷新一次，升级后首个开机即可生效。
     try:
