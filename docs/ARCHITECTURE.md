@@ -597,6 +597,14 @@ Web SSE 广播器。Web 模式下 `frontend/public/web-bridge.js` 把 `window.py
 **与其它加锁入口的关系**：`api.lock_vault()` 是唯一加锁出口，界面按钮 / 托盘菜单 / 空闲自动锁
 全部汇入它，因此它统一广播 `vault:locked`，前端据此在各入口下都表现一致。
 
+**「不锁定」**：`settings.never_lock=1` 时 `_tick()` 直接返回，不进入空闲判定（「空闲自动锁定」
+下拉在界面置灰）。同时 `api` 在 setup / unlock / 改密成功后把当前 AES 密钥交给
+`backend/session_key.py` 持久化；桌面 / Web 启动时 `bootstrap.init_core()` 在常驻服务之前调用
+`api.restore_persisted_session()`，校验 `verify_token` 后直接注入密钥。**手动 `lock_vault()` 会删除
+持久化密钥**，所以重启后保持锁定；关闭设置同样删除。CLI 模式不读取持久化密钥。保护方式按平台选择
+Windows DPAPI / macOS 钥匙串 / Linux Secret Service，Linux 无 Secret Service 时退化为
+machine-id + 用户 + 数据目录派生的本机绑定加密文件（仅防跨机拷贝，不能防同一用户读取）。
+
 **生命周期**：`main.py` 在 `scheduler.start_scheduler()` 之后 `idle_lock.start()`；
 `_shutdown_services()` 里 `idle_lock.stop()`（置停止位并 join，超时 2s）。
 
@@ -897,8 +905,9 @@ AI Agent（Claude Desktop / Cursor）
 |------|----------|
 | 数据库文件泄露 | AES-256-GCM 字段级加密，无主密码无法解密 |
 | 主密码暴力破解 | PBKDF2 100,000 次迭代，增加破解成本 |
-| 内存中密钥泄露 | 密钥仅存于进程内存，不写文件；托盘"锁定"（桌面）/ `lock_vault` RPC 可主动清除 |
+| 内存中密钥泄露 | 默认密钥仅存于进程内存，不写文件；托盘"锁定"（桌面）/ `lock_vault` RPC 可主动清除 |
 | 无人值守时密钥常驻 | 「空闲自动锁定」按 `auto_lock_minutes` 在无操作一段时间后自动清除内存密钥（[§2.8](ARCHITECTURE.md)）；CLI 一次性进程退出即释放 |
+| 「不锁定」持久化密钥 | 显式开启后密钥交系统凭据保护（DPAPI / 钥匙串 / Secret Service）；Linux 退化方案只能防跨机拷贝，同一用户会话可直接读取——界面已明示，手动锁定仍会删除持久化密钥 |
 | MCP 未授权访问 | Bearer Token 鉴权（纯 ASGI 中间件），Token 只存 SHA-256，支持轮换 |
 | MCP Token 泄露 | 轮换后旧的立即失效（只存 SHA-256，不存明文） |
 | MCP 工具越权 | 全局工具开关（`mcp_permissions`，界面 / `mcp permission` 唯一入口）；工具默认关闭，需显式开启 |

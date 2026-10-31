@@ -889,7 +889,10 @@ store 随后重拉分组 / 插件。**不走「前端 for 循环调单条删除�
 │     修改后将重新加密库中全部凭据，旧密码立即失效。           │
 │  锁定保险库                                          [ 立即锁定 ]   │
 │     立即清除内存中的解密密钥与明文数据。                     │
-│  空闲自动锁定：[ 5 分钟 ▼ ]                                  │
+│  不锁定：[ ○── ]                                            │
+│     开启后不因空闲或重启而锁定；仅手动锁定才清除密钥。      │
+│     密钥交系统凭据保护（仅桌面 / Web 生效）。               │
+│  空闲自动锁定：[ 5 分钟 ▼ ]（「不锁定」开启时不可用）       │
 │     一段时间无操作后自动清除内存密钥；若后台有验证任务        │
 │     在跑则顺延到任务结束。                                   │
 │                                                             │
@@ -955,6 +958,13 @@ Release 标签、更新时下载预编译包替换；测试版按 `main` 的版�
 （`appStore.applyLocked()` → 清空明文 → `watch(appStore.unlocked)` 推回 `/unlock`）。
 详见 [ARCHITECTURE.md §2.8](ARCHITECTURE.md)。
 
+**「不锁定」**（`settings.never_lock`，默认关）：开启后 `idle_lock` 直接跳过空闲判定，
+解锁/创建/改密时把当前密钥交给系统凭据保护（`backend/session_key.py`：Windows DPAPI /
+macOS 钥匙串 / Linux Secret Service；Linux 无 Secret Service 时退化为 machine-id + 用户 +
+数据目录派生的本机绑定加密文件），桌面/Web 启动时在常驻服务前自动恢复。**手动「立即锁定」
+会删除持久化密钥**，重启后保持锁定；关闭该设置同样删除。CLI 是一次性进程，不读取持久化密钥。
+前端开启时把「空闲自动锁定」置灰并提示不生效；持久化失败会在开关下方返回 warning。
+
 **「立即锁定」** 与「空闲自动锁定」，以及托盘菜单的「锁定」，最终都走 `api.lock_vault()` 同一个出口，
 因此在三种入口下界面表现一致（都会清空明文并跳回解锁页）。
 
@@ -968,8 +978,11 @@ DOM 与 JS 堆；再从托盘「打开窗口」时后端 `load_url(<file:// 入�
 Linux `$XDG_CONFIG_HOME/autostart/keyrealm.desktop`、macOS
 `~/Library/LaunchAgents/com.keyrealm.app.plist`），开启 = 写条目、关闭 = 删条目。
 **库里刻意不存副本**：用户手动删掉系统条目后两边就长期不一致，且没有时机能可靠重同步。
-启动命令由 `launch_argv()` 按**冻结与否**推导（冻结 → 执行 exe 本身；源码 → `<python> main.py`），
-不写死本机路径。开关旁显示系统落点（`target`）；平台不支持或写失败时面板置灰 / 报错（`AutostartError`
+启动命令由 `launch_argv()` 按**冻结与否**推导（冻结 → 执行 exe 本身；源码 → `<python> main.py --gui`），
+不写死本机路径，并固定追加 `--autostart`。桌面端启动时若带该参数且「关闭主窗口时」为
+`background`，会在托盘可用时以 `hidden=True` 创建窗口——登录后直接驻留托盘、不弹出主窗口；
+托盘不可用则回退为正常显示。启动时还会调用 `ensure_current()` 刷新旧条目，补上该参数。
+开关旁显示系统落点（`target`）；平台不支持或写失败时面板置灰 / 报错（`AutostartError`
 → `{ok:false, message}`），前端按返回的 `enabled` 回写开关而非自行假设。
 
 代价要在界面上说清（就是开关下方那行说明）：重新打开需要等界面重建；释放时未保存的编辑内容会丢；
@@ -1308,6 +1321,11 @@ await window.pywebview.api.confirm_close_action('quit', true)
 await window.pywebview.api.get_auto_lock()      // → { minutes: 5, options: [{value, label}, …] }
 await window.pywebview.api.set_auto_lock(10)    // 0 = 关闭；非法档位返回 {ok:false, message}
 await window.pywebview.api.touch_activity()     // 前端有用户操作时上报（内部约 30s 节流）
+
+// 不锁定（"系统设置 → 安全"）：开启后空闲不锁、重启自动恢复；手动锁定仍清持久化密钥
+await window.pywebview.api.get_never_lock()
+// → { enabled, persisted, protection, protection_label }
+await window.pywebview.api.set_never_lock(true)
 
 // 轻量模式（"系统设置 → 窗口与关闭"）：开关只落库，行为发生在下次最小化到托盘时
 await window.pywebview.api.get_light_mode()     // → { enabled: false }

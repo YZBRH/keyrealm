@@ -35,6 +35,8 @@ _log = logger.get_logger(__name__)
 
 # ── 设置项（与 backend/api.py 的 get/set 共用同一份常量）────────────
 SETTING_KEY = "auto_lock_minutes"
+# 「不锁定」：开启后空闲锁定整体失效（手动锁定仍可用）。
+NEVER_LOCK_KEY = "never_lock"
 DEFAULT_MINUTES = 0
 ALLOWED_MINUTES = (0, 1, 5, 10, 15, 30, 60)
 OPTIONS = [
@@ -70,6 +72,11 @@ def read_minutes() -> int:
     return minutes if minutes in ALLOWED_MINUTES else DEFAULT_MINUTES
 
 
+def read_never_lock() -> bool:
+    """读「不锁定」开关；值异常时按关闭处理。"""
+    return (db.get_setting(NEVER_LOCK_KEY, "0") or "").strip() == "1"
+
+
 def touch() -> None:
     """记一次用户活动，重置空闲计时。"""
     global _last_activity
@@ -101,6 +108,8 @@ def set_callbacks(lock_cb: Callable[[], None], is_unlocked_cb: Callable[[], bool
 
 def _tick(now: Optional[float] = None) -> bool:
     """单次检查；真锁了就返回 True。抽出来便于离线打桩测试。"""
+    if read_never_lock():
+        return False
     minutes = read_minutes()
     running = tasks.running_count()
     now = time.monotonic() if now is None else now

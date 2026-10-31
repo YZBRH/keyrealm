@@ -429,7 +429,7 @@ def run_app(root: Path, argv: list[str]) -> int:
     old_launcher = root / (app_name() + ".old")
     if (rc != 0 and time.monotonic() - started < 6.0
             and "cli" not in app_name().lower()
-            and all(arg == "--gui" for arg in argv)):
+            and all(arg in ("--gui", "--autostart") for arg in argv)):
         data_dir = _app_data_dir(root, argv)
         backup_hint = (
             f"1) 解压 {data_dir / 'backup'} 内最新的 keyrealm-backup-*.zip 覆盖程序目录"

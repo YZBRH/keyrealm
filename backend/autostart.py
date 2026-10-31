@@ -61,20 +61,23 @@ def launch_argv() -> list[str]:
     - **冻结**（启动器 + onedir）：优先执行**入口目录的启动器**（应用自己跑在 ``runtime/`` 里，
       启动器才是稳定入口；用户改过名时用 ``KEYREALM_LAUNCHER``）；
     - **源码运行**：``<python> <项目根>/main.py --gui``（源码模式必须显式指定 --gui）。
+
+    末尾固定带 ``--autostart``：桌面端据此判断「这次是开机自启」，再结合
+    「关闭主窗口时」的默认行为决定是否静默驻留托盘。
     """
     if is_frozen():
         override = os.environ.get("KEYREALM_LAUNCHER", "").strip()
         if override:
             try:
                 if Path(override).is_file():
-                    return [override]
+                    return [override, "--autostart"]
             except OSError:
                 pass
         candidate = app_dir() / Path(sys.executable).name
         if (app_dir() / "runtime").is_dir() and candidate.is_file():
-            return [str(candidate)]
-        return [sys.executable]
-    return [sys.executable, str(app_dir() / "main.py"), "--gui"]
+            return [str(candidate), "--autostart"]
+        return [sys.executable, "--autostart"]
+    return [sys.executable, str(app_dir() / "main.py"), "--gui", "--autostart"]
 
 
 def platform_name() -> str:
@@ -353,6 +356,22 @@ def set_enabled(enabled: bool) -> None:
     else:
         _linux_set(bool(enabled))
     _log.info("开机自启动已%s", "开启" if enabled else "关闭")
+
+
+def ensure_current() -> bool:
+    """启动时把已存在的自启条目刷新成当前命令行（补上 ``--autostart`` 等新参数）。
+
+    旧版本写入的条目没有这个参数；不刷新的话，升级后第一次开机仍会弹出主窗口。
+    未启用 / 条目不属于本程序时静默跳过。
+    """
+    if not is_enabled():
+        return False
+    try:
+        set_enabled(True)
+        return True
+    except AutostartError as exc:
+        _log.debug("刷新自启条目失败：%s", exc)
+        return False
 
 
 def describe_target() -> str:

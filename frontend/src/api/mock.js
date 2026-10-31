@@ -127,6 +127,7 @@ function createState() {
     logLevel: 'INFO',
     closeAction: 'ask',
     autoLockMinutes: 0,
+    neverLock: false,
     lightMode: false,
     splashDisabled: false,
     splashAlways: false,
@@ -783,6 +784,29 @@ export function createMockApi() {
 
     async touch_activity() {
       return { ok: true }
+    },
+
+    // ── 不锁定 ────────────────────────────────────────────
+    async get_never_lock() {
+      await delay(40)
+      return {
+        enabled: state.neverLock,
+        persisted: state.neverLock,
+        protection: state.neverLock ? 'machine' : '',
+        protection_label: state.neverLock ? '本机绑定加密文件' : '',
+      }
+    },
+
+    async set_never_lock(enabled) {
+      await delay(40)
+      state.neverLock = Boolean(enabled)
+      return {
+        ok: true,
+        enabled: state.neverLock,
+        persisted: state.neverLock,
+        protection: state.neverLock ? 'machine' : '',
+        protection_label: state.neverLock ? '本机绑定加密文件' : '',
+      }
     },
 
     // ── 轻量模式 ──────────────────────────────────────────

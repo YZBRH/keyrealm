@@ -44,6 +44,10 @@ def init_core(mode: str = "desktop", *, full: bool = True, gpu_reason: str = "")
     api.init_callbacks()
 
     if full:
+        # 「不锁定」：在常驻服务启动前恢复会话，调度器 / MCP / 自动更新才能看到已解锁状态。
+        # CLI 是一次性进程，不读取持久化密钥。
+        if mode != "cli":
+            api.restore_persisted_session()
         scheduler.start_scheduler()
         idle_lock.start()
         api.autostart_mcp()

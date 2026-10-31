@@ -273,6 +273,43 @@ async function applyAutoLock(value) {
   }
 }
 
+/* ── 不锁定 ─────────────────────────────────────────── */
+const neverLock = ref(false)
+const neverLockInfo = ref({ persisted: false, protection_label: '' })
+const neverLockSaving = ref(false)
+
+async function loadNeverLock() {
+  try {
+    const config = await api.getNeverLock()
+    neverLock.value = Boolean(config.enabled)
+    neverLockInfo.value = {
+      persisted: Boolean(config.persisted),
+      protection_label: config.protection_label || '',
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '加载「不锁定」设置失败')
+  }
+}
+
+async function applyNeverLock(value) {
+  neverLockSaving.value = true
+  try {
+    const res = await api.setNeverLock(value)
+    neverLockInfo.value = {
+      persisted: Boolean(res && res.persisted),
+      protection_label: (res && res.protection_label) || '',
+    }
+    if (res && res.message) ElMessage.warning(res.message)
+    else ElMessage.success(value ? '已开启「不锁定」' : '已关闭「不锁定」')
+    if (!value) await loadNeverLock()
+  } catch (err) {
+    ElMessage.error(err.message || '设置「不锁定」失败')
+    await loadNeverLock()
+  } finally {
+    neverLockSaving.value = false
+  }
+}
+
 /* ── 轻量模式 ───────────────────────────────────────── */
 // 开关只影响后端「隐藏到托盘」时的行为，前端不需要跟着变什么。
 const lightMode = ref(false)
@@ -757,6 +794,7 @@ async function refreshAll(showSpinner = true) {
     await Promise.all([
       loadCloseAction(),
       loadAutoLock(),
+      loadNeverLock(),
       loadLightMode(),
       loadSplashDisabled(),
       loadAutostart(),
@@ -858,8 +896,30 @@ onMounted(() => refreshAll(false))
 
       <div class="setting-row">
         <div class="setting-info">
+          <div class="setting-label">不锁定</div>
+          <div class="setting-desc">
+            开启后不会因空闲或程序重启而锁定，只有手动点击「立即锁定」才会清除密钥。
+            <template v-if="neverLock">
+              为支持重启后自动恢复，解锁密钥交由系统凭据保护
+              <template v-if="neverLockInfo.protection_label">（{{ neverLockInfo.protection_label }}）</template>；
+              任何能登录本机同一账户的人都可以直接使用保险库。
+            </template>
+          </div>
+        </div>
+        <el-switch
+          v-model="neverLock"
+          :loading="neverLockSaving"
+          @change="applyNeverLock"
+        />
+      </div>
+
+      <el-divider />
+
+      <div class="setting-row">
+        <div class="setting-info">
           <div class="setting-label">空闲自动锁定</div>
           <div class="setting-desc">
+            <template v-if="neverLock">「不锁定」开启时此项不生效。</template>
             一段时间无操作后自动清除内存中的密钥。若当时后台仍有验证任务在跑，则顺延到任务结束后再锁。
           </div>
         </div>
@@ -867,6 +927,7 @@ onMounted(() => refreshAll(false))
           v-model="autoLockMinutes"
           class="close-select"
           :loading="autoLockSaving"
+          :disabled="neverLock"
           @change="applyAutoLock"
         >
           <el-option

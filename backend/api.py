@@ -28,6 +28,7 @@ from . import proxy as proxy_config
 from . import proxy_store
 from . import redact
 from . import scheduler
+from . import session_key
 from . import tasks
 from . import tls_store
 from . import version
@@ -121,6 +122,27 @@ def _set_key(key: Optional[bytes]):
         _master_key = key
 
 
+def _persist_session_key() -> bool:
+    """「不锁定」开启时，把当前密钥交给系统凭据保护；未开启/未解锁则不写。"""
+    if not idle_lock.read_never_lock():
+        return False
+    key = _get_key()
+    if key is None:
+        return False
+    ok = session_key.save(key)
+    if not ok:
+        _log.warning("「不锁定」已开启，但会话密钥持久化失败（重启后仍需输入主密码）")
+    return ok
+
+
+def _clear_session_key() -> None:
+    """删除持久化密钥（手动锁定 / 关闭「不锁定」时调用）。"""
+    try:
+        session_key.clear()
+    except Exception as exc:  # noqa: BLE001 - 清理失败不影响加锁
+        _log.warning("删除持久化会话密钥失败：%s", exc)
+
+
 # Web 模式（无 pywebview 窗口）的事件出口：SSE 广播器等注册到这里。
 _event_sinks: list = []
 
@@ -184,39 +206,8 @@ def is_unlocked() -> dict:
     return {"unlocked": _get_key() is not None}
 
 
-def setup_master_password(password: str) -> dict:
-    if not password or len(password) < 6:
-        return {"ok": False, "message": "密码至少 6 位"}
-    if db.get_setting("verify_token"):
-        return {"ok": False, "message": "主密码已设置，请使用解锁功能"}
-    salt = generate_salt()
-    key = derive_key(password, salt)
-    verify_token = create_verify_token(key)
-    db.set_setting("salt", salt.hex())
-    db.set_setting("verify_token", verify_token)
-    _set_key(key)
-    idle_lock.touch()
-    return {"ok": True, "message": "主密码设置成功"}
-
-
-def unlock(password: str, auto_check: bool = True) -> dict:
-    """校验主密码并注入内存密钥。
-
-    ``auto_check=False`` 供 CLI 一次性命令使用：跳过“解锁后自动检查更新”，
-    避免一条本地命令顺手发起网络请求。
-    """
-    salt_hex = db.get_setting("salt")
-    verify_token = db.get_setting("verify_token")
-    if not salt_hex or not verify_token:
-        return {"ok": False, "message": "尚未初始化，请先设置主密码"}
-    try:
-        salt = bytes.fromhex(salt_hex)
-    except ValueError:
-        return {"ok": False, "message": "数据损坏"}
-    key = derive_key(password, salt)
-    if not check_verify_token(key, verify_token):
-        return {"ok": False, "message": "密码错误"}
-    _set_key(key)
+def _after_unlock(auto_check: bool = True) -> None:
+    """解锁后的公共收尾：结构 / 数据升级、托盘刷新，可选的自动更新检查。"""
     idle_lock.touch()
     _update_tray()
     # 代码比库新（手动构建换了代码 / 导入过更老的库）时，**先把结构补到位**——
@@ -240,6 +231,44 @@ def unlock(password: str, auto_check: bool = True) -> dict:
     # 解锁后补跑一次「自动检测更新」——启动时应用还没解锁、访问令牌尚未注入，那次检查可能没成
     if auto_check:
         start_auto_update_check()
+
+
+def setup_master_password(password: str) -> dict:
+    if not password or len(password) < 6:
+        return {"ok": False, "message": "密码至少 6 位"}
+    if db.get_setting("verify_token"):
+        return {"ok": False, "message": "主密码已设置，请使用解锁功能"}
+    salt = generate_salt()
+    key = derive_key(password, salt)
+    verify_token = create_verify_token(key)
+    db.set_setting("salt", salt.hex())
+    db.set_setting("verify_token", verify_token)
+    _set_key(key)
+    _persist_session_key()
+    idle_lock.touch()
+    return {"ok": True, "message": "主密码设置成功"}
+
+
+def unlock(password: str, auto_check: bool = True) -> dict:
+    """校验主密码并注入内存密钥。
+
+    ``auto_check=False`` 供 CLI 一次性命令使用：跳过“解锁后自动检查更新”，
+    避免一条本地命令顺手发起网络请求。
+    """
+    salt_hex = db.get_setting("salt")
+    verify_token = db.get_setting("verify_token")
+    if not salt_hex or not verify_token:
+        return {"ok": False, "message": "尚未初始化，请先设置主密码"}
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return {"ok": False, "message": "数据损坏"}
+    key = derive_key(password, salt)
+    if not check_verify_token(key, verify_token):
+        return {"ok": False, "message": "密码错误"}
+    _set_key(key)
+    _persist_session_key()
+    _after_unlock(auto_check)
     return {"ok": True, "message": "解锁成功"}
 
 
@@ -319,10 +348,36 @@ def lock_vault() -> dict:
     「已解锁」的样子——密钥已经没了，前端必须知道。
     """
     _set_key(None)
+    # 手动锁定是「不锁定」的唯一例外：同时删掉持久化密钥，重启后保持锁定。
+    _clear_session_key()
     os.environ.pop(updater.ENV_TOKEN, None)   # 锁库即清令牌，别把 PAT 留在进程 env 里
     push_event("vault:locked")
     _update_tray()
     return {"ok": True}
+
+
+def restore_persisted_session() -> dict:
+    """启动时按「不锁定」设置恢复会话密钥（仅桌面 / Web 进程调用）。
+
+    手动锁定会删除持久化密钥，所以这种情况下这里读不到东西、保持锁定。
+    密钥要与当前库的 verify_token 对得上才使用；对不上立即删除，避免坏数据反复尝试。
+    """
+    if not idle_lock.read_never_lock():
+        return {"ok": False, "restored": False, "reason": "disabled"}
+    key = session_key.load()
+    if key is None:
+        if session_key.exists():
+            _clear_session_key()
+        return {"ok": False, "restored": False, "reason": "no-key"}
+    verify_token = db.get_setting("verify_token")
+    if not verify_token or not check_verify_token(key, verify_token):
+        _clear_session_key()
+        _log.warning("持久化会话密钥与当前保险库不匹配，已删除")
+        return {"ok": False, "restored": False, "reason": "invalid"}
+    _set_key(key)
+    _after_unlock(auto_check=False)
+    _log.info("已按「不锁定」恢复解锁会话（保护方式：%s）", session_key.protection_label() or "未知")
+    return {"ok": True, "restored": True, "protection": session_key.protection()}
 
 
 def change_master_password(old_password: str, new_password: str) -> dict:
@@ -357,6 +412,10 @@ def change_master_password(old_password: str, new_password: str) -> dict:
     db.set_setting("salt", new_salt.hex())
     db.set_setting("verify_token", new_verify)
     _set_key(new_key)
+    if idle_lock.read_never_lock():
+        _persist_session_key()
+    else:
+        _clear_session_key()
     return {"ok": True, "message": "主密码修改成功"}
 
 
@@ -1565,6 +1624,38 @@ def touch_activity() -> dict:
     """前端在一段时间内有用户操作时（节流）上报，重置空闲计时。"""
     idle_lock.touch()
     return {"ok": True}
+
+
+def get_never_lock() -> dict:
+    """返回「不锁定」开关与当前持久化状态（供系统设置展示）。"""
+    return {
+        "enabled": idle_lock.read_never_lock(),
+        "persisted": session_key.exists(),
+        "protection": session_key.protection(),
+        "protection_label": session_key.protection_label(),
+    }
+
+
+def set_never_lock(enabled) -> dict:
+    """持久化「不锁定」。
+
+    开启时若已解锁，立刻把当前密钥交给系统凭据保护；关闭时删除已保存的密钥。
+    开启但未解锁时没有可保存的密钥，等下一次解锁成功后再写入。
+    """
+    value = bool(enabled)
+    db.set_setting(idle_lock.NEVER_LOCK_KEY, "1" if value else "0")
+    if value:
+        _persist_session_key()
+    else:
+        _clear_session_key()
+    idle_lock.touch()
+    _log.info("「不锁定」已%s", "开启" if value else "关闭")
+    result = get_never_lock()
+    result["ok"] = True
+    unlocked = _get_key() is not None
+    if value and unlocked and not result["persisted"]:
+        result["message"] = "设置已保存，但系统凭据保护不可用，重启后仍需输入主密码"
+    return result
 
 
 # ── 开机自启动 ────────────────────────────────────────────

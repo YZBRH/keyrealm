@@ -259,6 +259,11 @@ export const api = {
   setAutoLock: (minutes) => call('set_auto_lock', minutes),
   touchActivity: () => call('touch_activity'),
 
+  // ── 不锁定 ──────────────────────────────────────────────
+  // 开启后不过期自动锁、重启后自动恢复；手动「立即锁定」仍会清除持久化密钥。
+  getNeverLock: () => call('get_never_lock'),
+  setNeverLock: (enabled) => call('set_never_lock', enabled),
+
   // ── 轻量模式 ────────────────────────────────────────────
   // 开启后最小化到托盘会释放（销毁）界面文档以省内存；再次打开窗口时后端重新加载前端。
   getLightMode: () => call('get_light_mode'),

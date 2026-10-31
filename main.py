@@ -393,6 +393,13 @@ class VaultApi:
     def touch_activity(self):
         return api.touch_activity()
 
+    # ── 不锁定 ────────────────────────────────────────────
+    def get_never_lock(self):
+        return api.get_never_lock()
+
+    def set_never_lock(self, enabled: bool):
+        return api.set_never_lock(enabled)
+
     # ── 轻量模式 ──────────────────────────────────────────
     def get_light_mode(self):
         return api.get_light_mode()
@@ -1068,6 +1075,17 @@ def run_web_mode(host: str = "127.0.0.1", port: int = 8766,
     return 0
 
 
+def _autostart_hidden(argv: Optional[list] = None) -> bool:
+    """开机自启时是否静默驻留托盘（关闭行为必须是「后台运行」）。"""
+    args = sys.argv if argv is None else argv
+    if "--autostart" not in args:
+        return False
+    try:
+        return api.get_close_action().get("action") == "background"
+    except Exception:  # noqa: BLE001 - 读不到设置就按正常显示
+        return False
+
+
 def main():
     global _window, _app_url, tray
 
@@ -1085,6 +1103,29 @@ def main():
 
     log = _start_services("desktop")
 
+    # 旧版本写入的自启条目没有 --autostart；启动时刷新一次，升级后首个开机即可生效。
+    try:
+        autostart.ensure_current()
+    except Exception as exc:  # noqa: BLE001 - 刷新失败不影响本次启动
+        log.debug("刷新开机自启条目失败：%s", exc)
+
+    # 开机自启 + 「关闭主窗口时 = 后台运行」→ 静默驻留托盘，不弹出主窗口。
+    # 源码模式必须显式 --gui；冻结包由启动器透传 --autostart。
+    start_hidden = _autostart_hidden()
+
+    # 先启动托盘再决定是否隐藏：托盘不可用时藏起来就没有入口了。
+    tray.start_tray(
+        show_window_cb=_show_window,
+        lock_vault_cb=_lock_vault,
+        quit_cb=_quit_app,
+        get_status_cb=api.get_tray_status,
+    )
+    if start_hidden and not tray.available():
+        start_hidden = False
+        log.warning("开机自启：系统托盘不可用，改为正常显示主窗口")
+    if start_hidden:
+        log.info("开机自启：按「后台运行」设置静默驻留托盘")
+
     # 创建窗口。窗口入口的 file:// 形式另存一份：轻量模式恢复界面时用它重载（见 _restore_page）。
     _frontend = _get_frontend_path()
     _app_url = _to_url(_frontend)
@@ -1097,19 +1138,12 @@ def main():
         min_size=(900, 600),
         resizable=True,
         confirm_close=False,
+        hidden=start_hidden,
     )
 
     # 注入 window 引用与关闭行为回调到 api 模块
     api.set_window(_window)
     api.set_close_callbacks(quit_cb=_quit_app, hide_cb=_hide_to_tray)
-
-    # 启动托盘
-    tray.start_tray(
-        show_window_cb=_show_window,
-        lock_vault_cb=_lock_vault,
-        quit_cb=_quit_app,
-        get_status_cb=api.get_tray_status,
-    )
 
     # 绑定关闭事件
     _window.events.closing += _on_closing
