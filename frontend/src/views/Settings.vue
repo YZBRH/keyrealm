@@ -1907,14 +1907,19 @@ onMounted(() => refreshAll(false))
 }
 
 .chain-index {
+  flex: none;
   width: 20px;
   height: 20px;
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
   border-radius: 50%;
   background: var(--el-fill-color);
   color: var(--el-text-color-secondary);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .chain-member-name {
