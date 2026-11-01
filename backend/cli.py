@@ -311,7 +311,7 @@ def _display_data(cred: dict, reveal: bool) -> dict:
     if not reveal:
         for key in api._sensitive_keys(cred.get("credential_type") or ""):
             if data.get(key):
-                data[key] = api.mask_secret(str(data[key]))
+                data[key] = api.display_secret(str(data[key]))
     return data
 
 

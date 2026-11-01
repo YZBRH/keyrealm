@@ -477,6 +477,33 @@ async function applySplashAlways(value) {
   }
 }
 
+/* ── 敏感值预览 ───────────────────────────────────── */
+
+const secretPreview = ref(true)
+const secretPreviewSaving = ref(false)
+
+async function loadSecretPreview() {
+  try {
+    const config = await api.getSecretPreview()
+    secretPreview.value = Boolean(config.enabled)
+  } catch (err) {
+    ElMessage.error(err.message || '加载敏感值预览设置失败')
+  }
+}
+
+async function applySecretPreview(value) {
+  secretPreviewSaving.value = true
+  try {
+    await api.setSecretPreview(value)
+    ElMessage.success(value ? '已开启敏感值预览' : '已关闭敏感值预览（统一显示 ******）')
+  } catch (err) {
+    ElMessage.error(err.message || '设置敏感值预览失败')
+    await loadSecretPreview()
+  } finally {
+    secretPreviewSaving.value = false
+  }
+}
+
 /* ── 开机自启动 ────────────────────────────────────── */
 // 状态以**操作系统**的自启条目为准（后端每次现读），前端不做本地记忆，
 // 免得用户手动删掉系统条目后界面还显示"已开启"。
@@ -892,6 +919,7 @@ async function refreshAll(showSpinner = true) {
       loadAutoLock(),
       loadNeverLock(),
       loadLightMode(),
+      loadSecretPreview(),
       loadSplashDisabled(),
       loadAutostart(),
       loadTls(),
@@ -961,6 +989,22 @@ onMounted(() => refreshAll(false))
           :loading="splashAlwaysSaving"
           :disabled="splashDisabled"
           @change="applySplashAlways"
+        />
+      </div>
+
+      <el-divider />
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">展示敏感值预览</div>
+          <div class="setting-desc">
+            在凭据列表、去重结果等处显示脱敏后的部分值；关闭后这些位置统一显示 ******。
+          </div>
+        </div>
+        <el-switch
+          v-model="secretPreview"
+          :loading="secretPreviewSaving"
+          @change="applySecretPreview"
         />
       </div>
     </el-card>

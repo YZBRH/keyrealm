@@ -130,6 +130,7 @@ function createState() {
     neverLock: false,
     mockSshSessions: {},
     lightMode: false,
+    secretPreview: true,
     splashDisabled: false,
     splashAlways: false,
     splashClaimed: false,
@@ -212,6 +213,9 @@ export function createMockApi() {
   const pluginOf = (credentialType) =>
     state.plugins.find((p) => p.credential_type === credentialType)
 
+  /** 界面预览位置的脱敏出口：关闭预览时统一 ******（对齐后端 display_secret）。 */
+  const displaySecret = (value) => (state.secretPreview ? maskSecret(value) : '******')
+
   /** 根据插件 fields_schema 计算敏感字段掩码（模拟后端 data_masked） */
   const maskedOf = (credential) => {
     const plugin = pluginOf(credential.credential_type)
@@ -220,7 +224,7 @@ export function createMockApi() {
     plugin.fields_schema
       .filter((f) => f.sensitive)
       .forEach((f) => {
-        if (credential.secret) masked[f.key] = maskSecret(credential.secret)
+        if (credential.secret) masked[f.key] = displaySecret(credential.secret)
       })
     return masked
   }
@@ -514,7 +518,7 @@ export function createMockApi() {
         groups.push({
           credential_type: ctype,
           plugin_name: plugin ? plugin.name : ctype,
-          match: [{ key: 'api_key', label: 'API Key', masked: maskSecret(items[0].secret) }],
+          match: [{ key: 'api_key', label: 'API Key', masked: displaySecret(items[0].secret) }],
           items: items.map((c) => ({
             id: c.id, name: c.name, credential_type: c.credential_type,
             group_id: c.group_id, group_name: groupName(c.group_id),
@@ -837,6 +841,18 @@ export function createMockApi() {
       await delay(40)
       state.lightMode = Boolean(enabled)
       return { ok: true, enabled: state.lightMode }
+    },
+
+    // ── 敏感值预览 ────────────────────────────────────────
+    async get_secret_preview() {
+      await delay(40)
+      return { enabled: state.secretPreview }
+    },
+
+    async set_secret_preview(enabled) {
+      await delay(40)
+      state.secretPreview = Boolean(enabled)
+      return { ok: true, enabled: state.secretPreview }
     },
 
     // ── 开屏动画 ──────────────────────────────────────────

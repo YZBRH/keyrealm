@@ -417,6 +417,13 @@ class VaultApi:
     def set_light_mode(self, enabled: bool):
         return api.set_light_mode(enabled)
 
+    # ── 敏感值预览 ────────────────────────────────────────
+    def get_secret_preview(self):
+        return api.get_secret_preview()
+
+    def set_secret_preview(self, enabled: bool):
+        return api.set_secret_preview(enabled)
+
     # ── 开屏动画 ──────────────────────────────────────────
     def get_splash_disabled(self):
         return api.get_splash_disabled()

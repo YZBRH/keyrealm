@@ -274,6 +274,11 @@ export const api = {
   getLightMode: () => call('get_light_mode'),
   setLightMode: (enabled) => call('set_light_mode', enabled),
 
+  // ── 敏感值预览 ──────────────────────────────────────────
+  // 关闭后凭据列表 / 去重结果等预览位置统一显示 ******。
+  getSecretPreview: () => call('get_secret_preview'),
+  setSecretPreview: (enabled) => call('set_secret_preview', enabled),
+
   // ── 开屏动画 ────────────────────────────────────────────
   // claimSplash 每个进程只返回一次 show=true（「总是展示」开启时例外）；
   // 禁用 / 总是展示 / 已播放判断都在后端。

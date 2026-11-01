@@ -422,6 +422,41 @@ def change_master_password(old_password: str, new_password: str) -> dict:
     return {"ok": True, "message": "主密码修改成功"}
 
 
+# ── 敏感值预览 ────────────────────────────────────────────
+# 列表 / 去重结果等位置展示脱敏后的部分值。设置键 show_secret_preview 默认开启；
+# 关闭后这些位置统一显示 ******，但日志与备份报告仍走更严格的 mask_secret。
+
+SECRET_PREVIEW_KEY = "show_secret_preview"
+
+
+def read_secret_preview() -> bool:
+    """读「展示敏感值预览」；只有显式存为 "0" 才关闭。"""
+    return (db.get_setting(SECRET_PREVIEW_KEY, "1") or "").strip() != "0"
+
+
+def display_secret(value: str) -> str:
+    """界面预览位置的统一脱敏出口。"""
+    text = str(value or "")
+    if not text:
+        return ""
+    if not read_secret_preview():
+        return "******"
+    return mask_display(text)
+
+
+def get_secret_preview() -> dict:
+    """返回敏感值预览开关（供系统设置展示）。"""
+    return {"enabled": read_secret_preview()}
+
+
+def set_secret_preview(enabled) -> dict:
+    """持久化敏感值预览开关。"""
+    value = bool(enabled)
+    db.set_setting(SECRET_PREVIEW_KEY, "1" if value else "0")
+    _log.info("敏感值预览已%s", "开启" if value else "关闭")
+    return {"ok": True, "enabled": value}
+
+
 # ── Credentials ───────────────────────────────────────────
 
 def list_credentials(
@@ -454,7 +489,7 @@ def _masked_fields(key: bytes, cred: dict, plugin_record: Optional[dict]) -> dic
         data = decrypt_dict(key, cred["data_encrypted"])
     except Exception:
         return {}
-    return {k: mask_display(str(data[k])) for k in sensitive if data.get(k)}
+    return {k: display_secret(str(data[k])) for k in sensitive if data.get(k)}
 
 
 def get_credential(credential_id: int) -> Optional[dict]:
@@ -732,7 +767,7 @@ def find_duplicate_credentials(
         record = plugins.get(ctype) or {}
         label_map = dict(schema_cache.get(ctype) or [])
         match = [
-            {"key": fkey, "label": label_map.get(fkey, fkey), "masked": mask_display(value)}
+            {"key": fkey, "label": label_map.get(fkey, fkey), "masked": display_secret(value)}
             for fkey, value in values
         ]
         items = []
