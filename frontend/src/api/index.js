@@ -189,6 +189,11 @@ export const api = {
   listDraftModels: (credentialType, data = null) => call('list_draft_models', credentialType, data),
   streamCredentialAction: (id, actionId, params, title) =>
     call('stream_credential_action', id, actionId, params, title),
+
+  // ── SSH 控制台（凭据解密在后台完成，前端只拿到会话 ID）──
+  sshOpen: (credentialId) => call('ssh_open', credentialId),
+  sshExec: (sessionId, command) => call('ssh_exec', sessionId, command),
+  sshClose: (sessionId) => call('ssh_close', sessionId),
   batchVerify: (scope = 'all', groupId = null, credentialType = null, credentialIds = null,
     concurrency = null, timeout = null) =>
     call('batch_verify', scope, groupId, credentialType, credentialIds, concurrency, timeout),
@@ -298,6 +303,11 @@ export const api = {
   createProxy: (name, url) => call('create_proxy', name, url),
   updateProxy: (proxyId, name = null, url = null) => call('update_proxy', proxyId, name, url),
   deleteProxy: (proxyId) => call('delete_proxy', proxyId),
+  // 代理链：成员按顺序串联；对其它调用方仍是普通代理条目
+  createProxyChain: (name, memberIds) => call('create_proxy_chain', name, memberIds),
+  updateProxyChain: (chainId, name, memberIds) =>
+    call('update_proxy_chain', chainId, name, memberIds),
+  deleteProxyChain: (chainId) => call('delete_proxy_chain', chainId),
   // proxyId 传 null/0 表示「直连」
   setGlobalProxy: (proxyId = null) => call('set_global_proxy', proxyId),
   // 连通性自检：proxyId 传 null 表示测当前全局生效的那个。

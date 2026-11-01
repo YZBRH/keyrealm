@@ -25,10 +25,12 @@ from . import mcp_server
 from . import plugin_manager
 from . import preset_store
 from . import proxy as proxy_config
+from . import proxy_chain
 from . import proxy_store
 from . import redact
 from . import scheduler
 from . import session_key
+from . import ssh_session
 from . import tasks
 from . import tls_store
 from . import version
@@ -940,6 +942,45 @@ def list_credential_actions(credential_id: int) -> list:
     return plugin_manager.plugin_actions(cred["credential_type"], data)
 
 
+# ── SSH 交互控制台 ────────────────────────────────────────
+# 会话只存在内存中，关闭窗口 / 手动断开 / 空闲超时 / 程序退出时释放。
+# 凭据字段在这里解密后交给 ssh_session，**不经过前端**。
+
+def _ssh_credential(credential_id: int) -> tuple[Optional[dict], str]:
+    if _get_key() is None:
+        return None, "保险库未解锁"
+    cred = get_credential(credential_id)
+    if not cred:
+        return None, "凭据不存在"
+    if cred.get("credential_type") != "remote_ssh":
+        return None, "该凭据不是 SSH 类型"
+    data = cred.get("data") or {}
+    if not data:
+        return None, "无法读取凭据字段"
+    return data, ""
+
+
+def ssh_open(credential_id: int) -> dict:
+    data, error = _ssh_credential(credential_id)
+    if error:
+        return {"ok": False, "error": error}
+    return ssh_session.open_session(credential_id, data)
+
+
+def ssh_exec(session_id: str, command: str) -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    return ssh_session.run_command(str(session_id), str(command or ""))
+
+
+def ssh_close(session_id: str) -> dict:
+    return ssh_session.close_session(str(session_id or ""))
+
+
+def close_ssh_sessions() -> None:
+    ssh_session.close_all()
+
+
 def _credential_secrets(credential_type: str, data: dict) -> list:
     """返回该凭据所有敏感字段的明文值（用于输出净化）。
 
@@ -1758,6 +1799,7 @@ def list_proxies() -> dict:
         "items": proxy_store.list_proxies(),
         "global_id": proxy_store.global_proxy_id(),
         "global_url": proxy_store.global_url() or "",
+        "global_display": proxy_store.global_display(),
     }
 
 
@@ -1788,7 +1830,7 @@ def update_proxy(proxy_id: int, name=None, url=None) -> dict:
 def delete_proxy(proxy_id: int) -> dict:
     result = proxy_store.delete_proxy(proxy_id)
     if not result.get("ok"):
-        return {"ok": False, "message": "代理不存在"}
+        return {"ok": False, "message": result.get("message") or "代理不存在"}
     _apply_global_after_change()
     _log.info("已删除代理 #%s", proxy_id)
     push_event("vault:proxies_changed")
@@ -1816,6 +1858,45 @@ def test_proxy_id(proxy_id=None) -> dict:
     verdict = result.get("verdict", {})
     _log.info("代理测试完成（%s）：%s", result.get("proxy_source", ""), verdict.get("headline", ""))
     return result
+
+
+# ── 代理链 ────────────────────────────────────────────────
+# 成员按顺序串联，由 backend/proxy_chain.py 在本机起 SOCKS5 转发器；对调用方仍是普通代理。
+
+def create_proxy_chain(name: str, member_ids: list) -> dict:
+    members = [str(item) for item in (member_ids or [])]
+    result = proxy_chain.create_chain(name, members)
+    if not result.get("ok"):
+        return result
+    push_event("vault:proxies_changed")
+    return {"ok": True, **list_proxies()}
+
+
+def update_proxy_chain(chain_id: str, name: str, member_ids: list) -> dict:
+    members = [str(item) for item in (member_ids or [])]
+    result = proxy_chain.update_chain(chain_id, name, members)
+    if not result.get("ok"):
+        return result
+    _apply_global_after_change()
+    push_event("vault:proxies_changed")
+    return {"ok": True, **list_proxies()}
+
+
+def delete_proxy_chain(chain_id: str) -> dict:
+    cid = str(chain_id or "")
+    was_global = str(proxy_store.global_proxy_id() or "") == cid
+    result = proxy_chain.delete_chain(cid)
+    if not result.get("ok"):
+        return result
+    if was_global:
+        proxy_store.set_global_proxy(None)
+    _apply_global_after_change()
+    push_event("vault:proxies_changed")
+    return {"ok": True, **list_proxies()}
+
+
+def close_proxy_chains() -> None:
+    proxy_chain.close_all()
 
 
 # ── TLS 版本策略（框架级） ───────────────────────────────────

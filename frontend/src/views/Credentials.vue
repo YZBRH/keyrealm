@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Back, Check, CircleClose, CopyDocument, Delete, 
 
 import CredentialForm from '@/components/CredentialForm.vue'
 import ScopeDefaultsDialog from '@/components/ScopeDefaultsDialog.vue'
+import SshConsole from '@/components/SshConsole.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { useVaultStore } from '@/stores/vault'
 import { STATUS_OPTIONS, formatDateTimeFull, normalizeOptions, visibleFields } from '@/utils/format'
@@ -2675,12 +2676,20 @@ onMounted(async () => {
     <el-dialog
       v-model="actionDialog.visible"
       :title="actionDialog.title"
-      width="640px"
+      :width="actionDialog.kind === 'console' ? 'min(920px, 92vw)' : '640px'"
       :close-on-click-modal="false"
     >
       <div v-if="actionDialog.description" class="action-desc">{{ actionDialog.description }}</div>
 
-      <template v-if="actionDialog.kind === 'chat'">
+      <template v-if="actionDialog.kind === 'console'">
+        <SshConsole
+          v-if="actionDialog.visible"
+          :credential-id="Number(actionDialog.credentialId)"
+          :credential-name="actionDialog.credentialName"
+        />
+      </template>
+
+      <template v-else-if="actionDialog.kind === 'chat'">
         <!-- 「模型」这一行：**操作声明了 model 字段就常驻**，不再取决于当前值是否为空。
              曾用 `model || models.length` 当条件——但本仓库 LLM 插件已不再写死默认模型
              （model 为空串），一旦列表又没拉回来（网络失败 / 插件没实现 list_models），

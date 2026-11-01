@@ -51,7 +51,7 @@ const value = computed({
 })
 
 const globalLabel = computed(() => {
-  const hint = props.inheritHint || proxyStore.globalUrl || '直连'
+  const hint = props.inheritHint || proxyStore.globalDisplay || proxyStore.globalUrl || '直连'
   return `${props.followLabel}（${hint}）`
 })
 </script>

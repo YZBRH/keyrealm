@@ -14,6 +14,7 @@ export const useProxyStore = defineStore('proxy', {
     items: [],
     globalId: null,
     globalUrl: '',
+    globalDisplay: '',
     testing: false,
     testingId: null,      // 正在测哪个代理；null 且 testing=true 表示在测「全局当前生效的」
     result: null,
@@ -25,6 +26,7 @@ export const useProxyStore = defineStore('proxy', {
       this.items = (res && res.items) || []
       this.globalId = (res && res.global_id) ?? null
       this.globalUrl = (res && res.global_url) || ''
+      this.globalDisplay = (res && res.global_display) || this.globalUrl
       return this.items
     },
 
@@ -45,6 +47,27 @@ export const useProxyStore = defineStore('proxy', {
     async remove(id) {
       const res = await api.deleteProxy(id)
       if (res && res.ok === false) throw new Error(res.message || '删除失败')
+      await this.fetch()
+      return res
+    },
+
+    async createChain(name, memberIds) {
+      const res = await api.createProxyChain(name, memberIds)
+      if (res && res.ok === false) throw new Error(res.message || '新增代理链失败')
+      await this.fetch()
+      return res
+    },
+
+    async updateChain(id, name, memberIds) {
+      const res = await api.updateProxyChain(id, name, memberIds)
+      if (res && res.ok === false) throw new Error(res.message || '修改代理链失败')
+      await this.fetch()
+      return res
+    },
+
+    async removeChain(id) {
+      const res = await api.deleteProxyChain(id)
+      if (res && res.ok === false) throw new Error(res.message || '删除代理链失败')
       await this.fetch()
       return res
     },

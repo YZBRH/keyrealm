@@ -719,7 +719,7 @@ def get_display_summary(data):
 | 字段 | 适用 | 说明 |
 |------|------|------|
 | `id` / `name` | 全部 | 标识与显示名（`run_action` 按 id 分发） |
-| `kind` | 全部 | **前端渲染方式：`chat`（对话气泡）/ `form`（动态表单）/ `list`（表格 + 行内按钮）** |
+| `kind` | 全部 | **前端渲染方式：`chat`（对话气泡）/ `form`（动态表单）/ `list`（表格 + 行内按钮）/ `console`（SSH 交互控制台，宿主据凭据 id 建立会话）** |
 | `group` / `order` / `description` | 全部 | 可选。多个操作时弹选择菜单，按 `group` 分组、`order` 排序（小的在前） |
 | `fields` | `form` / `list` | 输入项：`[{key,label,type(text/password/select/textarea/number),default,placeholder,options,required}]`。**`list` 也能带 fields**：点「拉取/刷新」时把表单值作为 `params` 传进 `run_action`。**`required: true` 会在操作表单里渲染红色星号并在提交前校验**（空着点提交会被拦下，`form` 与 `list` 两处同规则） |
 | `submit` | `form` / `list` | 提交/刷新按钮文案（默认「运行」） |

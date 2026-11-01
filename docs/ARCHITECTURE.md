@@ -321,6 +321,12 @@ plugins/
 | 3 | **上层模块预设** | 所属类别的默认设置（scope=`category`） |
 | 4 | **全局** | 「系统设置 → 网络与代理」的默认代理（写进 `settings.global_proxy_id` + 环境变量 `VAULT_PROXY`） |
 
+**代理链**（`backend/proxy_chain.py`）复用同一套 id 解析：链 id 以 `chain_` 开头，定义存
+`settings.proxy_chains`；`proxy_store.get_proxy_url()` 遇到链 id 时在本机起一个 SOCKS5 转发器
+（`127.0.0.1` 随机端口），按成员顺序逐跳完成 HTTP CONNECT / SOCKS4 / SOCKS5 握手，再把
+`socks5://127.0.0.1:<port>` 返回给现有调用方。因此插件、更新器、邮件隧道都不用感知代理链。
+转发器在配置变化 / 删除 / 程序退出时关闭；成员被链引用时禁止删除。
+
 第 1 层里「跟随上层设置」（`_proxy_mode = global` 或缺省）**不表示「用全局」**，而是「本层不指定，
 继续往上找」——所以改了插件/类别的预设，已有凭据会跟着变。**引用的代理被删了也一样往上找**
 （不直接掉到全局，更不报错）。第 2、3 层的合并顺序由 `preset_store.defaults_for()` 保证（插件覆盖类别）。

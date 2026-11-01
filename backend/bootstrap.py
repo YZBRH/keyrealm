@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from . import api, database as db, idle_lock, logger, plugin_manager
-from . import proxy as proxy_config
+from . import proxy_store
 from . import scheduler, tls_store, verify_options, version
 from .paths import app_dir, data_dir, is_frozen
 
@@ -27,7 +27,8 @@ def init_core(mode: str = "desktop", *, full: bool = True, gpu_reason: str = "")
     if persisted in logger.LEVELS:
         logger.set_level(persisted)
 
-    proxy_config.apply_proxy(db.get_setting("verify_proxy", ""))
+    # 全局代理按 id 解析（代理链会在此拉起本地 SOCKS 转发器）；旧版单值设置作为回落。
+    proxy_store.apply_global()
     verify_options.apply_timeout()
     tls_store.apply_global()
 

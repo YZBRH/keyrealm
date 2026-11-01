@@ -349,7 +349,7 @@ def cmd_status(args) -> int:
         "data_dir": str(Path(api.db.DATA_DIR)),
         "plugins": len(plugins),
         "plugins_enabled": sum(1 for p in plugins if p.get("enabled")),
-        "global_proxy": proxies.get("global_url") or None,
+        "global_proxy": proxies.get("global_display") or proxies.get("global_url") or None,
         "tls_version": tls.get("tls_version"),
     }
     human = "\n".join([

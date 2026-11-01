@@ -128,6 +128,7 @@ function createState() {
     closeAction: 'ask',
     autoLockMinutes: 0,
     neverLock: false,
+    mockSshSessions: {},
     lightMode: false,
     splashDisabled: false,
     splashAlways: false,
@@ -140,6 +141,7 @@ function createState() {
       { id: '3f7c1d90b25e4a6c8d0f2b7a91c3e5d4', name: '公司网关', url: 'http://10.0.0.8:7890', scheme: 'http', sort_order: 1, created_at: daysAgo(8) },
     ],
     globalProxyId: 'a1eb5c2ac79c42af96011e770b7d78ca',
+    proxyChains: [],
     logs: [
       { level: 'INFO', text: logLine('INFO', 'main', '应用启动（frozen=False，日志级别=INFO，数据目录=…）', minutesDate(32)) },
       { level: 'DEBUG', text: logLine('DEBUG', 'backend.scheduler', '调度器已启动，加载 2 个计划', minutesDate(32)) },
@@ -178,11 +180,27 @@ export function createMockApi() {
   const proxySnapshot = () => {
     const globalId = state.globalProxyId
     const global = state.proxies.find((p) => p.id === globalId)
+    const chainItems = state.proxyChains.map((c) => {
+      const names = (c.members || []).map((id) => state.proxies.find((p) => p.id === id)?.name || id)
+      return {
+        id: c.id,
+        name: c.name,
+        url: names.join(' → '),
+        scheme: 'chain',
+        kind: 'chain',
+        members: [...(c.members || [])],
+        member_names: names,
+        valid: true,
+        error: '',
+      }
+    })
+    const globalChain = chainItems.find((c) => c.id === globalId)
     return {
       ok: true,
-      items: state.proxies.map((p) => ({ ...p })),
+      items: [...state.proxies.map((p) => ({ ...p, kind: 'proxy' })), ...chainItems],
       global_id: globalId ?? null,
-      global_url: global ? global.url : '',
+      global_url: global ? global.url : (globalChain ? 'socks5://127.0.0.1:0' : ''),
+      global_display: global ? global.url : (globalChain ? globalChain.url : ''),
     }
   }
 
@@ -922,6 +940,10 @@ export function createMockApi() {
 
     async delete_proxy(proxy_id) {
       await delay(60)
+      const users = state.proxyChains.filter((c) => (c.members || []).includes(proxy_id))
+      if (users.length) {
+        return { ok: false, message: `该代理被代理链「${users.map((c) => c.name).join('、')}」引用，请先修改或删除代理链` }
+      }
       const idx = state.proxies.findIndex((p) => p.id === proxy_id)
       if (idx < 0) return { ok: false, message: '代理不存在' }
       state.proxies.splice(idx, 1)
@@ -935,10 +957,52 @@ export function createMockApi() {
       await delay(60)
       // null / 0 / 空串 = 直连（与后端同一套「空值即直连」的判定）
       const direct = proxy_id === null || proxy_id === undefined || proxy_id === '' || proxy_id === 0 || proxy_id === '0'
-      if (!direct && !state.proxies.some((p) => p.id === proxy_id)) {
+      const known = state.proxies.some((p) => p.id === proxy_id)
+        || state.proxyChains.some((c) => c.id === proxy_id)
+      if (!direct && !known) {
         return { ok: false, message: '代理不存在' }
       }
       state.globalProxyId = direct ? null : proxy_id
+      emit('vault:proxies_changed')
+      return proxySnapshot()
+    },
+
+    async create_proxy_chain(name, member_ids) {
+      await delay(60)
+      const members = Array.isArray(member_ids) ? member_ids.map(String) : []
+      if (!String(name || '').trim()) return { ok: false, message: '代理链名称不能为空' }
+      if (members.length < 2) return { ok: false, message: '代理链至少需要 2 个代理' }
+      if (!members.every((id) => state.proxies.some((p) => p.id === id))) {
+        return { ok: false, message: '成员代理不存在' }
+      }
+      state.proxyChains.push({
+        id: `chain_${randomProxyId()}`,
+        name: String(name).trim(),
+        members,
+      })
+      emit('vault:proxies_changed')
+      return proxySnapshot()
+    },
+
+    async update_proxy_chain(chain_id, name, member_ids) {
+      await delay(60)
+      const chain = state.proxyChains.find((c) => c.id === chain_id)
+      if (!chain) return { ok: false, message: '代理链不存在' }
+      const members = Array.isArray(member_ids) ? member_ids.map(String) : []
+      if (!String(name || '').trim()) return { ok: false, message: '代理链名称不能为空' }
+      if (members.length < 2) return { ok: false, message: '代理链至少需要 2 个代理' }
+      chain.name = String(name).trim()
+      chain.members = members
+      emit('vault:proxies_changed')
+      return proxySnapshot()
+    },
+
+    async delete_proxy_chain(chain_id) {
+      await delay(60)
+      const index = state.proxyChains.findIndex((c) => c.id === chain_id)
+      if (index < 0) return { ok: false, message: '代理链不存在' }
+      state.proxyChains.splice(index, 1)
+      if (state.globalProxyId === chain_id) state.globalProxyId = null
       emit('vault:proxies_changed')
       return proxySnapshot()
     },
@@ -1048,6 +1112,40 @@ export function createMockApi() {
         index += 1
       }, 70)
       return { ok: true, stream_id: streamId }
+    },
+
+    // ── SSH 控制台（Mock：本地模拟回显，不建立真实连接）──
+    async ssh_open(credentialId) {
+      requireUnlocked()
+      const id = `mock-ssh-${Date.now()}`
+      state.mockSshSessions[id] = { cwd: '~' }
+      return {
+        ok: true,
+        session_id: id,
+        summary: 'mock@example.com',
+        mode: 'shell',
+        host_key: 'SHA256:mock',
+        banner: 'Mock SSH 会话',
+      }
+    },
+
+    async ssh_exec(sessionId, command) {
+      requireUnlocked()
+      const session = state.mockSshSessions[sessionId]
+      if (!session) return { ok: false, error: '会话不存在或已断开', closed: true }
+      const cmd = String(command || '').trim()
+      if (cmd.startsWith('cd ')) session.cwd = cmd.slice(3).trim() || '~'
+      return {
+        ok: true,
+        output: `（Mock）已执行：${cmd}`,
+        cwd: session.cwd,
+        exit_code: 0,
+      }
+    },
+
+    async ssh_close(sessionId) {
+      delete state.mockSshSessions[sessionId]
+      return { ok: true }
     },
 
     // ── 备份 / 恢复 ────────────────────────────────────────

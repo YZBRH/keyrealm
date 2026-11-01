@@ -167,6 +167,102 @@ async function changeGlobalProxy(value) {
   }
 }
 
+/* ── 代理链 ─────────────────────────────────────────── */
+const chainDialog = ref(false)
+const chainSaving = ref(false)
+const chainForm = reactive({ id: null, name: '', members: [] })
+const chainMemberToAdd = ref('')
+const baseProxies = computed(() => proxyStore.items.filter((item) => item.kind !== 'chain'))
+const availableChainMembers = computed(() => baseProxies.value.filter(
+  (item) => !chainForm.members.includes(item.id),
+))
+
+function openCreateChain() {
+  chainForm.id = null
+  chainForm.name = ''
+  chainForm.members = []
+  chainMemberToAdd.value = ''
+  chainDialog.value = true
+}
+
+function openEditChain(item) {
+  chainForm.id = item.id
+  chainForm.name = item.name || ''
+  chainForm.members = Array.isArray(item.members) ? [...item.members] : []
+  chainMemberToAdd.value = ''
+  chainDialog.value = true
+}
+
+function chainMemberName(id) {
+  const found = proxyStore.items.find((item) => item.id === id)
+  return found ? found.name : id
+}
+
+function addChainMember() {
+  const id = chainMemberToAdd.value
+  if (!id || chainForm.members.includes(id)) return
+  chainForm.members.push(id)
+  chainMemberToAdd.value = ''
+}
+
+function moveChainMember(index, step) {
+  const next = index + step
+  if (next < 0 || next >= chainForm.members.length) return
+  const list = [...chainForm.members]
+  ;[list[index], list[next]] = [list[next], list[index]]
+  chainForm.members = list
+}
+
+function removeChainMember(index) {
+  chainForm.members.splice(index, 1)
+}
+
+async function saveChain() {
+  const name = chainForm.name.trim()
+  if (!name) {
+    ElMessage.warning('请填写代理链名称')
+    return
+  }
+  if (chainForm.members.length < 2) {
+    ElMessage.warning('代理链至少需要 2 个代理')
+    return
+  }
+  chainSaving.value = true
+  try {
+    if (chainForm.id) {
+      await proxyStore.updateChain(chainForm.id, name, chainForm.members)
+      ElMessage.success('代理链已更新')
+    } else {
+      await proxyStore.createChain(name, chainForm.members)
+      ElMessage.success('代理链已新增')
+    }
+    proxyStore.clearResult()
+    chainDialog.value = false
+  } catch (err) {
+    ElMessage.error(err.message || '保存失败')
+  } finally {
+    chainSaving.value = false
+  }
+}
+
+async function removeChain(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除代理链「${item.name}」吗？引用它的凭据会自动回退到全局代理。`,
+      '删除代理链',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await proxyStore.removeChain(item.id)
+    ElMessage.success('代理链已删除')
+  } catch (err) {
+    ElMessage.error(err.message || '删除失败')
+  }
+}
+
 /* 代理连通性测试：后端同一批探测分别走直连与代理，前端只负责展示对照结果 */
 async function runProxyTest(id = null) {
   try {
@@ -1012,7 +1108,7 @@ onMounted(() => refreshAll(false))
         <div class="setting-info">
           <div class="setting-label">默认代理</div>
           <div class="setting-desc">
-            凭据未单独指定时用它。支持 http / https / socks5；环境变量 VAULT_PROXY 优先。
+            凭据未单独指定时用它。支持 http / https / socks5，或已定义的代理链；环境变量 VAULT_PROXY 优先。
           </div>
         </div>
         <div class="inline-row">
@@ -1052,7 +1148,10 @@ onMounted(() => refreshAll(false))
 
       <div class="proxy-list-head">
         <span class="setting-label">代理列表</span>
-        <el-button size="small" :icon="Plus" @click="openCreateProxy">新增代理</el-button>
+        <div class="inline-row">
+          <el-button size="small" :icon="Plus" @click="openCreateProxy">新增代理</el-button>
+          <el-button size="small" :icon="Connection" @click="openCreateChain">新增代理链</el-button>
+        </div>
       </div>
 
       <el-empty
@@ -1063,6 +1162,7 @@ onMounted(() => refreshAll(false))
       <div v-else class="proxy-list">
         <div v-for="item in proxyStore.items" :key="item.id" class="proxy-item">
           <el-tag v-if="proxyStore.globalId === item.id" size="small" type="success" effect="plain">默认</el-tag>
+          <el-tag v-if="item.kind === 'chain'" size="small" type="warning" effect="plain">链</el-tag>
           <span class="proxy-name">{{ item.name }}</span>
           <code class="mono proxy-url">{{ item.url }}</code>
           <el-button
@@ -1070,8 +1170,18 @@ onMounted(() => refreshAll(false))
             :loading="proxyStore.testing && proxyStore.testingId === item.id"
             @click="runProxyTest(item.id)"
           >测试</el-button>
-          <el-button size="small" :icon="Edit" @click="openEditProxy(item)" />
-          <el-button size="small" type="danger" plain :icon="Delete" @click="removeProxy(item)" />
+          <el-button
+            size="small"
+            :icon="Edit"
+            @click="item.kind === 'chain' ? openEditChain(item) : openEditProxy(item)"
+          />
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            :icon="Delete"
+            @click="item.kind === 'chain' ? removeChain(item) : removeProxy(item)"
+          />
         </div>
       </div>
 
@@ -1416,6 +1526,61 @@ onMounted(() => refreshAll(false))
       </template>
     </el-dialog>
 
+    <!-- 代理链：把已保存的代理按顺序串联 -->
+    <el-dialog
+      v-model="chainDialog"
+      :title="chainForm.id ? '编辑代理链' : '新增代理链'"
+      width="580px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-position="top">
+        <el-form-item label="名称">
+          <el-input v-model="chainForm.name" placeholder="例如：香港 → 内网跳板" clearable />
+        </el-form-item>
+        <el-form-item label="按连接顺序串联">
+          <div class="chain-add">
+            <el-select
+              v-model="chainMemberToAdd"
+              placeholder="选择一个已保存的代理"
+              class="chain-add-select"
+              filterable
+            >
+              <el-option
+                v-for="item in availableChainMembers"
+                :key="item.id"
+                :value="item.id"
+                :label="`${item.name}（${item.url}）`"
+              />
+            </el-select>
+            <el-button :disabled="!chainMemberToAdd" @click="addChainMember">添加</el-button>
+          </div>
+          <div v-if="!chainForm.members.length" class="field-hint">
+            至少添加 2 个代理；请求会按从上到下的顺序逐跳转发。
+          </div>
+          <div v-else class="chain-list">
+            <div v-for="(memberId, index) in chainForm.members" :key="memberId" class="chain-item">
+              <span class="chain-index">{{ index + 1 }}</span>
+              <span class="chain-member-name">{{ chainMemberName(memberId) }}</span>
+              <el-button size="small" :disabled="index === 0" @click="moveChainMember(index, -1)">上移</el-button>
+              <el-button
+                size="small"
+                :disabled="index === chainForm.members.length - 1"
+                @click="moveChainMember(index, 1)"
+              >下移</el-button>
+              <el-button size="small" type="danger" plain @click="removeChainMember(index)">移除</el-button>
+            </div>
+          </div>
+          <div class="field-hint">
+            仅支持 http / socks4 / socks5 代理；HTTPS 代理与嵌套代理链暂不支持。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="chainDialog = false">取消</el-button>
+        <el-button type="primary" :loading="chainSaving" @click="saveChain">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 修改主密码 -->
     <el-dialog v-model="passwordDialog" title="修改主密码" width="480px" :close-on-click-modal="false">
       <el-alert type="warning" :closable="false" show-icon class="mb-12">
@@ -1709,6 +1874,52 @@ onMounted(() => refreshAll(false))
   flex: 1;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-add {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.chain-add-select {
+  flex: 1;
+}
+
+.chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.chain-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+.chain-index {
+  width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+}
+
+.chain-member-name {
+  flex: 1;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

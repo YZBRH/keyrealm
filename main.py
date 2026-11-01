@@ -306,6 +306,16 @@ class VaultApi:
     def stream_credential_action(self, credential_id: int, action_id: str, params=None, title: str = ""):
         return api.stream_credential_action(credential_id, action_id, params, title)
 
+    # ── SSH 控制台 ────────────────────────────────────────
+    def ssh_open(self, credential_id: int):
+        return api.ssh_open(credential_id)
+
+    def ssh_exec(self, session_id: str, command: str):
+        return api.ssh_exec(session_id, command)
+
+    def ssh_close(self, session_id: str):
+        return api.ssh_close(session_id)
+
     # ── 后台任务 ──
     def list_tasks(self):
         return api.list_tasks()
@@ -453,6 +463,16 @@ class VaultApi:
 
     def test_proxy_id(self, proxy_id=None):
         return api.test_proxy_id(proxy_id)
+
+    # ── 代理链 ────────────────────────────────────────────
+    def create_proxy_chain(self, name: str, member_ids: list):
+        return api.create_proxy_chain(name, member_ids)
+
+    def update_proxy_chain(self, chain_id: str, name: str, member_ids: list):
+        return api.update_proxy_chain(chain_id, name, member_ids)
+
+    def delete_proxy_chain(self, chain_id: str):
+        return api.delete_proxy_chain(chain_id)
 
     # ── TLS 版本策略 ──────────────────────────────────────
     def get_tls_options(self):
@@ -619,6 +639,11 @@ def _shutdown_services():
     scheduler.stop_scheduler()
     idle_lock.stop()
     mcp_server.stop_server()
+    try:
+        api.close_ssh_sessions()
+        api.close_proxy_chains()
+    except Exception:  # noqa: BLE001 - 会话 / 转发器清理失败不影响退出
+        pass
     if tray is not None:
         tray.stop_tray()
 

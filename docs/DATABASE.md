@@ -48,6 +48,7 @@ CREATE TABLE settings (
 | `log_level` | 日志级别 | `"INFO"` |
 | `verify_proxy` | **全局代理地址的快照**（由 `global_proxy_id` 解析后写入，供 `VAULT_PROXY` 环境变量那条老通道用） | `"socks5://127.0.0.1:10808"` |
 | `global_proxy_id` | 全局默认代理在 `proxies` 表里的 id（**UUID 字符串**，空 = 直连） | `"a1eb5c2ac79c42af96011e770b7d78ca"` |
+| `proxy_chains` | 代理链定义（JSON 数组：`[{"id":"chain_…","name":"…","members":["代理UUID", …]}]`；成员按顺序串联） | `[]` |
 | `batch_concurrency` | 批量验证并发线程数（1–32，空 = 默认 8） | `"8"` |
 | `verify_timeout` | 验证请求超时秒数（5–300，空 = 默认 20） | `"20"` |
 | `close_action` | 关闭主窗口行为（ask / quit / background） | `"ask"` |

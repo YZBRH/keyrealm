@@ -22,6 +22,7 @@ from typing import Optional, Union
 
 from . import database as db
 from . import proxy as proxy_config
+from . import proxy_chain
 from . import vault_proxy_ctx as ctx
 
 # 凭据 data 里的两个保留键（约定：插件 manifest 的字段 key 不得以 "_" 开头）
@@ -39,10 +40,24 @@ SETTING_LEGACY_URL = "verify_proxy"
 # ── 注册表 CRUD ──────────────────────────────────────────
 
 def list_proxies() -> list[dict]:
-    """列出全部代理（附解析后的 scheme，方便前端展示）。"""
+    """列出全部代理与代理链（附解析后的 scheme，方便前端展示）。"""
     items = db.list_proxies()
     for item in items:
         item["scheme"] = proxy_config.scheme(item.get("url", ""))
+        item["kind"] = "proxy"
+    for chain in proxy_chain.list_chains():
+        items.append({
+            "id": chain["id"],
+            "name": chain.get("name") or "",
+            "url": chain.get("display") or "（成员缺失）",
+            "scheme": "chain",
+            "kind": "chain",
+            "members": chain.get("members") or [],
+            "member_names": chain.get("member_names") or [],
+            "valid": chain.get("valid", True),
+            "error": chain.get("error") or "",
+            "sort_order": 10_000,
+        })
     return items
 
 
@@ -71,7 +86,11 @@ def update_proxy(proxy_id: int, name: Optional[str] = None, url: Optional[str] =
 
 
 def delete_proxy(proxy_id: int) -> dict:
-    """删除代理。引用它的凭据会在下次解析时回退到全局（不报错）。"""
+    """删除代理。被代理链引用的成员拒绝删除；引用它的凭据会在下次解析时回退到全局。"""
+    users = proxy_chain.chains_using(proxy_id)
+    if users:
+        names = "、".join(f"「{name}」" for name in users)
+        return {"ok": False, "message": f"该代理被代理链{names}引用，请先修改或删除代理链"}
     if str(global_proxy_id() or "") == str(proxy_id or ""):
         set_global_proxy(None)
     removed = db.delete_proxy(proxy_id)
@@ -89,6 +108,8 @@ def get_proxy_url(proxy_id) -> Optional[str]:
     pid = str(proxy_id or "").strip()
     if not pid:
         return None
+    if proxy_chain.is_chain_id(pid):
+        return proxy_chain.ensure_url(pid)
     record = db.get_proxy(pid)
     return (record or {}).get("url") or None
 
@@ -98,14 +119,47 @@ def global_proxy_id() -> Optional[str]:
     return db.get_setting(SETTING_GLOBAL_ID, "").strip() or None
 
 
-def global_url() -> Optional[str]:
-    """全局代理地址：优先按 id 取；没有则回落到旧版单值设置。"""
+def describe_id(proxy_id) -> str:
+    """代理 id 的人类可读描述（不启动代理链转发器）。"""
+    pid = str(proxy_id or "").strip()
+    if not pid:
+        return ""
+    if proxy_chain.is_chain_id(pid):
+        chain = proxy_chain.get_chain(pid)
+        if chain:
+            names = []
+            for member in chain.get("members") or []:
+                record = db.get_proxy(str(member)) or {}
+                names.append(str(record.get("name") or record.get("url") or member))
+            return f"代理链 {chain.get('name') or pid}（{' → '.join(names)}）"
+        return "代理链（已失效）"
+    record = db.get_proxy(pid) or {}
+    return str(record.get("url") or "")
+
+
+def global_display() -> str:
+    """全局默认代理的展示文本（代理链显示名称与成员，而不是本地转发端口）。"""
     pid = global_proxy_id()
     if pid is not None:
-        url = get_proxy_url(pid)
-        if url:
-            return url
+        text = describe_id(pid)
+        if text:
+            return text
+    return db.get_setting(SETTING_LEGACY_URL, "").strip() or ""
+
+
+def global_url() -> Optional[str]:
+    """全局代理地址：有 global_proxy_id 时只按 id 解析（失效即直连）；否则回落旧版单值。"""
+    pid = global_proxy_id()
+    if pid is not None:
+        return get_proxy_url(pid)
     return db.get_setting(SETTING_LEGACY_URL, "").strip() or None
+
+
+def apply_global() -> Optional[str]:
+    """把当前全局代理解析并写入环境变量（启动时调用；代理链会拉起本地转发器）。"""
+    url = global_url() or ""
+    proxy_config.apply_proxy(url)
+    return url or None
 
 
 def set_global_proxy(proxy_id: Optional[str]) -> dict:
@@ -166,10 +220,10 @@ def describe_inherited(credential_type: str) -> str:
     if text == MODE_DIRECT:
         return "直连"
     if text == MODE_PROXY:
-        url = get_proxy_url(proxy_id)
-        if url:
-            return url
-    return global_url() or "直连"
+        value = describe_id(proxy_id)
+        if value:
+            return value
+    return global_display() or "直连"
 
 
 def resolve_credential_proxy(data: dict, credential_type: str = "") -> Union[object, str]:

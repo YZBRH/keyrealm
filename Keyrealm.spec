@@ -102,6 +102,10 @@ _COLLECT_PKGS = [
     "certifi",
     "click",
     "cryptography",   # AES-GCM / PBKDF2
+    "paramiko",       # SSH 凭据验证 / 控制台
+    "bcrypt",         # paramiko 的可选依赖（密钥 KDF）
+    "nacl",           # pynacl：Ed25519 私钥
+    "invoke",         # paramiko 的交互辅助
     "pydantic",
     "pydantic_core",
     "annotated_types",

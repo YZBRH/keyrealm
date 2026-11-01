@@ -427,20 +427,22 @@ async function submit() {
             clearable
           />
 
+          <!-- textarea 先于 sensitive 判断：私钥这类「敏感且多行」的字段必须能换行粘贴，
+               不能因为 sensitive=true 被渲染成单行密码框。 -->
+          <el-input
+            v-else-if="field.type === 'textarea'"
+            v-model="form.data[field.key]"
+            type="textarea"
+            :rows="4"
+            :placeholder="field.placeholder || ''"
+          />
+
           <el-input
             v-else-if="field.type === 'password' || field.sensitive"
             v-model="form.data[field.key]"
             type="password"
             show-password
             :placeholder="field.placeholder || '请输入'"
-          />
-
-          <el-input
-            v-else-if="field.type === 'textarea'"
-            v-model="form.data[field.key]"
-            type="textarea"
-            :rows="3"
-            :placeholder="field.placeholder || ''"
           />
 
           <el-select

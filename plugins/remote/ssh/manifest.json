@@ -1,0 +1,117 @@
+{
+  "name": "SSH",
+  "version": "1.0.0",
+  "credential_type": "remote_ssh",
+  "author": "Keyrealm",
+  "description": "管理 SSH 密码或私钥凭据，验证连通性，并提供交互式命令控制台",
+  "icon": "logo.svg",
+  "fields": [
+    {
+      "key": "host",
+      "label": "主机",
+      "type": "text",
+      "required": true,
+      "placeholder": "192.0.2.10 或 example.com"
+    },
+    {
+      "key": "port",
+      "label": "端口",
+      "type": "text",
+      "required": true,
+      "default": "22",
+      "placeholder": "22"
+    },
+    {
+      "key": "username",
+      "label": "用户名",
+      "type": "text",
+      "required": true,
+      "placeholder": "root"
+    },
+    {
+      "key": "auth_type",
+      "label": "认证方式",
+      "type": "select",
+      "required": true,
+      "default": "password",
+      "options": [
+        {
+          "value": "password",
+          "label": "密码"
+        },
+        {
+          "value": "key",
+          "label": "私钥"
+        }
+      ]
+    },
+    {
+      "key": "password",
+      "label": "密码",
+      "type": "password",
+      "sensitive": true,
+      "required": true,
+      "show_if": {
+        "auth_type": "password"
+      },
+      "placeholder": "登录密码"
+    },
+    {
+      "key": "private_key",
+      "label": "私钥",
+      "type": "textarea",
+      "sensitive": true,
+      "required": true,
+      "show_if": {
+        "auth_type": "key"
+      },
+      "placeholder": "-----BEGIN OPENSSH PRIVATE KEY-----",
+      "hint": "支持 OpenSSH / PEM 格式（RSA、Ed25519、ECDSA 等）。"
+    },
+    {
+      "key": "passphrase",
+      "label": "私钥口令",
+      "type": "password",
+      "sensitive": true,
+      "required": false,
+      "show_if": {
+        "auth_type": "key"
+      },
+      "placeholder": "私钥未加密则留空"
+    },
+    {
+      "key": "public_key",
+      "label": "公钥",
+      "type": "textarea",
+      "sensitive": false,
+      "required": false,
+      "show_if": {
+        "auth_type": "key"
+      },
+      "placeholder": "ssh-ed25519 AAAA...（可选，仅保存备查）",
+      "hint": "公钥不参与认证，只保存以便核对 / 复制；认证使用上面的私钥。"
+    },
+    {
+      "key": "verify_host_key",
+      "label": "校验主机密钥",
+      "type": "checkbox",
+      "required": false,
+      "default": false,
+      "hint": "开启后使用系统 known_hosts 严格校验；首次连接的主机不在其中会直接失败。默认关闭并显示服务器指纹。"
+    },
+    {
+      "key": "timeout",
+      "label": "超时（秒）",
+      "type": "text",
+      "required": false,
+      "default": "15",
+      "hint": "连接 / 认证超时。"
+    },
+    {
+      "key": "notes",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}
