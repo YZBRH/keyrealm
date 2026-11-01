@@ -1,8 +1,12 @@
 """SSH 交互会话（paramiko）：为「SSH 控制台」维护短期会话。
 
-- 一个会话 = 一条已认证的 SSH 连接 + 一个交互 shell（服务器不支持 shell 时退化为逐条 exec）。
-- 命令通过唯一标记分隔：``command`` → ``pwd`` → ``END``，据此切出输出与当前目录；
-  不依赖 ``$?`` 等 shell 特有语法，尽量兼容 bash / zsh / fish / sh。
+- 一个会话 = 一条已认证的 SSH 连接 + 一个持久 shell：默认非交互 ``sh -s``（不申请 PTY）；
+  显式开启交互模式时优先 PTY（加载登录 shell 的 rc）；服务器禁止 exec 时自动换另一条路，
+  都不可用则退化为逐条 exec。
+- 连接成功后首先关闭目标端 shell 历史记录，并让命令输出不含提示符 / 输入回显，减少目标侧痕迹。
+- 命令通过唯一标记分隔：``START`` → ``command`` → ``pwd`` → ``RC`` → ``END``，
+  据此切出输出、当前目录与退出码；脚本只用 POSIX 语法（``printf`` / ``pwd`` / ``$?``），
+  兼容 bash / zsh / sh。
 - 会话只存在内存中，关闭窗口 / 手动断开 / 空闲 30 分钟 / 程序退出时关闭。
 - 不向日志写入命令内容或任何凭据字段。
 """
@@ -29,6 +33,15 @@ INIT_TIMEOUT = 10.0
 COMMAND_TIMEOUT = 30.0
 MAX_OUTPUT = 512 * 1024
 RECV_CHUNK = 65536
+
+# 连接成功后首先执行：关闭本次会话的历史记录，减少在目标主机留下的痕迹。
+HISTORY_OFF = (
+    "unset HISTORY HISTFILE HISTSAVE HISTZONE HISTORY HISTLOG; "
+    "export HISTFILE=/dev/null; export HISTSIZE=0; export HISTFILESIZE=0"
+)
+
+# 首选非交互 `sh -s`：不申请 PTY、无提示符、无回显，也不写入 shell 历史。
+PIPE_SHELL = "sh -s"
 
 _ANSI_RE = re.compile(
     r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))"
@@ -66,6 +79,33 @@ def _timeout(data: dict) -> float:
 def _clean(text: str) -> str:
     text = _ANSI_RE.sub("", text)
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+_PROTOCOL_MARKERS = ("__KR_READY_%s", "__KR_START_%s", "__KR_PWD_%s", "__KR_RC_%s", "__KR_END_%s")
+_PROTOCOL_LINES = {"__kr_rc=$?", "pwd 2>/dev/null", "stty -echo 2>/dev/null"}
+
+
+def _strip_protocol_noise(text: str) -> str:
+    """去掉协议脚本自身被 PTY 回显出来的内容（真实输出不受影响）。"""
+    kept = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped in _PROTOCOL_LINES:
+            continue
+        if any(marker in line for marker in _PROTOCOL_MARKERS):
+            continue
+        if "unset HISTORY HISTFILE" in line:
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip("\n")
+
+
+def _strip_pty_echo(text: str, command: str) -> str:
+    """PTY 模式下服务器会回显刚发送的脚本；去掉命令回显与协议行。"""
+    text = text.lstrip("\n")
+    if command and text.startswith(command):
+        text = text[len(command):]
+    return _strip_protocol_noise(text)
 
 
 def _proxy_url(data: dict) -> Optional[str]:
@@ -154,6 +194,8 @@ class _Session:
         self.channel = channel
         self.summary = f"{_text(data, 'username')}@{_text(data, 'host')}"
         self.mode = "shell" if channel is not None else "exec"
+        self.shell_kind = ""          # pipe / pty
+        self.banner = ""
         self.created = time.monotonic()
         self.last_used = self.created
         self.lock = threading.Lock()
@@ -197,23 +239,93 @@ class _Session:
             except (socket.timeout, OSError, EOFError):
                 return
 
-    def _init_shell(self) -> tuple[bool, str]:
-        """初始化交互 shell，返回 ``(是否就绪, 登录横幅)``。"""
-        marker = b"__KR_READY__"
+    def _init_pipe(self) -> bool:
+        """初始化非交互 ``sh -s``，成功返回 True。
+
+        首条命令固定关闭目标侧历史记录；没有 PTY，因此没有提示符与输入回显。
+        """
+        tag = uuid.uuid4().hex[:12]
+        marker = f"__KR_READY_{tag}__"
+        setup = f"{HISTORY_OFF}\nprintf '\\n{marker}\\n'\n"
+        try:
+            self.channel.send(setup.encode("utf-8"))
+        except (OSError, EOFError):
+            return False
+        raw, ok = self._recv_until(marker.encode(), INIT_TIMEOUT)
+        if not ok:
+            return False
+        text = _clean(raw.decode("utf-8", "replace")).replace(marker, "")
+        self.banner = _strip_protocol_noise(text)[:2000]
+        return True
+
+    def _init_shell(self) -> bool:
+        """初始化 PTY 交互 shell（交互模式），成功返回 True。"""
+        tag = uuid.uuid4().hex[:12]
+        marker = f"__KR_READY_{tag}__"
+        # 标记由 printf 在目标端拼出：脚本里只有 %s，即使输入被回显也不会误判就绪。
         setup = (
-            "export PS1='' PS2='' PS3=''; unset PROMPT_COMMAND; "
-            "stty -echo 2>/dev/null; printf '\\n__KR_READY__\\n'\n"
+            f"{HISTORY_OFF}; export PS1='' PS2='' PS3=''; unset PROMPT_COMMAND; "
+            f"stty -echo 2>/dev/null; printf '\\n__KR_READY_%s__\\n' '{tag}'\n"
         )
         try:
             self.channel.send(setup.encode("utf-8"))
         except (OSError, EOFError):
-            return False, ""
-        raw, ok = self._recv_until(marker, INIT_TIMEOUT)
+            return False
+        raw, ok = self._recv_until(marker.encode(), INIT_TIMEOUT)
         text = _clean(raw.decode("utf-8", "replace"))
         if not ok:
-            return False, ""
-        banner = text.split("__KR_READY__", 1)[0].strip("\n")[:2000]
-        return True, banner
+            return False
+        self.banner = _strip_protocol_noise(text.split(marker, 1)[0])[:2000]
+        return True
+
+    def _drop_channel(self) -> None:
+        """放弃当前通道，回到 exec 模式前先关闭它。"""
+        if self.channel is not None:
+            try:
+                self.channel.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self.channel = None
+        self.mode = "exec"
+        self.shell_kind = ""
+
+    def _try_pipe(self) -> bool:
+        """尝试非交互 ``sh -s``（静默模式）。"""
+        try:
+            channel = self.client.get_transport().open_session()
+            channel.set_combine_stderr(True)
+            channel.settimeout(0.2)
+            channel.exec_command(PIPE_SHELL)
+        except Exception:  # noqa: BLE001 - 服务器拒绝 exec
+            return False
+        self.channel = channel
+        self.mode = "shell"
+        self.shell_kind = "pipe"
+        try:
+            ready = self._init_pipe()
+        except Exception:  # noqa: BLE001
+            ready = False
+        if not ready:
+            self._drop_channel()
+        return ready
+
+    def _try_pty(self) -> bool:
+        """尝试 PTY 交互 shell（交互模式；也会加载登录 shell 的 rc）。"""
+        try:
+            channel = self.client.invoke_shell(width=120, height=40, term="xterm-256color")
+            channel.settimeout(0.2)
+        except Exception:  # noqa: BLE001 - 服务器禁用 shell
+            return False
+        self.channel = channel
+        self.mode = "shell"
+        self.shell_kind = "pty"
+        try:
+            ready = self._init_shell()
+        except Exception:  # noqa: BLE001
+            ready = False
+        if not ready:
+            self._drop_channel()
+        return ready
 
     # ── 对外操作 ──────────────────────────────────────
 
@@ -231,13 +343,21 @@ class _Session:
 
     def _run_shell(self, command: str) -> dict:
         tag = uuid.uuid4().hex[:12]
+        start_mark = f"__KR_START_{tag}__"
         pwd_mark = f"__KR_PWD_{tag}__"
+        rc_mark = f"__KR_RC_{tag}_"
         end_mark = f"__KR_END_{tag}__"
+        # 标记由目标端 printf 拼出（脚本里只有 %s 占位）。这样即使 PTY 回显了
+        # 刚发送的脚本，回显文本也不会被当成真实标记，输出不会被提前截断。
+        # START 标记之后才是真正的命令输出，可据此丢掉提示符 / 命令回显。
         script = (
+            f"printf '\\n__KR_START_%s__\\n' '{tag}'\n"
             f"{command}\n"
-            f"printf '\\n{pwd_mark}\\n'\n"
+            "__kr_rc=$?\n"
+            f"printf '\\n__KR_PWD_%s__\\n' '{tag}'\n"
             "pwd 2>/dev/null\n"
-            f"printf '{end_mark}\\n'\n"
+            f"printf '__KR_RC_%s_%s__\\n' '{tag}' \"$__kr_rc\"\n"
+            f"printf '__KR_END_%s__\\n' '{tag}'\n"
         )
         try:
             self.channel.send(script.encode("utf-8"))
@@ -260,17 +380,25 @@ class _Session:
                 ("命令超时或会话已断开" + (f"\n已收到部分输出：\n{partial[-4000:]}" if partial else ""))
             )
 
+        # 只保留 START 之后的真实输出（PTY 回显与提示符都在它之前 / 已过滤）。
+        if start_mark in text:
+            text = text.split(start_mark, 1)[1]
         before, _, rest = text.partition(pwd_mark)
-        cwd_block, _, _ = rest.partition(end_mark)
+        cwd_block, _, tail = rest.partition(rc_mark)
+        rc_text, _, _ = tail.partition("__")
+        exit_code = int(rc_text) if rc_text.isdigit() else None
         cwd = ""
-        for line in reversed(cwd_block.strip("\n").splitlines()):
+        for line in reversed(_strip_protocol_noise(cwd_block).strip("\n").splitlines()):
             if line.strip():
                 cwd = line.strip()
                 break
-        output = before.strip("\n")
+        output = before
+        if self.shell_kind == "pty":
+            output = _strip_pty_echo(output, command)
+        output = output.strip("\n")
         if len(output) > MAX_OUTPUT:
             output = output[:MAX_OUTPUT] + "\n…（输出过长已截断）"
-        return {"ok": True, "output": output, "cwd": cwd, "exit_code": None}
+        return {"ok": True, "output": output, "cwd": cwd, "exit_code": exit_code}
 
     def _run_exec(self, command: str) -> dict:
         """服务器不支持交互 shell（常见于 Windows）时逐条执行，不保留 cwd / 环境。"""
@@ -339,8 +467,12 @@ def _close_many(sessions: list[_Session]) -> None:
             pass
 
 
-def open_session(credential_id: int, data: dict) -> dict:
-    """建立连接与会话；返回前端需要的摘要信息。"""
+def open_session(credential_id: int, data: dict, interactive: bool = False) -> dict:
+    """建立连接与会话；返回前端需要的摘要信息。
+
+    ``interactive=True`` 时优先申请 PTY（加载登录 shell 的 rc、满足需要 TTY 的程序），
+    否则优先使用不申请 PTY 的静默 ``sh -s`` 会话。
+    """
     try:
         import paramiko  # noqa: PLC0415
     except ImportError:
@@ -404,29 +536,20 @@ def open_session(credential_id: int, data: dict) -> dict:
         return {"ok": False, "error": f"连接失败：{exc}"}
 
     fingerprint = _fingerprint(client)
-    channel = None
-    banner = ""
-    try:
-        channel = client.invoke_shell(width=120, height=40, term="xterm-256color")
-        channel.settimeout(0.2)
-    except Exception:  # noqa: BLE001 - 服务器禁用 shell：退化为逐条 exec
-        channel = None
-
     session_id = uuid.uuid4().hex
-    session = _Session(session_id, client, channel, data)
-    if channel is not None:
-        try:
-            ready, banner = session._init_shell()
-        except Exception:  # noqa: BLE001 - 初始化失败也允许 exec 模式
-            ready, banner = False, ""
-        if not ready:
-            # 没拿到 READY（Windows / 非 POSIX shell）：关闭 shell，改走 exec
-            try:
-                channel.close()
-            except Exception:  # noqa: BLE001
-                pass
-            session.channel = None
-            session.mode = "exec"
+    session = _Session(session_id, client, None, data)
+
+    # 静默模式优先非交互 `sh -s`（无 PTY、无提示符/回显）；交互模式优先 PTY，
+    # 以加载登录 shell 的 rc 并满足需要 TTY 的程序。另一条路径作为退路。
+    if interactive:
+        ready = session._try_pty() or session._try_pipe()
+    else:
+        ready = session._try_pipe() or session._try_pty()
+    if not ready:
+        session.mode = "exec"
+        session.shell_kind = ""
+
+    banner = session.banner
 
     with _sessions_lock:
         stale = _prune_locked()
@@ -436,12 +559,16 @@ def open_session(credential_id: int, data: dict) -> dict:
             stale.append(oldest)
         _sessions[session_id] = session
     _close_many(stale)
-    _log.info("SSH 会话已建立：%s:%s（模式=%s）", host, port, session.mode)
+    _log.info("SSH 会话已建立：%s:%s（模式=%s%s）", host, port, session.mode,
+              f"/{session.shell_kind}" if session.shell_kind else "")
     return {
         "ok": True,
         "session_id": session_id,
         "summary": session.summary,
         "mode": session.mode,
+        "shell_kind": session.shell_kind,
+        "interactive": session.shell_kind == "pty",
+        "history_off": session.shell_kind in ("pipe", "pty"),
         "host_key": fingerprint,
         "banner": banner,
         "credential_id": credential_id,

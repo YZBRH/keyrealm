@@ -521,7 +521,7 @@ App.vue
 | `chat` | 对话气泡；模型下拉**常驻一个「获取/刷新模型列表」按钮** |
 | `form` | 动态表单 + `<pre>` 文本输出；`write: true` 时提交前二次确认 |
 | `list` | **表格 + 行内按钮 + 下钻**：工具栏有面包屑与「返回」「刷新」，行内按钮由 `row_actions` 声明 |
-| `console` | SSH 交互控制台（`components/SshConsole.vue`）：打开即连接，按 Enter 执行命令，关闭弹窗自动断开 |
+| `console` | SSH 交互控制台（`components/SshConsole.vue`）：打开即连接，按 Enter 执行命令，关闭弹窗自动断开；默认使用非交互 `sh` 静默会话并自动关闭目标端历史记录，输出不含提示符 / 回显；可切换「交互模式（PTY）」申请伪终端，切换后自动重连 |
 
 > **带进度的操作**（action 声明 `progress: true`，如 OSS 下载 / 前缀打包）：表单弹窗改走
 > `api.streamCredentialAction`，后端在下载过程中推 `vault:action_stream` 的

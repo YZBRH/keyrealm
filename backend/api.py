@@ -961,11 +961,11 @@ def _ssh_credential(credential_id: int) -> tuple[Optional[dict], str]:
     return data, ""
 
 
-def ssh_open(credential_id: int) -> dict:
+def ssh_open(credential_id: int, interactive: bool = False) -> dict:
     data, error = _ssh_credential(credential_id)
     if error:
         return {"ok": False, "error": error}
-    return ssh_session.open_session(credential_id, data)
+    return ssh_session.open_session(credential_id, data, interactive=bool(interactive))
 
 
 def ssh_exec(session_id: str, command: str) -> dict:

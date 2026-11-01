@@ -191,7 +191,7 @@ export const api = {
     call('stream_credential_action', id, actionId, params, title),
 
   // ── SSH 控制台（凭据解密在后台完成，前端只拿到会话 ID）──
-  sshOpen: (credentialId) => call('ssh_open', credentialId),
+  sshOpen: (credentialId, interactive = false) => call('ssh_open', credentialId, interactive),
   sshExec: (sessionId, command) => call('ssh_exec', sessionId, command),
   sshClose: (sessionId) => call('ssh_close', sessionId),
   batchVerify: (scope = 'all', groupId = null, credentialType = null, credentialIds = null,

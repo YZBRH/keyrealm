@@ -1115,7 +1115,7 @@ export function createMockApi() {
     },
 
     // ── SSH 控制台（Mock：本地模拟回显，不建立真实连接）──
-    async ssh_open(credentialId) {
+    async ssh_open(credentialId, interactive = false) {
       requireUnlocked()
       const id = `mock-ssh-${Date.now()}`
       state.mockSshSessions[id] = { cwd: '~' }
@@ -1124,6 +1124,9 @@ export function createMockApi() {
         session_id: id,
         summary: 'mock@example.com',
         mode: 'shell',
+        shell_kind: interactive ? 'pty' : 'pipe',
+        interactive: !!interactive,
+        history_off: true,
         host_key: 'SHA256:mock',
         banner: 'Mock SSH 会话',
       }

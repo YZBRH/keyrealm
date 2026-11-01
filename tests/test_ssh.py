@@ -36,7 +36,7 @@ plugin = _load_plugin()
 
 # ── 最小 SSH 服务器 ────────────────────────────────────────
 
-def _make_server_class(password: str):
+def _make_server_class(password: str, state: dict):
     import paramiko
 
     class MockServer(paramiko.ServerInterface):
@@ -61,6 +61,12 @@ def _make_server_class(password: str):
         def check_channel_shell_request(self, channel):
             return True
 
+        def check_channel_exec_request(self, channel, command):
+            state["exec_command"] = (
+                command.decode("utf-8", "replace") if isinstance(command, bytes) else str(command)
+            )
+            return True
+
         def check_channel_pty_request(self, channel, term, width, height,
                                       pixelwidth, pixelheight, modes):
             return True
@@ -78,8 +84,8 @@ def _start_mock_server(password="testpass"):
     listener.settimeout(15)
     port = listener.getsockname()[1]
     host_key = paramiko.RSAKey.generate(2048)
-    state = {"transport": None, "channel": None, "stop": False}
-    server_cls = _make_server_class(password)
+    state = {"transport": None, "channel": None, "stop": False, "received": b"", "exec_command": ""}
+    server_cls = _make_server_class(password, state)
 
     def serve():
         try:
@@ -99,15 +105,27 @@ def _start_mock_server(password="testpass"):
                     break
                 if not data:
                     break
-                if b"__KR_READY__" in data:
-                    channel.send(b"\n__KR_READY__\n")
+                state["received"] += data
+                ready = re.search(rb"__KR_READY_([0-9a-f]+)__", data)
+                if ready:
+                    channel.send(b"\n__KR_READY_" + ready.group(1) + b"__\n")
                     continue
-                match = re.search(rb"__KR_END_([0-9a-f]+)__", data)
-                if match:
+                if b"__KR_READY_%s__" in data:
+                    tag_match = re.search(rb"'([0-9a-f]{12})'", data)
+                    if tag_match:
+                        channel.send(b"\n__KR_READY_" + tag_match.group(1) + b"__\n")
+                    continue
+                if b"__KR_PWD_%s__" in data:
+                    match = re.search(rb"'([0-9a-f]{12})'", data)
+                    if not match:
+                        continue
                     tag = match.group(1)
+                    rc = b"1" if b"false" in data else b"0"
                     channel.send(
+                        b"__KR_START_" + tag + b"__\n"
                         b"mock-output\n"
                         b"__KR_PWD_" + tag + b"__\n/tmp\n"
+                        b"__KR_RC_" + tag + b"_" + rc + b"__\n"
                         b"__KR_END_" + tag + b"__\n"
                     )
         except Exception:  # noqa: BLE001 - 测试服务器失败不阻塞用例
@@ -126,7 +144,7 @@ def _start_mock_server(password="testpass"):
                 pass
         thread.join(timeout=3)
 
-    return port, stop
+    return port, stop, state
 
 
 def _data(port, password="testpass"):
@@ -176,18 +194,28 @@ def test_actions_declares_console():
 # ── 会话层 ────────────────────────────────────────────────
 
 def test_shell_session_round_trip():
-    port, stop = _start_mock_server()
+    port, stop, state = _start_mock_server()
     try:
         opened = ssh_session.open_session(1, _data(port))
         assert opened.get("ok") is True, opened
         sid = opened["session_id"]
         assert opened["mode"] == "shell"
+        assert opened["shell_kind"] == "pipe"
+        assert opened["history_off"] is True
         assert opened["host_key"].startswith("SHA256:")
+        # 首条命令必须是关闭目标端历史记录的那条
+        assert state["exec_command"] == ssh_session.PIPE_SHELL
+        assert ssh_session.HISTORY_OFF.encode() in state["received"]
 
         result = ssh_session.run_command(sid, "echo hi")
         assert result.get("ok") is True, result
         assert "mock-output" in result["output"]
         assert result["cwd"] == "/tmp"
+        assert result["exit_code"] == 0
+
+        failed = ssh_session.run_command(sid, "false")
+        assert failed.get("ok") is True, failed
+        assert failed["exit_code"] == 1
 
         assert ssh_session.close_session(sid)["ok"] is True
         missing = ssh_session.run_command(sid, "echo hi")
@@ -196,8 +224,30 @@ def test_shell_session_round_trip():
         stop()
 
 
+def test_interactive_session_prefers_pty():
+    port, stop, state = _start_mock_server()
+    try:
+        opened = ssh_session.open_session(1, _data(port), interactive=True)
+        assert opened.get("ok") is True, opened
+        assert opened["mode"] == "shell"
+        assert opened["shell_kind"] == "pty"
+        assert opened["interactive"] is True
+        assert opened["history_off"] is True
+        # 交互模式直接开 shell，不应再走 exec 通道
+        assert state["exec_command"] == ""
+        assert ssh_session.HISTORY_OFF.encode() in state["received"]
+
+        result = ssh_session.run_command(opened["session_id"], "echo hi")
+        assert result.get("ok") is True, result
+        assert "mock-output" in result["output"]
+        assert result["cwd"] == "/tmp"
+        ssh_session.close_session(opened["session_id"])
+    finally:
+        stop()
+
+
 def test_wrong_password_reports_error():
-    port, stop = _start_mock_server(password="testpass")
+    port, stop, _state = _start_mock_server(password="testpass")
     try:
         opened = ssh_session.open_session(1, _data(port, password="wrong"))
         assert opened.get("ok") is False
@@ -220,7 +270,7 @@ def test_private_key_auth_and_passphrase():
     }
     assert plugin.validate({**base, "port": "22", "private_key": raw.getvalue()}) == []
 
-    port, stop = _start_mock_server()
+    port, stop, state = _start_mock_server()
     try:
         opened = ssh_session.open_session(
             1, {**base, "port": str(port), "private_key": raw.getvalue()}
@@ -230,7 +280,7 @@ def test_private_key_auth_and_passphrase():
     finally:
         stop()
 
-    port, stop = _start_mock_server()
+    port, stop, state = _start_mock_server()
     try:
         encrypted_opened = ssh_session.open_session(
             1, {

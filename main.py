@@ -307,8 +307,8 @@ class VaultApi:
         return api.stream_credential_action(credential_id, action_id, params, title)
 
     # ── SSH 控制台 ────────────────────────────────────────
-    def ssh_open(self, credential_id: int):
-        return api.ssh_open(credential_id)
+    def ssh_open(self, credential_id: int, interactive: bool = False):
+        return api.ssh_open(credential_id, interactive=interactive)
 
     def ssh_exec(self, session_id: str, command: str):
         return api.ssh_exec(session_id, command)

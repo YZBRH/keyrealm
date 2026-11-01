@@ -22,11 +22,63 @@ const history = ref([])
 const historyIndex = ref(-1)
 const termEl = ref(null)
 const inputEl = ref(null)
+const copied = ref(false)
+
+const INTERACTIVE_KEY = 'vault.ssh.interactive'
+const interactive = ref((() => {
+  try { return localStorage.getItem(INTERACTIVE_KEY) === '1' } catch { return false }
+})())
 
 const prompt = computed(() => {
   const base = summary.value || props.credentialName || 'ssh'
   const path = displayPath(cwd.value)
   return mode.value === 'shell' ? `${base}:${path}$ ` : `${base}$ `
+})
+
+// ── 终端高亮：命令回显、应用提示、错误 / 警告关键字 ──────────
+const ERROR_WORDS = 'error|failed|failure|denied|refused|not found|no such file|permission denied|timed out|timeout|invalid|fatal|panic|exception|错误|失败|拒绝|无法|超时'
+const WARN_WORDS = 'warning|warn|deprecated|警告|注意'
+const HL_SPLIT = new RegExp(`(${ERROR_WORDS}|${WARN_WORDS})`, 'gi')
+const ERROR_TEST = new RegExp(`^(?:${ERROR_WORDS})$`, 'i')
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function highlightLine(text, commandBase) {
+  let lineClass = ''
+  if (text.startsWith('# ')) lineClass = 'hl-meta'
+  else if (text.startsWith('[错误]') || text.startsWith('[退出码')) lineClass = 'hl-error'
+  else if (commandBase && (text.startsWith(`${commandBase}:`) || text.startsWith(`${commandBase}$`))) {
+    lineClass = 'hl-cmd'
+  }
+  if (lineClass === 'hl-cmd') {
+    return `<span class="hl-cmd">${escapeHtml(text)}</span>`
+  }
+
+  const parts = []
+  let last = 0
+  for (const match of text.matchAll(HL_SPLIT)) {
+    if (match.index > last) parts.push(escapeHtml(text.slice(last, match.index)))
+    const token = match[0]
+    const pieceClass = ERROR_TEST.test(token) ? 'hl-err-piece' : 'hl-warn-piece'
+    parts.push(`<span class="${pieceClass}">${escapeHtml(token)}</span>`)
+    last = match.index + token.length
+  }
+  if (last < text.length) parts.push(escapeHtml(text.slice(last)))
+  const body = parts.join('')
+  return lineClass ? `<span class="${lineClass}">${body}</span>` : body
+}
+
+const highlighted = computed(() => {
+  return screen.value
+    .split('\n')
+    .map((line) => highlightLine(line, summary.value))
+    .join('\n')
 })
 
 function displayPath(path) {
@@ -79,7 +131,7 @@ async function connect() {
   screen.value = ''
   cwd.value = ''
   try {
-    const res = await api.sshOpen(props.credentialId)
+    const res = await api.sshOpen(props.credentialId, interactive.value)
     if (!res || res.ok === false) {
       error.value = (res && res.error) || '连接失败'
       appendLine(`[错误] ${error.value}`)
@@ -90,6 +142,12 @@ async function connect() {
     mode.value = res.mode || 'shell'
     connected.value = true
     appendLine(`# 已连接 ${summary.value}`)
+    if (res.shell_kind === 'pty') {
+      appendLine('# 交互模式：已申请 PTY，使用登录 shell 环境')
+    } else if (interactive.value) {
+      appendLine('# PTY 不可用，已回退静默会话')
+    }
+    if (res.history_off) appendLine('# 已在目标端临时关闭命令历史（HISTFILE=/dev/null）')
     if (res.host_key) appendLine(`# 主机密钥 ${res.host_key}`)
     if (res.banner) appendLine(res.banner)
     if (mode.value !== 'shell') {
@@ -146,6 +204,34 @@ function clearScreen() {
   if (connected.value) appendLine('# 已清屏')
 }
 
+async function copyScreen() {
+  if (!screen.value) return
+  try {
+    await navigator.clipboard.writeText(screen.value)
+  } catch {
+    // WebView 未授权剪贴板时退回 execCommand
+    const ta = document.createElement('textarea')
+    ta.value = screen.value
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand('copy')
+    } finally {
+      document.body.removeChild(ta)
+    }
+  }
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 1500)
+}
+
+function onInteractiveChange(value) {
+  try { localStorage.setItem(INTERACTIVE_KEY, value ? '1' : '0') } catch { /* 仅本次会话生效 */ }
+  // 会话建立后模式不可切换，已连接时直接按新偏好重连。
+  if (connected.value) connect()
+}
+
 function onHistory(step) {
   if (!history.value.length) return
   if (historyIndex.value < 0) historyIndex.value = history.value.length
@@ -168,12 +254,27 @@ defineExpose({ connect })
         <span v-if="summary" class="ssh-target">{{ summary }}</span>
       </span>
       <span class="spacer" />
+      <el-tooltip
+        placement="top"
+        content="申请伪终端：加载登录 shell 环境，部分程序需要 TTY；关闭则使用静默 sh 会话。切换后会重新连接。"
+      >
+        <span class="ssh-mode">
+          <span class="ssh-mode-label">交互模式（PTY）</span>
+          <el-switch
+            v-model="interactive"
+            size="small"
+            :disabled="busy || connecting"
+            @change="onInteractiveChange"
+          />
+        </span>
+      </el-tooltip>
+      <el-button size="small" :disabled="!screen" @click="copyScreen">{{ copied ? '已复制' : '复制' }}</el-button>
       <el-button size="small" :disabled="!connected || busy" @click="clearScreen">清屏</el-button>
       <el-button v-if="connected" size="small" :disabled="busy" @click="closeSession">断开</el-button>
       <el-button v-else size="small" type="primary" :loading="connecting" @click="connect">连接</el-button>
     </div>
 
-    <pre ref="termEl" class="ssh-term">{{ screen }}</pre>
+    <pre ref="termEl" class="ssh-term" v-html="highlighted"></pre>
 
     <div class="ssh-input-row">
       <span class="ssh-prompt">{{ connected ? prompt : '$' }}</span>
@@ -205,9 +306,20 @@ defineExpose({ connect })
 .ssh-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   font-size: 12px;
   color: var(--v-text-2);
+}
+.ssh-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ssh-mode-label {
+  font-size: 12px;
+  color: var(--v-text-3);
+  white-space: nowrap;
 }
 .ssh-status {
   display: inline-flex;
@@ -252,7 +364,15 @@ defineExpose({ connect })
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
+.ssh-term :deep(.hl-cmd) { color: #a3e635; }
+.ssh-term :deep(.hl-meta) { color: #7dd3fc; }
+.ssh-term :deep(.hl-error) { color: #f87171; }
+.ssh-term :deep(.hl-err-piece) { color: #f87171; font-weight: 600; }
+.ssh-term :deep(.hl-warn-piece) { color: #fbbf24; }
 .ssh-input-row {
   display: flex;
   align-items: center;
