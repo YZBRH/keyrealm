@@ -108,7 +108,7 @@
       "type": "checkbox",
       "required": false,
       "default": false,
-      "hint": "开启后使用系统 known_hosts 严格校验；首次连接的主机不在其中会直接失败。默认关闭并显示服务器指纹。"
+      "hint": "开启后使用系统 known_hosts 严格校验；首次连接的主机不在其中会直接失败。默认关闭；控制台连接后会显示服务器指纹。"
     },
     {
       "key": "timeout",
