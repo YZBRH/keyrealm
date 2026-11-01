@@ -1125,6 +1125,7 @@ const ACCOUNT_INFO_LABELS = {
   email: '邮箱',
   login: '账号',
   username: '账号',
+  user: '登录用户',
   name: '名称',
   first_name: '名称',
   scopes: '权限',
@@ -1176,7 +1177,7 @@ const ACCOUNT_INFO_LABELS = {
 // 除余额/使用率/组织外，其余字段的展示顺序（只定顺序，不再限制条数）
 const ACCOUNT_INFO_PRIORITY = [
   'domain_count', 'workspace_count', 'model_count',
-  'login', 'username', 'name', 'email',
+  'login', 'username', 'user', 'name', 'email',
   'account_id', 'user_id', 'totalEq', 'channel_id', 'server',
 ]
 

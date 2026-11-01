@@ -294,6 +294,81 @@ def test_private_key_auth_and_passphrase():
         stop()
 
 
+def test_publickey_silent_query_is_default():
+    import paramiko
+
+    key = paramiko.RSAKey.generate(2048)
+    raw = io.StringIO()
+    key.write_private_key(raw)
+
+    port, stop, _state = _start_mock_server()
+    original = plugin._connect
+
+    def _unexpected_full_auth(_data):
+        raise AssertionError("静默校验不应回退完整认证")
+
+    plugin._connect = _unexpected_full_auth
+    try:
+        result = plugin.verify({
+            "host": "127.0.0.1", "port": str(port), "username": "test",
+            "auth_type": "key", "private_key": raw.getvalue(), "timeout": "5",
+        })
+    finally:
+        plugin._connect = original
+        stop()
+    assert result.status == "valid", result
+    assert "静默校验" in result.message
+    assert set(result.account_info) == {"user", "server"}
+    assert result.account_info["user"] == "test"
+    assert result.account_info["server"].startswith("SSH-2.0-")
+
+
+def test_publickey_silent_query_rejects_unknown_user():
+    import paramiko
+
+    key = paramiko.RSAKey.generate(2048)
+    raw = io.StringIO()
+    key.write_private_key(raw)
+
+    port, stop, _state = _start_mock_server()
+    try:
+        result = plugin.verify({
+            "host": "127.0.0.1", "port": str(port), "username": "deny",
+            "auth_type": "key", "private_key": raw.getvalue(), "timeout": "5",
+        })
+    finally:
+        stop()
+    assert result.status == "invalid", result
+    assert "公钥未被服务器接受" in result.message
+
+
+def test_publickey_full_auth_when_silent_disabled():
+    import paramiko
+
+    key = paramiko.RSAKey.generate(2048)
+    raw = io.StringIO()
+    key.write_private_key(raw)
+
+    port, stop, _state = _start_mock_server()
+    original = plugin._verify_publickey_query
+
+    def _unexpected_query(_data):
+        raise AssertionError("关闭静默校验后不应发起 PK_OK 查询")
+
+    plugin._verify_publickey_query = _unexpected_query
+    try:
+        result = plugin.verify({
+            "host": "127.0.0.1", "port": str(port), "username": "test",
+            "auth_type": "key", "private_key": raw.getvalue(), "timeout": "5",
+            "silent_key_check": False,
+        })
+    finally:
+        plugin._verify_publickey_query = original
+        stop()
+    assert result.status == "valid", result
+    assert "静默校验" not in result.message
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = failed = 0

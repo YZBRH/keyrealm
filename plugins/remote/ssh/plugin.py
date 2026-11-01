@@ -1,12 +1,16 @@
 """SSH 凭据：连接验证 + 交互式控制台入口。
 
-认证支持密码与私钥（可选私钥口令）。验证只做 TCP/SSH 握手与认证，不执行远端命令；
-控制台由 ``backend/ssh_session.py`` 提供（插件只负责声明操作，避免插件越过 SDK 边界）。
+认证支持密码与私钥（可选私钥口令）。私钥验证默认使用 PK_OK 查询（不完成登录，
+通常不产生 Accepted 记录），服务器不支持时可回退完整认证；验证只做 TCP/SSH 握手与认证，
+不执行远端命令。控制台由 ``backend/ssh_session.py`` 提供（插件只负责声明操作，避免插件越过 SDK 边界）。
 """
 from __future__ import annotations
 
 import io
+import os
 import socket
+import threading
+import time
 
 from backend.plugin_sdk import VerifyResult, guarded, log, mask_secret, proxy as sdk_proxy
 
@@ -66,6 +70,10 @@ def _load_key(data: dict):
 def _fingerprint(client) -> str:
     transport = client.get_transport()
     key = transport.get_remote_server_key() if transport else None
+    return _fingerprint_key(key)
+
+
+def _fingerprint_key(key) -> str:
     if key is None:
         return ""
     import base64
@@ -73,6 +81,12 @@ def _fingerprint(client) -> str:
 
     digest = hashlib.sha256(key.asbytes()).digest()
     return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _silent_key_check(data: dict) -> bool:
+    """未显式关闭时默认启用（兼容旧凭据没有该字段的情况）。"""
+    value = (data or {}).get("silent_key_check")
+    return True if value is None else _truthy(value)
 
 
 def _proxy_socket(host: str, port: int, timeout: float):
@@ -152,6 +166,192 @@ def _connect(data: dict):
     return client, _fingerprint(client)
 
 
+def _known_hosts_paths() -> list[str]:
+    return [
+        os.path.expanduser("~/.ssh/known_hosts"),
+        "/etc/ssh/ssh_known_hosts",
+        "/etc/ssh/known_hosts",
+    ]
+
+
+def _check_host_key(transport, host: str, port: int) -> None:
+    """查询模式下复刻 SSHClient 的 known_hosts 校验（仅 verify_host_key 开启时）。"""
+    import paramiko
+
+    keys = paramiko.HostKeys()
+    for path in _known_hosts_paths():
+        try:
+            keys.load(path)
+        except (IOError, OSError):
+            continue
+    name = host if port == 22 else f"[{host}]:{port}"
+    server_key = transport.get_remote_server_key()
+    record = keys.lookup(name) or {}
+    if any(item.asbytes() == server_key.asbytes() for item in record.values()):
+        return
+    if not record:
+        raise paramiko.SSHException(f"主机 {name} 不在 known_hosts 中，已拒绝连接")
+    raise paramiko.BadHostKeyException(host, server_key, next(iter(record.values())))
+
+
+def _ensure_auth_service(transport, timeout: float) -> None:
+    """请求 ssh-userauth 服务并等待接受（带超时，避免服务端直接断开时卡死）。"""
+    import paramiko
+    from paramiko.common import cMSG_SERVICE_REQUEST
+    from paramiko.message import Message
+
+    if transport._service_userauth_accepted:
+        transport.auth_handler = transport.get_auth_handler()
+        return
+    message = Message()
+    message.add_byte(cMSG_SERVICE_REQUEST)
+    message.add_string("ssh-userauth")
+    with transport.lock:
+        transport._send_message(message)
+    deadline = time.monotonic() + timeout
+    while not transport._service_userauth_accepted:
+        if not transport.is_active():
+            raise paramiko.SSHException("SSH 认证服务不可用")
+        if time.monotonic() >= deadline:
+            raise paramiko.SSHException("等待 SSH 认证服务超时")
+        time.sleep(0.05)
+    transport.auth_handler = transport.get_auth_handler()
+
+
+def _pk_ok_query(transport, username: str, key, timeout: float):
+    """发送不带签名的 publickey 请求，返回 True / False / None（无法判定）。"""
+    from paramiko.auth_handler import AuthOnlyHandler
+    from paramiko.common import MSG_USERAUTH_PK_OK, cMSG_USERAUTH_REQUEST
+    from paramiko.message import Message
+    from paramiko.ssh_exception import AuthenticationException
+
+    class _QueryHandler(AuthOnlyHandler):
+        def __init__(self, owner):
+            super().__init__(owner)
+            self.answered = False
+            self.pk_ok = False
+
+        @property
+        def _client_handler_table(self):
+            table = super()._client_handler_table.copy()
+            table[MSG_USERAUTH_PK_OK] = self._parse_pk_ok
+            return table
+
+        def _parse_pk_ok(self, message):
+            self.pk_ok = True
+            self.answered = True
+            if self.auth_event is not None:
+                self.auth_event.set()
+
+        def _parse_userauth_failure(self, message):
+            self.answered = True
+            super()._parse_userauth_failure(message)
+
+        def _parse_userauth_success(self, message):
+            self.pk_ok = True
+            self.answered = True
+            super()._parse_userauth_success(message)
+
+    _ensure_auth_service(transport, timeout)
+    handler = _QueryHandler(transport)
+    transport.auth_handler = handler
+    key_type, bits = handler._get_key_type_and_bits(key)
+    algorithm = handler._finalize_pubkey_algorithm(key_type)
+
+    request = Message()
+    request.add_byte(cMSG_USERAUTH_REQUEST)
+    request.add_string(username)
+    request.add_string("ssh-connection")
+    request.add_string("publickey")
+    request.add_boolean(False)  # 不带签名：仅询问该公钥是否被接受
+    request.add_string(algorithm)
+    request.add_string(bits)
+
+    handler.auth_method = "publickey"
+    handler.username = username
+    # 先建事件再发送，避免服务器应答过快时事件尚未创建。
+    handler.auth_event = threading.Event()
+    with transport.lock:
+        transport._send_message(request)
+
+    try:
+        handler.wait_for_response(handler.auth_event)
+    except AuthenticationException:
+        # PK_OK 不是完整认证，wait_for_response 会抛异常；结果看 handler 标志。
+        pass
+    except Exception:  # noqa: BLE001 - 协议不兼容时交由调用方回退
+        return None
+
+    if handler.pk_ok:
+        return True
+    if handler.answered:
+        return False
+    return None
+
+
+def _verify_publickey_query(data: dict):
+    """静默校验公钥：只做 PK_OK 查询，不完成登录。
+
+    返回 ``VerifyResult``；``None`` 表示查询不可判定，调用方回退完整认证。
+    """
+    try:
+        import paramiko
+        from paramiko.transport import ServiceRequestingTransport
+    except ImportError:
+        return None
+
+    host = _text(data, "host")
+    port = _port(data)
+    username = _text(data, "username")
+    timeout = _timeout(data)
+    try:
+        key = _load_key(data)
+    except ValueError as exc:
+        return VerifyResult(status="invalid", message=str(exc))
+
+    sock = None
+    transport = None
+    try:
+        sock = _proxy_socket(host, port, timeout)
+        if sock is None:
+            sock = socket.create_connection((host, port), timeout=timeout)
+        transport = ServiceRequestingTransport(sock)
+        transport.banner_timeout = timeout
+        transport.auth_timeout = timeout
+        transport.start_client(timeout=timeout)
+        if _truthy(data.get("verify_host_key")):
+            _check_host_key(transport, host, port)
+        server = transport.remote_version or ""
+        outcome = _pk_ok_query(transport, username, key, timeout)
+    except paramiko.BadHostKeyException:
+        return VerifyResult(status="invalid", message="主机密钥与 known_hosts 不一致，已拒绝连接")
+    except (paramiko.SSHException, socket.timeout, OSError):
+        return None
+    except Exception:  # noqa: BLE001 - 查询只是可选优化
+        return None
+    finally:
+        if transport is not None:
+            try:
+                transport.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    if outcome is None:
+        return None
+    if not outcome:
+        return VerifyResult(status="invalid", message="公钥未被服务器接受")
+    return VerifyResult(
+        status="valid",
+        message=f"公钥已被服务器接受（静默校验，未完成登录；{server or 'SSH'}）",
+        account_info={"user": username, "server": server},
+    )
+
+
 def validate(data):
     data = data or {}
     errors = []
@@ -196,10 +396,19 @@ def verify(data):
     host = _text(data, "host")
     port = _port(data)
     username = _text(data, "username")
+    auth_type = (_text(data, "auth_type") or "password").lower()
+
+    # 私钥默认走 PK_OK 静默校验：只确认公钥是否被接受，不产生登录会话。
+    # 服务器不支持查询 / 结果不可判定时回退到完整认证。
+    if auth_type == "key" and _silent_key_check(data):
+        silent = _verify_publickey_query(data)
+        if silent is not None:
+            return silent
+
     try:
         import paramiko  # noqa: PLC0415
 
-        client, fingerprint = _connect(data)
+        client, _ = _connect(data)
     except ImportError:
         return VerifyResult(status="error", message="SSH 组件未安装（缺少 paramiko）")
     except paramiko.AuthenticationException:
@@ -221,13 +430,7 @@ def verify(data):
         return VerifyResult(
             status="valid",
             message=f"连接成功（{server or 'SSH'}）",
-            account_info={
-                "host": host,
-                "port": port,
-                "user": username,
-                "server": server,
-                "host_key": fingerprint,
-            },
+            account_info={"user": username, "server": server},
         )
 
 

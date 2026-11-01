@@ -92,6 +92,17 @@
       "hint": "公钥不参与认证，只保存以便核对 / 复制；认证使用上面的私钥。"
     },
     {
+      "key": "silent_key_check",
+      "label": "静默校验（公钥查询）",
+      "type": "checkbox",
+      "required": false,
+      "default": true,
+      "show_if": {
+        "auth_type": "key"
+      },
+      "hint": "只发送公钥查询（PK_OK），不完成登录，通常不会产生 Accepted 登录日志；服务器不支持查询时自动回退正常认证。"
+    },
+    {
       "key": "verify_host_key",
       "label": "校验主机密钥",
       "type": "checkbox",
