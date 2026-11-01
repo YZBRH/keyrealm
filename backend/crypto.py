@@ -93,3 +93,15 @@ def mask_secret(value: str) -> str:
     if len(value) <= 10:
         return value[:2] + "…"
     return f"{value[:6]}…{value[-4:]}"
+
+
+def mask_display(value: str) -> str:
+    """界面展示用掩码：长度 <= 10 只显示前 4 位；更长的与 ``mask_secret`` 一致。
+
+    与 ``mask_secret`` 分开，避免为了界面预览把日志里的短凭据也暴露得更多。
+    """
+    if not value:
+        return ""
+    if len(value) <= 10:
+        return value[:4] + "…"
+    return mask_secret(value)

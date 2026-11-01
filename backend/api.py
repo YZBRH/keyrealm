@@ -47,6 +47,7 @@ from .crypto import (
     generate_salt,
     generate_token,
     hash_token,
+    mask_display,
     mask_secret,
 )
 
@@ -453,7 +454,7 @@ def _masked_fields(key: bytes, cred: dict, plugin_record: Optional[dict]) -> dic
         data = decrypt_dict(key, cred["data_encrypted"])
     except Exception:
         return {}
-    return {k: mask_secret(str(data[k])) for k in sensitive if data.get(k)}
+    return {k: mask_display(str(data[k])) for k in sensitive if data.get(k)}
 
 
 def get_credential(credential_id: int) -> Optional[dict]:
@@ -731,7 +732,7 @@ def find_duplicate_credentials(
         record = plugins.get(ctype) or {}
         label_map = dict(schema_cache.get(ctype) or [])
         match = [
-            {"key": fkey, "label": label_map.get(fkey, fkey), "masked": mask_secret(value)}
+            {"key": fkey, "label": label_map.get(fkey, fkey), "masked": mask_display(value)}
             for fkey, value in values
         ]
         items = []
