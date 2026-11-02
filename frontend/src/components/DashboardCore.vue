@@ -76,6 +76,19 @@ function animateRate(target) {
 watch(() => Number(props.health && props.health.rate) || 0, (value) => animateRate(value),
   { immediate: true })
 
+/**
+ * 展示用百分比：未全部有效时封顶 99%。
+ * 282/283 = 99.65%，四舍五入会显示成 100%，看起来像「全部正常」——这里只在 valid === total
+ * 时才允许出现 100%。
+ */
+const percent = computed(() => {
+  const total = Number(props.health && props.health.total) || 0
+  const valid = Number(props.health && props.health.valid) || 0
+  if (!total) return 0
+  const rounded = Math.round(rate.value * 100)
+  return valid >= total ? Math.min(100, rounded) : Math.min(99, rounded)
+})
+
 // ── Canvas 轨道粒子 ───────────────────────────────────────
 let ctx = null
 let raf = 0
@@ -233,7 +246,7 @@ onBeforeUnmount(() => {
     <canvas ref="canvasRef" class="dash-core-particles" aria-hidden="true" />
 
     <svg class="dash-core-svg" :viewBox="`0 0 ${VIEW} ${VIEW}`" role="img"
-      :aria-label="`健康度 ${Math.round(((props.health && props.health.rate) || 0) * 100)}%，` +
+      :aria-label="`健康度 ${percent}%，` +
         `有效 ${props.health && props.health.valid || 0} / ${props.health && props.health.total || 0}`">
       <!-- 刻度环 -->
       <g class="core-ticks">
@@ -270,7 +283,7 @@ onBeforeUnmount(() => {
 
       <text class="core-label" :x="VIEW / 2" y="144" text-anchor="middle">VAULT HEALTH</text>
       <text class="core-rate" :x="VIEW / 2" y="204" text-anchor="middle">
-        {{ Math.round(rate * 100) }}<tspan class="core-rate-unit">%</tspan>
+        {{ percent }}<tspan class="core-rate-unit">%</tspan>
       </text>
       <text class="core-sub" :x="VIEW / 2" y="236" text-anchor="middle">
         {{ props.health && props.health.valid || 0 }} / {{ total }} 有效
