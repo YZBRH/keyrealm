@@ -44,13 +44,13 @@ const editSaving = ref(false)
 const deletingPath = ref('')
 const ctxMenu = ref({ visible: false, x: 0, y: 0, row: null })
 
-// ── 右键子功能栏：文件下载 / 目录打开，以及两者的删除 ──────────
+// ── 右键子功能栏：打开 / 下载 / 重命名 / 删除 ──────────────────
 
 function openContextMenu(row, column, event) {
   if (!row) return
   event.preventDefault()
   const width = 150
-  const height = 96
+  const height = 132
   ctxMenu.value = {
     visible: true,
     x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
@@ -73,6 +73,12 @@ function ctxDownload() {
   const row = ctxMenu.value.row
   closeContextMenu()
   if (row && !row.is_dir) download(row)
+}
+
+function ctxRename() {
+  const row = ctxMenu.value.row
+  closeContextMenu()
+  if (row) renameEntry(row)
 }
 
 function ctxDelete() {
@@ -277,6 +283,75 @@ async function deleteEntry(row) {
   }
 }
 
+function validateEntryName(value) {
+  const text = String(value || '').trim()
+  if (!text) return '名称不能为空'
+  if (text === '.' || text === '..') return '名称不合法'
+  if (/[/\\\x00]/.test(text)) return '名称不能包含 / 或 \\'
+  if (text.length > 255) return '名称过长'
+  return true
+}
+
+async function createEntry(isDir) {
+  if (!sessionId.value) return
+  let name = ''
+  try {
+    const res = await ElMessageBox.prompt(
+      isDir ? '请输入文件夹名称' : '请输入文件名',
+      isDir ? '新建文件夹' : '新建文件',
+      {
+        confirmButtonText: '创建',
+        cancelButtonText: '取消',
+        inputPlaceholder: isDir ? '例如：logs' : '例如：notes.txt',
+        inputValidator: validateEntryName,
+      },
+    )
+    name = String(res.value || '').trim()
+  } catch {
+    return
+  }
+  try {
+    const res = await api.sshFilesCreate(sessionId.value, path.value, name, isDir)
+    if (!res || res.ok === false) {
+      ElMessage.error((res && res.error) || '创建失败')
+      return
+    }
+    ElMessage.success(`已创建 ${name}`)
+    await load(path.value)
+  } catch (err) {
+    ElMessage.error(err.message || '创建失败')
+  }
+}
+
+async function renameEntry(row) {
+  if (!sessionId.value || !row || !row.path) return
+  let name = ''
+  try {
+    const res = await ElMessageBox.prompt('请输入新的名称', `重命名 ${row.name}`, {
+      confirmButtonText: '重命名',
+      cancelButtonText: '取消',
+      inputValue: row.name,
+      inputValidator: validateEntryName,
+    })
+    name = String(res.value || '').trim()
+  } catch {
+    return
+  }
+  if (name === row.name) return
+  try {
+    const res = await api.sshFilesRename(sessionId.value, row.path, name)
+    if (!res || res.ok === false) {
+      ElMessage.error((res && res.error) || '重命名失败')
+      return
+    }
+    ElMessage.success(`已重命名为 ${name}`)
+    if (preview.value.path === row.path) closePreview()
+    await load(path.value)
+  } catch (err) {
+    ElMessage.error(err.message || '重命名失败')
+  }
+}
+
 async function openPreview(row, startEditing = false) {
   if (!sessionId.value) return
   editing.value = false
@@ -448,8 +523,17 @@ defineExpose({ open })
         上传
       </el-button>
       <input ref="fileInput" type="file" class="sf-file-input" @change="onFileChange" />
+      <el-dropdown :disabled="!sessionId" @command="(cmd) => createEntry(cmd === 'dir')">
+        <el-button size="small" :disabled="!sessionId">新建 ▾</el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="file">新建文件</el-dropdown-item>
+            <el-dropdown-item command="dir">新建文件夹</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <span class="sf-meta">{{ summary }}</span>
-      <span class="sf-tip">右键唤出菜单：打开 / 下载 / 删除</span>
+      <span class="sf-tip">右键唤出菜单：打开 / 下载 / 重命名 / 删除</span>
     </div>
 
     <div v-if="error" class="sf-error">
@@ -524,6 +608,7 @@ defineExpose({ open })
               size="small"
               @click="startEdit"
             >编辑</el-button>
+            <el-button size="small" @click="renameEntry(preview)">重命名</el-button>
             <el-button size="small" type="primary" @click="download(preview)">下载</el-button>
             <el-button
               size="small"
@@ -547,6 +632,7 @@ defineExpose({ open })
       >
         <button v-if="ctxMenu.row && ctxMenu.row.is_dir" class="sf-ctx-item" @click="ctxOpen">打开</button>
         <button v-else class="sf-ctx-item" @click="ctxDownload">下载</button>
+        <button class="sf-ctx-item" @click="ctxRename">重命名</button>
         <button class="sf-ctx-item is-danger" @click="ctxDelete">删除</button>
       </div>
     </teleport>

@@ -8,7 +8,7 @@
 
 本插件提供的操作（``actions``，**全部未签名**）：
 
-- ``list_objects``     匿名列举（能列出来即「公开可列」；行内可下载）
+- ``list_objects``     匿名列举（能列出来即「公开可列」；右键可下载）
 - ``download_object``  匿名读取单个对象（能读到即「公开可读」）
 - ``download_prefix``  把某前缀下的对象匿名打包下载
 - ``write_probe``      **匿名写探测**：PUT 一个临时探针对象后立即 DELETE，判定「公开可写」
@@ -194,7 +194,7 @@ def actions(data: dict) -> list[dict]:
         {
             "id": "list_objects", "name": "匿名浏览对象", "kind": "list",
             "group": "匿名读取", "order": 10,
-            "description": "未签名 ListObjectsV2（能列出来即该桶「公开可列」；行内可下载）",
+            "description": "未签名 ListObjectsV2（能列出来即该桶「公开可列」；右键可下载）",
             "columns": _OBJECT_COLUMNS, "fields": [_PREFIX_FIELD],
             "row_actions": _OBJECT_ROW_ACTIONS, "submit": "查询",
             "empty_text": f"该前缀下暂无对象（或该桶不允许匿名列举，仅显示前 {_PAGE_SIZE} 个）",
@@ -374,7 +374,7 @@ def _run_download_prefix(base: str, data: dict, params: dict, progress=None, sho
         return {"ok": False, "error": "未指定保存路径"}
     prefix = str(params.get("prefix") or "").strip()
     if not prefix:
-        return {"ok": False, "error": "缺少前缀（文件夹），请在表单里填写，或从对象列表行内点击「打包下载」进入"}
+        return {"ok": False, "error": "缺少前缀（文件夹），请在表单里填写，或从对象列表右键点击「打包下载」进入"}
 
     with _client(data) as client:
         objects, over_limit, list_error = _list_all_objects(client, base, prefix, MAX_ZIP_OBJECTS)

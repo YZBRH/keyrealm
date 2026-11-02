@@ -89,6 +89,16 @@ def _clean(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _entry_name(name: str) -> str:
+    """校验「新建 / 重命名」用的单层名称：不允许路径分隔符与占位名。"""
+    text = str(name or "").strip()
+    if not text or text in (".", "..") or "/" in text or "\\" in text or "\x00" in text:
+        raise SshError("名称不合法")
+    if len(text) > 255:
+        raise SshError("名称过长")
+    return text
+
+
 def _looks_text(data: bytes, mime: str) -> bool:
     """粗判文件能否按文本预览（NUL 字节直接判二进制；UTF-8 / GB18030 可解码则算文本）。"""
     if mime:
@@ -625,8 +635,7 @@ class _Session:
         return {"ok": True, "path": target, "deleted": deleted}
 
     def write_file(self, directory: str, name: str, content_b64: str) -> dict:
-        if not name or "/" in name or "\\" in name or name in (".", ".."):
-            raise SshError("文件名不合法")
+        name = _entry_name(name)
         try:
             data = base64.b64decode(content_b64 or "", validate=True)
         except Exception as exc:  # noqa: BLE001 - binascii.Error
@@ -644,6 +653,83 @@ class _Session:
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "无法写入文件") from exc
         return {"ok": True, "path": target, "size": len(data)}
+
+    def create_entry(self, directory: str, name: str, is_dir: bool = False,
+                     content_b64: str = "") -> dict:
+        """在当前目录新建空文件或目录；已存在同名条目时拒绝（不覆盖）。"""
+        name = _entry_name(name)
+        data = b""
+        if not is_dir:
+            try:
+                data = base64.b64decode(content_b64 or "", validate=True)
+            except Exception as exc:  # noqa: BLE001 - binascii.Error
+                raise SshError("内容不是合法的 base64") from exc
+            if len(data) > SFTP_UPLOAD_MAX:
+                raise SshError(f"文件超过上传上限（{SFTP_UPLOAD_MAX // 1024 // 1024}MB）")
+        with self.sftp_lock:
+            self.last_used = time.monotonic()
+            sftp = self._sftp_locked()
+            try:
+                base = sftp.normalize(directory or ".")
+                target = posixpath.join(base, name)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "路径不合法") from exc
+            try:
+                sftp.lstat(target)
+            except (IOError, OSError):
+                pass
+            else:
+                raise SshError("同名文件或目录已存在")
+            try:
+                if is_dir:
+                    sftp.mkdir(target)
+                else:
+                    with sftp.open(target, "wb") as handle:
+                        handle.write(data)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or ("无法创建目录" if is_dir else "无法创建文件")) from exc
+        return {"ok": True, "path": target, "name": name, "is_dir": bool(is_dir),
+                "size": len(data)}
+
+    def rename_path(self, path: str, new_name: str) -> dict:
+        """同目录内重命名文件或目录（不允许跨目录移动）。"""
+        raw = str(path or "").strip()
+        if not raw or raw in (".", ".."):
+            raise SshError("缺少有效路径")
+        name = _entry_name(new_name)
+        with self.sftp_lock:
+            self.last_used = time.monotonic()
+            sftp = self._sftp_locked()
+            try:
+                target = sftp.normalize(raw)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "路径不合法") from exc
+            if not target or target == "/" or target in (".", ".."):
+                raise SshError("不能重命名根目录")
+            parent = posixpath.dirname(target.rstrip("/")) or "/"
+            destination = posixpath.join(parent, name)
+            if destination == target:
+                return {"ok": True, "path": target, "old_path": target,
+                        "name": name, "renamed": False}
+            try:
+                sftp.lstat(target)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "路径不存在") from exc
+            try:
+                sftp.lstat(destination)
+            except (IOError, OSError):
+                pass
+            else:
+                raise SshError("同目录下已存在同名文件或目录")
+            try:
+                try:
+                    sftp.posix_rename(target, destination)
+                except (AttributeError, IOError, OSError):
+                    sftp.rename(target, destination)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "重命名失败") from exc
+        return {"ok": True, "path": destination, "old_path": target,
+                "name": name, "renamed": True}
 
     def close(self) -> None:
         if self.closed:
@@ -924,6 +1010,37 @@ def delete_path(session_id: str, remote_path: str, recursive: bool = False) -> d
         return {"ok": False, "error": denied}
     try:
         return session.delete_path(remote_path, bool(recursive))
+    except SshError as exc:
+        if session.closed:
+            _drop(session_id)
+        return {"ok": False, "error": str(exc)}
+
+
+def create_entry(session_id: str, directory: str, name: str, is_dir: bool = False,
+                 content_b64: str = "") -> dict:
+    session = _get(session_id)
+    if session is None:
+        return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
+    try:
+        return session.create_entry(directory, name, bool(is_dir), content_b64)
+    except SshError as exc:
+        if session.closed:
+            _drop(session_id)
+        return {"ok": False, "error": str(exc)}
+
+
+def rename_path(session_id: str, remote_path: str, new_name: str) -> dict:
+    session = _get(session_id)
+    if session is None:
+        return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
+    try:
+        return session.rename_path(remote_path, new_name)
     except SshError as exc:
         if session.closed:
             _drop(session_id)

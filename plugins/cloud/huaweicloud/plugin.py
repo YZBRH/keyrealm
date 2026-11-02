@@ -797,7 +797,7 @@ _REGION_ROW_ACTION = {
     "params": {"region": "$row.RegionId"},
 }
 
-# 桶列表行内「预览」下钻到 list_objects
+# 桶列表双击「预览」下钻到 list_objects
 _OBJECT_ROW_ACTION = {
     "id": "list_objects",
     "label": "预览",
@@ -900,7 +900,7 @@ def actions(data: dict) -> list[dict]:
             "kind": "list",
             "group": "存储",
             "order": 40,
-            "description": "OBS ListObjectsV2（按 / 分隔列出文件与文件夹；行内可「进入」「下载」「打包下载」）",
+            "description": "OBS ListObjectsV2（按 / 分隔列出文件与文件夹；双击可「进入」，右键可「下载」「打包下载」）",
             "columns": _OBJECT_COLUMNS,
             "fields": [
                 _BUCKET_FIELD,
@@ -918,7 +918,7 @@ def actions(data: dict) -> list[dict]:
             "kind": "form",
             "group": "存储",
             "order": 50,
-            "description": "下载桶内的单个对象（弹「另存为」；从对象列表行内「下载」进入会自动填好）",
+            "description": "下载桶内的单个对象（弹「另存为」；从对象列表右键「下载」进入会自动填好）",
             "fields": [
                 _BUCKET_FIELD,
                 {"key": "key", "label": "对象 Key", "required": True, "placeholder": "如 dir/file.txt"},
@@ -1378,7 +1378,7 @@ def _obs_target(params: dict, default_region: str) -> tuple[dict, str]:
     """
     bucket = _field(params, "bucket")
     if not bucket:
-        return {}, "缺少桶名，请在表单里填写，或从「对象存储桶列表」行内点击「预览」进入"
+        return {}, "缺少桶名，请在表单里填写，或从「对象存储桶列表」双击「预览」进入"
     if not _BUCKET_RE.match(bucket):
         return {}, "桶名不合法"
     region = _field(params, "region").lower() or default_region
@@ -1596,7 +1596,7 @@ def _run_download_prefix(
         return {"ok": False, "error": "未指定保存路径"}
     prefix = _field(params, "prefix")
     if not prefix:
-        return {"ok": False, "error": "缺少前缀（文件夹），请在表单里填写，或从对象列表行内点击「打包下载」进入"}
+        return {"ok": False, "error": "缺少前缀（文件夹），请在表单里填写，或从对象列表右键点击「打包下载」进入"}
 
     bucket, region = target["bucket"], target["region"]
 

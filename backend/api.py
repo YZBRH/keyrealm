@@ -1074,6 +1074,23 @@ def ssh_files_delete(session_id: str, remote_path: str, recursive: bool = False)
         return {"ok": False, "error": "缺少会话 ID"}
     return ssh_session.delete_path(str(session_id), str(remote_path or ""),
                                    bool(recursive))
+
+
+def ssh_files_create(session_id: str, directory: str, name: str, is_dir: bool = False,
+                     content_b64: str = "") -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    return ssh_session.create_entry(str(session_id), str(directory or ""),
+                                    str(name or ""), bool(is_dir), str(content_b64 or ""))
+
+
+def ssh_files_rename(session_id: str, remote_path: str, new_name: str) -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    return ssh_session.rename_path(str(session_id), str(remote_path or ""),
+                                   str(new_name or ""))
+
+
 def ssh_close(session_id: str) -> dict:
     return ssh_session.close_session(str(session_id or ""))
 

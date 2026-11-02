@@ -30,6 +30,22 @@ class _Handle(io.BytesIO):
         self.close()
 
 
+class _WriteHandle(io.BytesIO):
+    """写模式句柄：退出时把内容写进假文件表，便于断言新建 / 重命名结果。"""
+
+    def __init__(self, files, path):
+        super().__init__()
+        self._files = files
+        self._path = path
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self._files[self._path] = self.getvalue()
+        self.close()
+
+
 class _FakeSFTP:
     def __init__(self):
         self.files = {
@@ -37,6 +53,7 @@ class _FakeSFTP:
             "/home/u/binary.bin": b"\x00\x01\x02",
             "/home/u/photo.png": b"\x89PNG\r\n\x1a\n",
         }
+        self.dirs = {"/home/u/alpha"}
         self.closed = False
 
     def get_channel(self):
@@ -57,8 +74,8 @@ class _FakeSFTP:
         ]
 
     def stat(self, path):
-        if path == "/home/u/alpha":
-            return _Attr("alpha", stat.S_IFDIR | 0o755)
+        if path in self.dirs:
+            return _Attr(Path(path).name, stat.S_IFDIR | 0o755)
         data = self.files.get(path)
         if data is None:
             raise IOError("No such file")
@@ -66,6 +83,27 @@ class _FakeSFTP:
 
     def lstat(self, path):
         return self.stat(path)
+
+    def mkdir(self, path):
+        if path in self.dirs or path in self.files:
+            raise IOError("File exists")
+        self.dirs.add(path)
+
+    def _rename(self, source, destination):
+        if source in self.files:
+            self.files[destination] = self.files.pop(source)
+            return
+        if source in self.dirs:
+            self.dirs.remove(source)
+            self.dirs.add(destination)
+            return
+        raise IOError("No such file")
+
+    def posix_rename(self, source, destination):
+        self._rename(source, destination)
+
+    def rename(self, source, destination):
+        self._rename(source, destination)
 
     def remove(self, path):
         if path not in self.files:
@@ -81,7 +119,7 @@ class _FakeSFTP:
             if data is None:
                 raise IOError("No such file")
             return _Handle(data)
-        return _Handle()
+        return _WriteHandle(self.files, path)
 
     def close(self):
         self.closed = True
@@ -145,7 +183,7 @@ def test_write_file_and_validation():
     try:
         session.write_file("/home/u", "../evil", content)
     except ssh_session.SshError as exc:
-        assert "文件名不合法" in str(exc)
+        assert "名称不合法" in str(exc)
     else:
         raise AssertionError("非法文件名未被拒绝")
 
@@ -167,6 +205,81 @@ def test_download_to_local_file():
         assert result["ok"] is True
         assert result["size"] == 12
         assert local.read_bytes() == b"hello world\n"
+
+
+def test_create_file_and_directory():
+    session, client = _session()
+    created = session.create_entry("/home/u", "newdir", True)
+    assert created == {"ok": True, "path": "/home/u/newdir", "name": "newdir",
+                       "is_dir": True, "size": 0}
+    assert "/home/u/newdir" in client.sftp.dirs
+
+    created = session.create_entry("/home/u", "note.txt", False)
+    assert created["path"] == "/home/u/note.txt" and created["is_dir"] is False
+    assert client.sftp.files["/home/u/note.txt"] == b""
+
+    payload = base64.b64encode(b"seed").decode()
+    session.create_entry("/home/u", "seed.txt", False, payload)
+    assert client.sftp.files["/home/u/seed.txt"] == b"seed"
+
+    # 同名拒绝，不覆盖已有内容
+    for name, is_dir in (("newdir", True), ("readme.txt", False)):
+        try:
+            session.create_entry("/home/u", name, is_dir)
+        except ssh_session.SshError as exc:
+            assert "已存在" in str(exc)
+        else:
+            raise AssertionError("同名条目未被拒绝")
+    assert client.sftp.files["/home/u/readme.txt"] == b"hello world\n"
+
+    for bad in ("", "..", "a/b", "a\\b"):
+        try:
+            session.create_entry("/home/u", bad, False)
+        except ssh_session.SshError as exc:
+            assert "名称" in str(exc)
+        else:
+            raise AssertionError(f"非法名称未被拒绝：{bad!r}")
+
+
+def test_rename_file_and_directory():
+    session, client = _session()
+    result = session.rename_path("/home/u/readme.txt", "renamed.txt")
+    assert result["ok"] is True and result["renamed"] is True
+    assert result["path"] == "/home/u/renamed.txt"
+    assert "/home/u/renamed.txt" in client.sftp.files
+    assert "/home/u/readme.txt" not in client.sftp.files
+
+    renamed = session.rename_path("/home/u/alpha", "beta")
+    assert renamed["path"] == "/home/u/beta"
+    assert "/home/u/beta" in client.sftp.dirs and "/home/u/alpha" not in client.sftp.dirs
+
+    # 目标已存在时拒绝
+    try:
+        session.rename_path("/home/u/renamed.txt", "binary.bin")
+    except ssh_session.SshError as exc:
+        assert "已存在" in str(exc)
+    else:
+        raise AssertionError("重命名到已存在的名称未被拒绝")
+
+    # 原名相同视为无操作
+    same = session.rename_path("/home/u/renamed.txt", "renamed.txt")
+    assert same["renamed"] is False
+
+    for path, new_name in (("/", "x"), ("", "x")):
+        try:
+            session.rename_path(path, new_name)
+        except ssh_session.SshError as exc:
+            assert ("根目录" in str(exc)) or ("有效路径" in str(exc))
+        else:
+            raise AssertionError("根目录 / 空路径未被拒绝")
+
+    for bad in ("", "..", "a/b"):
+        try:
+            session.rename_path("/home/u/renamed.txt", bad)
+        except ssh_session.SshError as exc:
+            assert "名称" in str(exc)
+        else:
+            raise AssertionError(f"非法新名称未被拒绝：{bad!r}")
 
 
 def test_delete_file_and_guard_root():

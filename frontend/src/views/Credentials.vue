@@ -822,6 +822,96 @@ function runRowAction(rowAction, row) {
   })
 }
 
+// ── 列表行的右键菜单 / 双击 ────────────────────────────────
+// 列表不再有「操作」列：下载、打包下载等收进右键菜单；下钻类动作（打开桶 / 文件夹）
+// 由双击直接触发，菜单里只在没有其它可用动作时才补一个「打开」。
+
+const listCtx = ref({ visible: false, x: 0, y: 0, row: null, actions: [] })
+
+function listActionsFor(row) {
+  const enabled = (actionDialog.value.listRowActions || [])
+    .filter((rowAction) => !rowActionDisabled(rowAction, row))
+  if (!enabled.length) return []
+  const nonNav = enabled.filter((rowAction) => {
+    const target = findAction(rowAction.id)
+    return !(target && (target.kind || '') === 'list')
+  })
+  return nonNav.length ? nonNav : enabled
+}
+
+function openListContextMenu(row, column, event) {
+  const actions = listActionsFor(row)
+  if (!actions.length) return
+  event.preventDefault()
+  const width = 170
+  const height = 16 + actions.length * 34
+  listCtx.value = {
+    visible: true,
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    row,
+    actions,
+  }
+}
+
+function closeListContextMenu() {
+  if (listCtx.value.visible) {
+    listCtx.value = { visible: false, x: 0, y: 0, row: null, actions: [] }
+  }
+}
+
+function listCtxLabel(rowAction) {
+  const target = findAction(rowAction.id)
+  if (target && (target.kind || '') === 'list') return '打开'
+  return rowAction.label || rowAction.id
+}
+
+function runListCtxAction(rowAction) {
+  const row = listCtx.value.row
+  closeListContextMenu()
+  if (row) runRowAction(rowAction, row)
+}
+
+function onListRowDblclick(row) {
+  const enabled = (actionDialog.value.listRowActions || [])
+    .filter((rowAction) => !rowActionDisabled(rowAction, row))
+  const nav = enabled.find((rowAction) => {
+    const target = findAction(rowAction.id)
+    return target && (target.kind || '') === 'list'
+  })
+  // 只有「下钻」或唯一的表单类动作（如对象文件下载）才响应双击；
+  // 直接执行的写操作绝不能被误触。
+  const single = enabled.length === 1 ? enabled[0] : null
+  const singleTarget = single ? findAction(single.id) : null
+  const chosen = nav || (singleTarget && (singleTarget.kind || '') === 'form' ? single : null)
+  if (chosen) runRowAction(chosen, row)
+}
+
+function onListCtxKeydown(event) {
+  if (event.key === 'Escape') closeListContextMenu()
+}
+
+onMounted(() => {
+  window.addEventListener('click', closeListContextMenu)
+  window.addEventListener('resize', closeListContextMenu)
+  window.addEventListener('keydown', onListCtxKeydown)
+  window.addEventListener('scroll', closeListContextMenu, true)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', closeListContextMenu)
+  window.removeEventListener('resize', closeListContextMenu)
+  window.removeEventListener('keydown', onListCtxKeydown)
+  window.removeEventListener('scroll', closeListContextMenu, true)
+})
+
+watch(
+  () => actionDialog.value.visible,
+  (visible) => {
+    if (!visible) closeListContextMenu()
+  },
+)
+
 /** 写操作确认文案：只列**非敏感**字段的取值（密码、令牌一律不进确认框） */
 function actionSummary() {
   const dialog = actionDialog.value
@@ -2860,6 +2950,7 @@ onMounted(async () => {
           <span v-if="actionDialog.listTotal !== null" class="text-muted">
             共 {{ actionDialog.listTotal }} 条{{ actionDialog.listHasMore ? '（仅显示部分）' : '' }}
           </span>
+          <span class="text-muted list-hint">双击打开；右键查看可用操作</span>
           <el-button
             size="small"
             :icon="Refresh"
@@ -2927,6 +3018,8 @@ onMounted(async () => {
           :data="actionDialog.listRows"
           size="small"
           max-height="380"
+          @row-dblclick="onListRowDblclick"
+          @row-contextmenu="openListContextMenu"
         >
           <el-table-column
             v-for="col in actionDialog.listColumns"
@@ -2945,24 +3038,6 @@ onMounted(async () => {
               <span v-else>{{ row[col.key] ?? '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column
-            v-if="actionDialog.listRowActions.length"
-            label="操作"
-            width="190"
-            fixed="right"
-          >
-            <template #default="{ row }">
-              <el-button
-                v-for="rowAction in actionDialog.listRowActions"
-                :key="rowAction.id"
-                size="small"
-                text
-                type="primary"
-                :disabled="rowActionDisabled(rowAction, row)"
-                @click="runRowAction(rowAction, row)"
-              >{{ rowAction.label || rowAction.id }}</el-button>
-            </template>
-          </el-table-column>
           <template #empty>
             <el-empty :description="actionDialog.listEmptyText || '暂无数据'" :image-size="50" />
           </template>
@@ -2971,6 +3046,23 @@ onMounted(async () => {
 
       <el-empty v-else description="该操作暂无可视化界面" :image-size="60" />
     </el-dialog>
+
+    <teleport to="body">
+      <div
+        v-if="listCtx.visible"
+        class="list-ctx-menu"
+        :style="{ left: `${listCtx.x}px`, top: `${listCtx.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button
+          v-for="rowAction in listCtx.actions"
+          :key="rowAction.id"
+          class="list-ctx-item"
+          @click="runListCtxAction(rowAction)"
+        >{{ listCtxLabel(rowAction) }}</button>
+      </div>
+    </teleport>
 
     <CredentialForm v-model="formVisible" :credential="editing" :default-type="createDefaultType" @saved="load" />
   </div>
@@ -3647,5 +3739,34 @@ onMounted(async () => {
 .pager-unit {
   font-size: 13px;
   color: var(--el-text-color-secondary);
+}
+
+/* 列表行右键菜单（对象存储等列表类操作） */
+.list-ctx-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 160px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #12161c;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.list-ctx-item {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.list-ctx-item:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 </style>

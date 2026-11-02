@@ -1266,6 +1266,26 @@ export function createMockApi() {
       return { ok: true, path: remotePath, deleted: recursive ? 1 : 1 }
     },
 
+    async ssh_files_create(sessionId, directory, name, isDir = false, contentB64 = '') {
+      requireUnlocked()
+      if (!state.mockSshFiles[sessionId]) return { ok: false, error: '会话不存在或已断开' }
+      const size = Math.floor(String(contentB64 || '').length * 0.75)
+      return { ok: true, path: `${directory || ''}/${name}`, name, is_dir: !!isDir, size }
+    },
+
+    async ssh_files_rename(sessionId, remotePath, newName) {
+      requireUnlocked()
+      if (!state.mockSshFiles[sessionId]) return { ok: false, error: '会话不存在或已断开' }
+      const base = String(remotePath || '').replace(/\/[^/]*$/, '')
+      return {
+        ok: true,
+        path: `${base}/${newName}`,
+        old_path: remotePath,
+        name: newName,
+        renamed: true,
+      }
+    },
+
     // ── 备份 / 恢复 ────────────────────────────────────────
     async export_backup(scope = 'all', encrypted = true) {
       await delay(140)

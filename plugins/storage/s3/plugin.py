@@ -13,7 +13,7 @@ XML 解析与带进度的流式下载走 ``storage_common``。
 
 本插件提供的操作（``actions``）：
 
-- ``list_buckets``     桶列表（S3 ListBuckets；行内「预览」下钻到对象）
+- ``list_buckets``     桶列表（S3 ListBuckets；双击「预览」下钻到对象）
 - ``list_objects``     对象浏览（ListObjectsV2 + delimiter，文件与文件夹分行）
 - ``download_object``  下载单个对象（``save_to``，前端弹「另存为」）
 - ``download_prefix``  把某个前缀（文件夹）下的对象并发拉取后打包成 zip 下载
@@ -284,14 +284,14 @@ def actions(data: dict) -> list[dict]:
         {
             "id": "list_buckets", "name": "对象存储桶列表", "kind": "list",
             "group": "存储", "order": 30,
-            "description": "S3 ListBuckets（只读；行内「预览」下钻到该桶的对象）",
+            "description": "S3 ListBuckets（只读；双击「预览」下钻到该桶的对象）",
             "columns": _BUCKET_COLUMNS, "row_actions": [_OBJECT_ROW_ACTION],
             "empty_text": "暂无对象存储桶",
         },
         {
             "id": "list_objects", "name": "对象浏览", "kind": "list",
             "group": "存储", "order": 40,
-            "description": "ListObjectsV2（按 / 分隔列出文件与文件夹；行内可「进入」「下载」「打包下载」）",
+            "description": "ListObjectsV2（按 / 分隔列出文件与文件夹；双击可「进入」，右键可「下载」「打包下载」）",
             "columns": _OBJECT_COLUMNS,
             "fields": [_BUCKET_FIELD, _PREFIX_FIELD, _REGION_FIELD],
             "row_actions": _OBJECT_ROW_ACTIONS, "submit": "查询",
@@ -300,7 +300,7 @@ def actions(data: dict) -> list[dict]:
         {
             "id": "download_object", "name": "下载对象", "kind": "form",
             "group": "存储", "order": 50,
-            "description": "下载桶内的单个对象（弹「另存为」；从对象列表行内「下载」进入会自动填好）",
+            "description": "下载桶内的单个对象（弹「另存为」；从对象列表右键「下载」进入会自动填好）",
             "fields": [
                 _BUCKET_FIELD,
                 {"key": "key", "label": "对象 Key", "required": True, "placeholder": "如 dir/file.txt"},
@@ -520,7 +520,7 @@ def _run_download_prefix(data: dict, params: dict, progress=None, should_cancel=
         return {"ok": False, "error": "未指定保存路径"}
     prefix = _field(params, "prefix")
     if not prefix:
-        return {"ok": False, "error": "缺少前缀（文件夹），请在表单里填写，或从对象列表行内点击「打包下载」进入"}
+        return {"ok": False, "error": "缺少前缀（文件夹），请在表单里填写，或从对象列表右键点击「打包下载」进入"}
     region = _region(data, params)
 
     with _client(data) as client:

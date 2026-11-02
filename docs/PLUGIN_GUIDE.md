@@ -719,7 +719,7 @@ def get_display_summary(data):
 | 字段 | 适用 | 说明 |
 |------|------|------|
 | `id` / `name` | 全部 | 标识与显示名（`run_action` 按 id 分发） |
-| `kind` | 全部 | **前端渲染方式：`chat`（对话气泡）/ `form`（动态表单）/ `list`（表格 + 行内按钮）/ `console`（SSH 交互控制台，宿主据凭据 id 建立会话）/ `files`（SSH SFTP 文件管理）** |
+| `kind` | 全部 | **前端渲染方式：`chat`（对话气泡）/ `form`（动态表单）/ `list`（表格 + 右键菜单，双击下钻）/ `console`（SSH 交互控制台，宿主据凭据 id 建立会话）/ `files`（SSH SFTP 文件管理）** |
 | `group` / `order` / `description` | 全部 | 可选。多个操作时弹选择菜单，按 `group` 分组、`order` 排序（小的在前） |
 | `fields` | `form` / `list` | 输入项：`[{key,label,type(text/password/select/textarea/number),default,placeholder,options,required}]`。**`list` 也能带 fields**：点「拉取/刷新」时把表单值作为 `params` 传进 `run_action`。**`required: true` 会在操作表单里渲染红色星号并在提交前校验**（空着点提交会被拦下，`form` 与 `list` 两处同规则） |
 | `submit` | `form` / `list` | 提交/刷新按钮文案（默认「运行」） |
@@ -746,15 +746,16 @@ def get_display_summary(data):
 ╔══════════════════════════════════════════╗
 ║ 站点列表                          [刷新] ║   ← submit 文案
 ╠══════════════════════════════════════════╣
-║ 站点       记录数  状态      操作        ║   ← columns / row_actions
-║ a.com          12  正常     [解析][新增] ║
-║ b.com           3  待续费   [解析][新增] ║
+║ 站点       记录数  状态                  ║   ← columns
+║ a.com          12  正常                  ║   ← 右键：row_actions；双击：下钻
+║ b.com           3  待续费                ║
 ╚══════════════════════════════════════════╝
 ```
+右键某行会列出该行可执行的 `row_actions`（如「下载」「打包下载」）；双击执行下钻动作（进入下一层列表）。
 点「解析」会**下钻**到另一个 `list`（前端自动加面包屑与「返回」，返回时直接还原上一帧、不重新请求）；
 点「新增」会打开一个 `form`（自动预填当前行的域名）。加载中、空、出错各有独立表现，出错**不关弹窗**并提供「重试」。
 
-#### 3.1.2 `row_actions`：行内按钮与下钻
+#### 3.1.2 `row_actions`：右键菜单与下钻
 
 ```python
 {"id": "list_records",          # 目标 action 的 id（必须在同一个 actions() 里声明）
@@ -762,13 +763,14 @@ def get_display_summary(data):
  "params": {"zone": "$row.zone", "type": "A"},   # 字面量 + `$row.<列key>` 模板
  "write": True}                 # 可选：目标操作是写操作时带上
 ```
-- `params` 里字符串形式的 `$row.<列key>` 会被替换成**该行**的值；**解析不到的行，按钮自动置灰**（绝不会把 `undefined` 传给你的插件）。
+- `params` 里字符串形式的 `$row.<列key>` 会被替换成**该行**的值；**解析不到的行，该动作不会出现在右键菜单里**（绝不会把 `undefined` 传给你的插件）。
 - 点下去后按**目标 action 的 `kind`** 分派：`form` → 打开表单并预填；`list` → 下钻；其它 → 直接执行。
+- **双击行**执行该行的下钻动作（`kind: "list"` 的 row_action）；没有下钻动作且只有一个可用动作时，双击直接执行它。
 - 所以**同一个 action 既可以被菜单直接调用、又可以被某一行调用**，靠 `params` 里有没有值来区分。例如
   `add_record` 直接调用时让用户填域名，从某一行调用时自动带上域名。
 - **纯下钻操作不进顶层菜单**：若某个 action 只被别的 action 当 `row_action` 目标、且自身没有任何
   `fields`（点了也没参数可填），前端会把它从「操作」菜单里隐去——否则用户点进去只会得到一句
-  「缺少 xxx」。它仍照常被行内按钮调用；要让它也能单独用，就给它加上可填的 `fields`
+  「缺少 xxx」。它仍照常被右键菜单 / 行双击调用；要让它也能单独用，就给它加上可填的 `fields`
   （例如 `list_records` 加一个 `domain` 输入框）。
 
 #### 3.1.3 `save_to`：下载类操作（会自动弹「另存为」）
