@@ -411,9 +411,9 @@ async function loadModels(force = false) {
     } else {
       dialog.modelError = MODELS_ERROR
     }
-  } catch {
-    // 失败时保留已有的列表与选择，只提示
-    dialog.modelError = MODELS_ERROR
+  } catch (err) {
+    // 失败时保留已有的列表与选择，只提示；匿名模式等拒绝原因要原样展示
+    dialog.modelError = (err && err.message) || MODELS_ERROR
   } finally {
     dialog.modelsLoading = false
   }

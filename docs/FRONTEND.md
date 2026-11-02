@@ -896,6 +896,8 @@ store 随后重拉分组 / 插件。**不走「前端 for 循环调单条删除�
 │  不锁定：[ ○── ]                                            │
 │     开启后不因空闲或重启而锁定；仅手动锁定才清除密钥。      │
 │     密钥交系统凭据保护（仅桌面 / Web 生效）。               │
+│  匿名模式：[ ○── ]                                          │
+│     未配置代理的验证 / 操作在发起前拒绝，避免直连。          │
 │  空闲自动锁定：[ 5 分钟 ▼ ]（「不锁定」开启时不可用）       │
 │     一段时间无操作后自动清除内存密钥；若后台有验证任务        │
 │     在跑则顺延到任务结束。                                   │
@@ -967,6 +969,8 @@ Release 标签、更新时下载预编译包替换；测试版按 `main` 的版�
 → `appStore.reportActivity()`，内部约 30s 节流一次），以及**收到 `vault:locked` 事件时锁定本页状态**
 （`appStore.applyLocked()` → 清空明文 → `watch(appStore.unlocked)` 推回 `/unlock`）。
 详见 [ARCHITECTURE.md §2.8](ARCHITECTURE.md)。
+
+**「匿名模式」**（`settings.anonymous_mode`，默认关）：开启后 `plugin_manager` 在调用插件验证 / 操作 / 能力探测 / 模型列表前先解析该凭据的最终出口；若为直连（含显式直连、全局无代理且环境无代理），直接返回错误而不发起网络请求。SSH 控制台 / SFTP 文件会话也在建连前拦截。
 
 **「不锁定」**（`settings.never_lock`，默认关）：开启后 `idle_lock` 直接跳过空闲判定，
 解锁/创建/改密时把当前密钥交给系统凭据保护（`backend/session_key.py`：Windows DPAPI /

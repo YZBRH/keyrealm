@@ -121,6 +121,17 @@ def mask_secret(value: str) -> str:
 
 # ── 请求封装 ─────────────────────────────────────────────
 
+def _ensure_proxy_not_direct() -> None:
+    """匿名模式下，插件在拿到「无代理」结果时直接失败，避免绕过入口检查。"""
+    try:
+        from . import anonymous
+        enabled = anonymous.enabled()
+    except Exception:  # noqa: BLE001 - DB 未就绪时按未开启处理
+        enabled = False
+    if enabled:
+        raise RuntimeError("匿名模式已开启：拒绝直连请求")
+
+
 def proxy() -> Optional[str]:
     """本次请求使用的代理。
 
@@ -128,17 +139,22 @@ def proxy() -> Optional[str]:
     线程隔离，所以「不同凭据走不同代理」不会互相踩；没有覆盖时回退环境变量：
     ``VAULT_PROXY``（应用设置写入）> 标准代理变量。
 
-    覆盖值为 ``DIRECT`` 表示该凭据选了「直连」，此时**压过**上面所有环境变量。
+    覆盖值为 ``DIRECT`` 表示该凭据选了「直连」，此时**压过**上面所有环境变量；
+    匿名模式下「实际会直连」的结果会被直接拒绝（抛 ``RuntimeError``）。
     """
     ctx = sys.modules.get("vault_proxy_ctx")
     if ctx is not None:
         value = ctx.current()
         if value is not ctx.UNSET:
-            return None if value is ctx.DIRECT else value
+            if value is ctx.DIRECT:
+                _ensure_proxy_not_direct()
+                return None
+            return value
     for key in ("VAULT_PROXY", "ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"):
         value = os.environ.get(key)
         if value:
             return value
+    _ensure_proxy_not_direct()
     return None
 
 

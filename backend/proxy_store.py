@@ -271,15 +271,28 @@ def credential_proxy_scope(data: dict, credential_type: str = ""):
 
 def describe_outlet(resolved: Union[object, str]) -> str:
     """把解析结果说成人话，给日志用（把「继续回退环境变量」也展开成实际值）。"""
+    value = effective_url(resolved)
+    if value:
+        return value
     if resolved is ctx.DIRECT:
         return "直连（该凭据显式选了直连）"
+    return "直连（未配置代理）"
+
+
+def effective_url(resolved: Union[object, str]) -> Optional[str]:
+    """解析结果最终会用的代理 URL；``None`` 表示实际是直连。
+
+    ``ctx.UNSET`` 表示继续回退环境变量，因此这里与插件 SDK 使用同一组变量。
+    """
+    if resolved is ctx.DIRECT:
+        return None
     if resolved is not ctx.UNSET:
-        return str(resolved)
+        return str(resolved) or None
     for key in ("VAULT_PROXY", "ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"):
         value = os.environ.get(key)
         if value:
-            return f"{value}（来自环境变量 {key}）"
-    return "直连（未配置代理）"
+            return value
+    return None
 
 
 def missing_proxy_ref(data: dict, credential_type: str = ""):

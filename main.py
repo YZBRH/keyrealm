@@ -441,6 +441,13 @@ class VaultApi:
     def set_secret_preview(self, enabled: bool):
         return api.set_secret_preview(enabled)
 
+    # ── 匿名模式 ──────────────────────────────────────────
+    def get_anonymous_mode(self):
+        return api.get_anonymous_mode()
+
+    def set_anonymous_mode(self, enabled: bool):
+        return api.set_anonymous_mode(enabled)
+
     # ── 开屏动画 ──────────────────────────────────────────
     def get_splash_disabled(self):
         return api.get_splash_disabled()

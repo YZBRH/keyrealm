@@ -220,8 +220,9 @@ async function loadModelOptions() {
   try {
     const list = await api.listDraftModels(form.credential_type, { ...form.data })
     modelOptions.value = Array.isArray(list) ? list : []
-  } catch {
+  } catch (err) {
     modelOptions.value = []
+    if (err && /匿名模式/.test(err.message || '')) ElMessage.warning(err.message)
   } finally {
     modelsLoading.value = false
   }

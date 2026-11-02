@@ -132,6 +132,7 @@ function createState() {
     mockSshFiles: {},
     lightMode: false,
     secretPreview: true,
+    anonymousMode: false,
     splashDisabled: false,
     splashAlways: false,
     splashClaimed: false,
@@ -854,6 +855,18 @@ export function createMockApi() {
       await delay(40)
       state.secretPreview = Boolean(enabled)
       return { ok: true, enabled: state.secretPreview }
+    },
+
+    // ── 匿名模式 ──────────────────────────────────────────
+    async get_anonymous_mode() {
+      await delay(40)
+      return { enabled: state.anonymousMode }
+    },
+
+    async set_anonymous_mode(enabled) {
+      await delay(40)
+      state.anonymousMode = Boolean(enabled)
+      return { ok: true, enabled: state.anonymousMode }
     },
 
     // ── 开屏动画 ──────────────────────────────────────────

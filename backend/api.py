@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Optional, Union
 
 from . import autostart
+from . import anonymous
 from . import backup
 from . import data_upgrades
 from . import database as db
@@ -455,6 +456,19 @@ def set_secret_preview(enabled) -> dict:
     db.set_setting(SECRET_PREVIEW_KEY, "1" if value else "0")
     _log.info("敏感值预览已%s", "开启" if value else "关闭")
     return {"ok": True, "enabled": value}
+
+
+# ── 匿名模式 ──────────────────────────────────────────────
+# 开启后，所有凭据验证 / 操作都必须经过代理；最终出口为直连时在发起请求前拒绝。
+
+def get_anonymous_mode() -> dict:
+    return anonymous.get_status()
+
+
+def set_anonymous_mode(enabled) -> dict:
+    result = anonymous.set_enabled(bool(enabled))
+    _log.info("匿名模式已%s", "开启" if result["enabled"] else "关闭")
+    return result
 
 
 # ── Credentials ───────────────────────────────────────────
@@ -1000,6 +1014,9 @@ def ssh_open(credential_id: int, interactive: bool = False) -> dict:
     data, error = _ssh_credential(credential_id)
     if error:
         return {"ok": False, "error": error}
+    reason = anonymous.blocked_reason(data, "remote_ssh")
+    if reason:
+        return {"ok": False, "error": reason}
     return ssh_session.open_session(credential_id, data, interactive=bool(interactive))
 
 
@@ -1014,6 +1031,9 @@ def ssh_files_open(credential_id: int) -> dict:
     data, error = _ssh_credential(credential_id)
     if error:
         return {"ok": False, "error": error}
+    reason = anonymous.blocked_reason(data, "remote_ssh")
+    if reason:
+        return {"ok": False, "error": reason}
     return ssh_session.open_session(credential_id, data, shell=False)
 
 
@@ -1157,6 +1177,9 @@ def list_credential_models(credential_id: int, force: bool = False) -> list:
         data = decrypt_dict(key, cred["data_encrypted"])
     except Exception:
         data = {}
+    reason = anonymous.blocked_reason(data, cred["credential_type"])
+    if reason:
+        raise RuntimeError(reason)
     return plugin_manager.plugin_models(cred["credential_type"], data, force)
 
 
@@ -1169,6 +1192,9 @@ def list_draft_models(credential_type: str, data: Optional[dict] = None, force: 
     """
     if not credential_type:
         return []
+    reason = anonymous.blocked_reason(data or {}, credential_type)
+    if reason:
+        raise RuntimeError(reason)
     return plugin_manager.plugin_models(credential_type, data or {}, force)
 
 

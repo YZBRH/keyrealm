@@ -504,6 +504,35 @@ async function applySecretPreview(value) {
   }
 }
 
+/* ── 匿名模式 ───────────────────────────────────── */
+
+const anonymousMode = ref(false)
+const anonymousModeSaving = ref(false)
+
+async function loadAnonymousMode() {
+  try {
+    const config = await api.getAnonymousMode()
+    anonymousMode.value = Boolean(config.enabled)
+  } catch (err) {
+    ElMessage.error(err.message || '加载匿名模式设置失败')
+  }
+}
+
+async function applyAnonymousMode(value) {
+  anonymousModeSaving.value = true
+  try {
+    await api.setAnonymousMode(value)
+    ElMessage.success(value
+      ? '已开启匿名模式：未配置代理的验证 / 操作将被拒绝'
+      : '已关闭匿名模式')
+  } catch (err) {
+    ElMessage.error(err.message || '设置匿名模式失败')
+    await loadAnonymousMode()
+  } finally {
+    anonymousModeSaving.value = false
+  }
+}
+
 /* ── 开机自启动 ────────────────────────────────────── */
 // 状态以**操作系统**的自启条目为准（后端每次现读），前端不做本地记忆，
 // 免得用户手动删掉系统条目后界面还显示"已开启"。
@@ -920,6 +949,7 @@ async function refreshAll(showSpinner = true) {
       loadNeverLock(),
       loadLightMode(),
       loadSecretPreview(),
+      loadAnonymousMode(),
       loadSplashDisabled(),
       loadAutostart(),
       loadTls(),
@@ -1050,6 +1080,23 @@ onMounted(() => refreshAll(false))
           v-model="neverLock"
           :loading="neverLockSaving"
           @change="applyNeverLock"
+        />
+      </div>
+
+      <el-divider />
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">匿名模式</div>
+          <div class="setting-desc">
+            开启后，任何未配置代理的凭据验证与操作都会在发起请求前被拒绝，避免直连暴露真实出口。
+            请先在「网络与代理」配置全局代理，或为凭据单独指定代理。
+          </div>
+        </div>
+        <el-switch
+          v-model="anonymousMode"
+          :loading="anonymousModeSaving"
+          @change="applyAnonymousMode"
         />
       </div>
 

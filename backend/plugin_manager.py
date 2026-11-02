@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+from . import anonymous
 from . import database as db
 from . import icon_ink
 from . import logger
@@ -578,6 +579,9 @@ def _credential_scopes(credential_type: str, data: dict, what: str):
 
 def verify_credential(credential_type: str, data: dict) -> VerifyResult:
     """调用插件验证凭据（含「按凭据解析代理 / TLS 版本」与「欠费探测」）"""
+    reason = anonymous.blocked_reason(data, credential_type)
+    if reason:
+        return VerifyResult(status="error", message=reason)
     module = get_module(credential_type)
     if module is None:
         return VerifyResult(status="error", message=_module_missing_error(credential_type))
@@ -677,6 +681,9 @@ def plugin_capabilities(credential_type: str, data: dict) -> dict:
 
     **会联网**（插件要拿凭据去打上游接口探权限），所以包在代理作用域里，与 `plugin_models` 同理。
     """
+    reason = anonymous.blocked_reason(data, credential_type)
+    if reason:
+        return {"available": [], "note": reason, "error": True}
     module = get_module(credential_type)
     if module is None:
         return {"available": None, "note": "", "error": True}
@@ -686,6 +693,9 @@ def plugin_capabilities(credential_type: str, data: dict) -> dict:
 
 def run_plugin_action(credential_type: str, action_id: str, params: dict, data: dict) -> dict:
     """执行插件的某个操作。"""
+    reason = anonymous.blocked_reason(data, credential_type)
+    if reason:
+        return {"ok": False, "error": reason}
     module = get_module(credential_type)
     if module is None:
         return {"ok": False, "error": _module_missing_error(credential_type)}
@@ -698,6 +708,10 @@ def plugin_models(credential_type: str, data: dict, force: bool = False) -> list
 
     ``force=True`` 表示**用户手动刷新**，透传给插件的 ``list_models``（穿透 24h 模型清单缓存）。
     """
+    reason = anonymous.blocked_reason(data, credential_type)
+    if reason:
+        _log.warning("匿名模式拦截模型列表请求：%s", reason)
+        return []
     module = get_module(credential_type)
     if module is None:
         return []
@@ -715,6 +729,9 @@ def stream_plugin_action(credential_type: str, action_id: str, params: dict, dat
     两个可选回调：``on_progress(current, total, text)`` 进度、
     ``should_cancel()`` 取消查询（见 ``plugin_base.call_stream_action``）。
     """
+    reason = anonymous.blocked_reason(data, credential_type)
+    if reason:
+        return {"ok": False, "error": reason}
     module = get_module(credential_type)
     if module is None:
         return {"ok": False, "error": _module_missing_error(credential_type)}

@@ -219,13 +219,15 @@ def _fingerprint(client) -> str:
 
 
 class _Session:
-    def __init__(self, session_id: str, client, channel, data: dict):
+    def __init__(self, session_id: str, client, channel, data: dict,
+                 proxied: bool = False):
         self.id = session_id
         self.client = client
         self.channel = channel
         self.summary = f"{_text(data, 'username')}@{_text(data, 'host')}"
         self.mode = "shell" if channel is not None else "exec"
         self.shell_kind = ""          # pipe / pty
+        self.proxied = proxied
         self.banner = ""
         self.created = time.monotonic()
         self.last_used = self.created
@@ -679,6 +681,11 @@ def open_session(credential_id: int, data: dict, interactive: bool = False,
     if not host or not port or not username:
         return {"ok": False, "error": "凭据缺少主机 / 端口 / 用户名"}
 
+    from . import anonymous
+    proxy_url = _proxy_url(data)
+    if anonymous.enabled() and not proxy_url:
+        return {"ok": False, "error": "匿名模式已开启：该凭据未配置可用代理，已拒绝直连请求"}
+
     client = paramiko.SSHClient()
     if _truthy(data.get("verify_host_key")):
         client.load_system_host_keys()
@@ -729,7 +736,7 @@ def open_session(credential_id: int, data: dict, interactive: bool = False,
 
     fingerprint = _fingerprint(client)
     session_id = uuid.uuid4().hex
-    session = _Session(session_id, client, None, data)
+    session = _Session(session_id, client, None, data, proxied=bool(proxy_url))
 
     # 静默模式优先非交互 `sh -s`（无 PTY、无提示符/回显）；交互模式优先 PTY，
     # 以加载登录 shell 的 rc 并满足需要 TTY 的程序。另一条路径作为退路。
@@ -777,6 +784,9 @@ def run_command(session_id: str, command: str) -> dict:
         session = _sessions.get(str(session_id))
     if session is None:
         return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
     try:
         result = session.run(command)
     except SshError as exc:
@@ -785,6 +795,16 @@ def run_command(session_id: str, command: str) -> dict:
     if session.closed:
         _drop(session_id)
     return result
+
+
+def _anon_denied(session: _Session) -> str:
+    """匿名模式下拒绝使用「建立时是直连」的旧会话继续操作。"""
+    if session.proxied:
+        return ""
+    from . import anonymous
+    if anonymous.enabled():
+        return "匿名模式已开启：该会话建立时未走代理，已拒绝继续操作"
+    return ""
 
 
 def _get(session_id: str) -> Optional[_Session]:
@@ -796,6 +816,9 @@ def list_files(session_id: str, path: str = "") -> dict:
     session = _get(session_id)
     if session is None:
         return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
     try:
         return session.list_dir(path)
     except SshError as exc:
@@ -808,6 +831,9 @@ def read_file(session_id: str, path: str, max_bytes: Optional[int] = None) -> di
     session = _get(session_id)
     if session is None:
         return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
     try:
         return session.read_file(path, max_bytes)
     except SshError as exc:
@@ -820,6 +846,9 @@ def write_file(session_id: str, directory: str, name: str, content_b64: str) -> 
     session = _get(session_id)
     if session is None:
         return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
     try:
         return session.write_file(directory, name, content_b64)
     except SshError as exc:
@@ -832,6 +861,9 @@ def download_to(session_id: str, remote_path: str, local_path: str) -> dict:
     session = _get(session_id)
     if session is None:
         return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
     try:
         return session.download_to(remote_path, local_path)
     except SshError as exc:

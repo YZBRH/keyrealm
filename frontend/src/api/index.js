@@ -288,6 +288,11 @@ export const api = {
   getSecretPreview: () => call('get_secret_preview'),
   setSecretPreview: (enabled) => call('set_secret_preview', enabled),
 
+  // ── 匿名模式 ────────────────────────────────────────────
+  // 开启后，未配置代理的验证 / 操作请求在发起前被拒绝。
+  getAnonymousMode: () => call('get_anonymous_mode'),
+  setAnonymousMode: (enabled) => call('set_anonymous_mode', enabled),
+
   // ── 开屏动画 ────────────────────────────────────────────
   // claimSplash 每个进程只返回一次 show=true（「总是展示」开启时例外）；
   // 禁用 / 总是展示 / 已播放判断都在后端。
