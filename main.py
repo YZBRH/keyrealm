@@ -300,6 +300,9 @@ class VaultApi:
     def get_version(self):
         return api.get_version()
 
+    def dashboard_overview(self):
+        return api.dashboard_overview()
+
     def list_draft_models(self, credential_type: str, data=None, force: bool = False):
         return api.list_draft_models(credential_type, data, force)
 

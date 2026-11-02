@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Union
 
 from . import autostart
@@ -1183,6 +1183,198 @@ def get_version() -> dict:
         "build": version.build_id(),
         "schema_version": version.SCHEMA_VERSION,
         "display": version.version_string(),
+    }
+
+
+# ── 仪表盘聚合 ────────────────────────────────────────────
+
+def _dashboard_ts(value) -> Optional[datetime]:
+    """解析库里的时间字段：UTC ISO（可能带偏移）或 SQLite 的 ``YYYY-MM-DD HH:MM:SS``。
+
+    无时区的一律按 UTC 处理（``CURRENT_TIMESTAMP`` 与 ``database._now()`` 都是 UTC），
+    解析失败返回 ``None``，由调用方归入「从未验证」。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def dashboard_overview() -> dict:
+    """仪表盘聚合数据：只读、无需解锁、不触发插件同步或网络请求。
+
+    取数原则：**只做一次 ``db.list_credentials()``** 再在内存里分组，避免按类别 / 分组
+    反复查询；插件、计划、任务、MCP / 代理 / TLS 都走现成的只读接口。
+    返回体里不含 `data_plain` / 密文 / 敏感字段，顶层也没有字符串 ``error``
+    （前端 ``call()`` 会把顶层 ``error`` 当失败抛出）。
+    """
+    now = datetime.now(timezone.utc)
+    credentials = db.list_credentials()
+    plugins = db.list_plugins()
+    groups = db.list_groups()
+    schedules = db.list_schedules()
+    task_items = tasks.list_tasks()
+
+    plugin_map = {p.get("credential_type"): p for p in plugins}
+    category_types: dict[str, set] = {}
+    for plugin in plugins:
+        category_types.setdefault(plugin.get("category") or "", set()).add(
+            plugin.get("credential_type") or "")
+    status_counts = {"valid": 0, "invalid": 0, "error": 0, "unknown": 0}
+    plugin_disabled = 0
+    freshness = {"never": 0, "day": 0, "week": 0, "month": 0, "older": 0}
+    categories: dict[str, dict] = {}
+    group_counts: dict[Any, dict] = {}
+    recent: list[dict] = []
+    risks: list[dict] = []
+
+    for cred in credentials:
+        status = str(cred.get("status") or "unknown")
+        if status not in status_counts:
+            status = "unknown"
+        status_counts[status] += 1
+
+        plugin = plugin_map.get(cred.get("credential_type")) or {}
+        enabled = bool(plugin.get("enabled", 1))
+        if not enabled:
+            plugin_disabled += 1
+        category_key = plugin.get("category") or ""
+        bucket = categories.setdefault(category_key or "_", {
+            "category": category_key,
+            "name": plugin.get("category_name") or "未分类",
+            "types": sorted(t for t in category_types.get(category_key or "", set()) if t),
+            "count": 0, "valid": 0, "invalid": 0, "error": 0, "unknown": 0,
+        })
+        bucket["count"] += 1
+        bucket[status] += 1
+
+        group_id = cred.get("group_id")
+        group_bucket = group_counts.setdefault(group_id, {
+            "id": group_id, "name": cred.get("group_name") or "未分组",
+            "color": "", "count": 0, "valid": 0, "invalid": 0, "error": 0, "unknown": 0,
+        })
+        group_bucket["count"] += 1
+        group_bucket[status] += 1
+
+        verified_at = _dashboard_ts(cred.get("last_verified_at"))
+        age_days = None if verified_at is None else (now - verified_at).total_seconds() / 86400
+        if verified_at is None:
+            freshness["never"] += 1
+        elif age_days <= 1:
+            freshness["day"] += 1
+        elif age_days <= 7:
+            freshness["week"] += 1
+        elif age_days <= 30:
+            freshness["month"] += 1
+        else:
+            freshness["older"] += 1
+
+        if verified_at is not None:
+            recent.append({
+                "id": cred.get("id"), "name": cred.get("name") or "",
+                "credential_type": cred.get("credential_type") or "",
+                "status": status, "at": cred.get("last_verified_at"),
+            })
+
+        detail = cred.get("status_detail") or {}
+        message = str(detail.get("message") or "").strip() if isinstance(detail, dict) else ""
+        if status == "invalid":
+            reason, severity = message or "校验失败", 0
+        elif status == "error":
+            reason, severity = message or "验证异常", 1
+        elif verified_at is None:
+            reason, severity = "从未验证", 2
+        elif age_days > 7:
+            reason, severity = f"已 {int(age_days)} 天未验证", 3
+        else:
+            reason, severity = "", 9
+        if severity < 9:
+            risks.append({
+                "id": cred.get("id"), "name": cred.get("name") or "",
+                "credential_type": cred.get("credential_type") or "",
+                "category": category_key,
+                "category_name": plugin.get("category_name") or "未分类",
+                "status": status,
+                "last_verified_at": cred.get("last_verified_at"),
+                "reason": reason,
+                "severity": severity,
+                "plugin_enabled": enabled,
+            })
+
+    for group in groups:
+        if group.get("id") in group_counts:
+            group_counts[group["id"]]["color"] = group.get("color") or ""
+            group_counts[group["id"]]["name"] = group.get("name") or "未分组"
+
+    risks.sort(key=lambda item: (item["severity"], _dashboard_ts(item.get("last_verified_at"))
+                                 or datetime.min.replace(tzinfo=timezone.utc)))
+    recent.sort(key=lambda item: _dashboard_ts(item.get("at"))
+                or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+    running_tasks = [t for t in task_items if t.get("status") == "running"]
+    next_runs = [
+        _dashboard_ts(s.get("next_run_at")) for s in schedules
+        if s.get("enabled") and s.get("next_run_at")
+    ]
+    next_runs = [value for value in next_runs if value is not None]
+    next_run = min(next_runs).isoformat() if next_runs else None
+
+    try:
+        proxy_count = len(proxy_store.list_proxies())
+        proxy_display = proxy_store.global_display()
+    except Exception:  # noqa: BLE001 - 仪表盘不能因代理链异常整页失败
+        proxy_count, proxy_display = 0, ""
+
+    total = len(credentials)
+    valid = status_counts["valid"]
+    return {
+        "ok": True,
+        "generated_at": now.isoformat(),
+        "totals": {
+            "credentials": total,
+            "groups": len(groups),
+            "plugins": len(plugins),
+            "enabled_plugins": sum(1 for p in plugins if p.get("enabled")),
+            "schedules": len(schedules),
+            "enabled_schedules": sum(1 for s in schedules if s.get("enabled")),
+        },
+        "health": {"rate": (valid / total) if total else 0.0, "valid": valid, "total": total},
+        "status": {**status_counts, "plugin_disabled": plugin_disabled},
+        "freshness": freshness,
+        "categories": sorted(categories.values(), key=lambda item: item["count"], reverse=True),
+        "groups": sorted(group_counts.values(), key=lambda item: item["count"], reverse=True),
+        "risks": risks[:12],
+        "recent": recent[:8],
+        "tasks": {
+            "running": len(running_tasks),
+            "total": len(task_items),
+            "items": [
+                {
+                    "id": t.get("id"), "title": t.get("title") or "",
+                    "current": t.get("current") or 0, "total": t.get("total") or 0,
+                    "text": t.get("text") or "",
+                }
+                for t in running_tasks[:4]
+            ],
+        },
+        "schedules": {
+            "total": len(schedules),
+            "enabled": sum(1 for s in schedules if s.get("enabled")),
+            "next_run_at": next_run,
+        },
+        "system": {
+            "mcp": get_mcp_status(),
+            "proxy": {"count": proxy_count, "display": proxy_display},
+            "tls_version": tls_store.global_value(),
+            "anonymous": anonymous.enabled(),
+        },
     }
 
 
