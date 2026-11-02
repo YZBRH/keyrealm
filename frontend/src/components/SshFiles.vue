@@ -42,6 +42,48 @@ const editing = ref(false)
 const editText = ref('')
 const editSaving = ref(false)
 const deletingPath = ref('')
+const ctxMenu = ref({ visible: false, x: 0, y: 0, row: null })
+
+// ── 右键子功能栏：文件下载 / 目录打开，以及两者的删除 ──────────
+
+function openContextMenu(row, column, event) {
+  if (!row) return
+  event.preventDefault()
+  const width = 150
+  const height = 96
+  ctxMenu.value = {
+    visible: true,
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    row,
+  }
+}
+
+function closeContextMenu() {
+  if (ctxMenu.value.visible) ctxMenu.value = { visible: false, x: 0, y: 0, row: null }
+}
+
+function ctxOpen() {
+  const row = ctxMenu.value.row
+  closeContextMenu()
+  if (row && row.is_dir) load(row.path)
+}
+
+function ctxDownload() {
+  const row = ctxMenu.value.row
+  closeContextMenu()
+  if (row && !row.is_dir) download(row)
+}
+
+function ctxDelete() {
+  const row = ctxMenu.value.row
+  closeContextMenu()
+  if (row) deleteEntry(row)
+}
+
+function onGlobalKeydown(event) {
+  if (event.key === 'Escape') closeContextMenu()
+}
 
 function b64ToBytes(value) {
   const binary = atob(value || '')
@@ -370,8 +412,22 @@ async function onFileChange(event) {
   }
 }
 
-onMounted(open)
-onBeforeUnmount(closeSession)
+onMounted(() => {
+  open()
+  window.addEventListener('click', closeContextMenu)
+  window.addEventListener('resize', closeContextMenu)
+  window.addEventListener('keydown', onGlobalKeydown)
+  // capture=true：任何滚动容器滚动都收起菜单
+  window.addEventListener('scroll', closeContextMenu, true)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('resize', closeContextMenu)
+  window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('scroll', closeContextMenu, true)
+  closeSession()
+})
 
 defineExpose({ open })
 </script>
@@ -393,6 +449,7 @@ defineExpose({ open })
       </el-button>
       <input ref="fileInput" type="file" class="sf-file-input" @change="onFileChange" />
       <span class="sf-meta">{{ summary }}</span>
+      <span class="sf-tip">右键唤出菜单：打开 / 下载 / 删除</span>
     </div>
 
     <div v-if="error" class="sf-error">
@@ -409,6 +466,7 @@ defineExpose({ open })
           height="360"
           empty-text="空目录"
           @row-click="onRowClick"
+          @row-contextmenu="openContextMenu"
         >
           <el-table-column label="名称" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">
@@ -423,25 +481,6 @@ defineExpose({ open })
           </el-table-column>
           <el-table-column label="修改时间" width="170">
             <template #default="{ row }">{{ formatTime(row.mtime) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="170" fixed="right">
-            <template #default="{ row }">
-              <el-button
-                v-if="!row.is_dir"
-                size="small"
-                text
-                type="primary"
-                @click.stop="openPreview(row, true)"
-              >编辑</el-button>
-              <el-button v-if="!row.is_dir" size="small" text @click.stop="download(row)">下载</el-button>
-              <el-button
-                size="small"
-                text
-                type="danger"
-                :loading="deletingPath === row.path"
-                @click.stop="deleteEntry(row)"
-              >删除</el-button>
-            </template>
           </el-table-column>
         </el-table>
         <div v-if="truncated" class="sf-hint">目录条目过多，仅显示前 2000 项。</div>
@@ -497,6 +536,20 @@ defineExpose({ open })
         </div>
       </div>
     </div>
+
+    <teleport to="body">
+      <div
+        v-if="ctxMenu.visible"
+        class="sf-context-menu"
+        :style="{ left: `${ctxMenu.x}px`, top: `${ctxMenu.y}px` }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button v-if="ctxMenu.row && ctxMenu.row.is_dir" class="sf-ctx-item" @click="ctxOpen">打开</button>
+        <button v-else class="sf-ctx-item" @click="ctxDownload">下载</button>
+        <button class="sf-ctx-item is-danger" @click="ctxDelete">删除</button>
+      </div>
+    </teleport>
   </div>
 </template>
 
@@ -524,6 +577,11 @@ defineExpose({ open })
   font-size: 12px;
   color: var(--v-text-3);
   font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', monospace;
+}
+.sf-tip {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--v-text-3);
 }
 .sf-error {
   display: flex;
@@ -633,5 +691,36 @@ defineExpose({ open })
   margin-top: 8px;
   display: flex;
   justify-content: flex-end;
+}
+.sf-context-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 140px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #12161c;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.sf-ctx-item {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--v-text-1, #e4e4e7);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.sf-ctx-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.sf-ctx-item.is-danger {
+  color: #f87171;
+}
+.sf-ctx-item.is-danger:hover {
+  background: rgba(248, 113, 113, 0.12);
 }
 </style>

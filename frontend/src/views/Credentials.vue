@@ -358,6 +358,14 @@ function blankActionDialog() {
 
 const actionDialog = ref(blankActionDialog())
 
+// 按操作类型给弹窗定宽：列表类（对象存储桶 / 对象浏览）列多，需要明显更宽
+const actionDialogWidth = computed(() => {
+  if (actionDialog.value.kind === 'console') return 'min(920px, 92vw)'
+  if (actionDialog.value.kind === 'files') return 'min(1080px, 96vw)'
+  if (actionDialog.value.kind === 'list') return 'min(1180px, 96vw)'
+  return '640px'
+})
+
 // 操作表单（form 的表单与 list 的参数行共用一个 ref：两者不同时挂载）
 const actionFormRef = ref(null)
 
@@ -2678,7 +2686,7 @@ onMounted(async () => {
     <el-dialog
       v-model="actionDialog.visible"
       :title="actionDialog.title"
-      :width="actionDialog.kind === 'console' ? 'min(920px, 92vw)' : actionDialog.kind === 'files' ? 'min(1080px, 96vw)' : '640px'"
+      :width="actionDialogWidth"
       :close-on-click-modal="false"
     >
       <div v-if="actionDialog.description" class="action-desc">{{ actionDialog.description }}</div>

@@ -522,7 +522,7 @@ App.vue
 | `form` | 动态表单 + `<pre>` 文本输出；`write: true` 时提交前二次确认 |
 | `list` | **表格 + 行内按钮 + 下钻**：工具栏有面包屑与「返回」「刷新」，行内按钮由 `row_actions` 声明 |
 | `console` | SSH 交互控制台（`components/SshConsole.vue`）：打开即连接，按 Enter 执行命令，关闭弹窗自动断开；默认使用非交互 `sh` 静默会话并自动关闭目标端历史记录，输出不含提示符 / 回显；可切换「交互模式（PTY）」申请伪终端，切换后自动重连 |
-| `files` | SSH 文件管理（`components/SshFiles.vue`）：经 SFTP 浏览目录、预览 / 编辑文本、预览图片、下载、上传与删除文件或目录；会话只认证、不启动 shell，关闭弹窗自动断开 |
+| `files` | SSH 文件管理（`components/SshFiles.vue`）：经 SFTP 浏览目录、预览 / 编辑文本、预览图片、下载、上传与删除文件或目录（列表右键唤出「打开 / 下载 / 删除」子功能栏）；会话只认证、不启动 shell，关闭弹窗自动断开 |
 
 > **带进度的操作**（action 声明 `progress: true`，如 OSS 下载 / 前缀打包）：表单弹窗改走
 > `api.streamCredentialAction`，后端在下载过程中推 `vault:action_stream` 的
