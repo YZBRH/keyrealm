@@ -94,19 +94,21 @@ function pick(theme) {
   text-align: left;
   cursor: pointer;
   transition:
-    transform var(--v-base) var(--v-spring),
+    transform var(--v-fast) var(--v-ease-out),
     box-shadow var(--v-base) var(--v-ease),
     border-color var(--v-base) var(--v-ease);
 }
 
-.tp-item:hover {
-  transform: translateY(-2px);
-  border-color: var(--v-border-strong);
-  box-shadow: var(--v-shadow-md);
+@media (hover: hover) and (pointer: fine) {
+  .tp-item:hover {
+    transform: translateY(-1px);
+    border-color: var(--v-border-strong);
+    box-shadow: var(--v-shadow-md);
+  }
 }
 
 .tp-item:active {
-  transform: translateY(0) scale(0.99);
+  transform: translateY(0) scale(0.98);
 }
 
 .tp-item:focus-visible {
@@ -182,5 +184,12 @@ function pick(theme) {
 .tp-item.is-active .tp-check {
   opacity: 1;
   transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tp-item:hover,
+  .tp-item:active {
+    transform: none;
+  }
 }
 </style>

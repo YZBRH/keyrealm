@@ -436,7 +436,7 @@ async function handleMinimize() {
   -webkit-backdrop-filter: var(--v-glass-backdrop, none);
   backdrop-filter: var(--v-glass-backdrop, none);
   border-right: 1px solid var(--v-border);
-  transition: width 0.24s var(--v-ease);
+  transition: width var(--v-base) var(--v-ease-in-out);
   overflow: hidden;
 }
 

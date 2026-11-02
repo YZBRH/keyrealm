@@ -131,7 +131,7 @@ onMounted(() => {
   padding: 28px 28px 24px;
   box-shadow: var(--v-shadow-lg);
   /* 不加 both：填充模式会留下末帧 transform，使本卡片成为 position: fixed 后代的包含块（见 base.css 同名注释） */
-  animation: v-fade-up 0.5s var(--v-ease);
+  animation: v-fade-up var(--v-slow) var(--v-ease-out);
 }
 
 /* ── 品牌区 ─────────────────────────────────────────────────────── */

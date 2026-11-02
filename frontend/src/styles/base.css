@@ -24,12 +24,16 @@
   --v-halo-2: color-mix(in srgb, var(--v-accent) 26%, transparent);
   --v-halo-opacity: 0.72;
 
-  /* 动效曲线 */
+  /* 动效曲线：颜色/悬停用标准 ease；进入/退出用强 ease-out；屏内位移用强 ease-in-out。
+     内置 ease 太弱——「响应快」主要来自 ease-out 的起始速度，而不是把时长调短。 */
   --v-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --v-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --v-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --v-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
-  --v-fast: 0.16s;
-  --v-base: 0.24s;
-  --v-slow: 0.42s;
+  /* UI 时长预算：交互反馈 ≤160ms、弹层 ≤200ms、模态 ≤300ms */
+  --v-fast: 0.14s;
+  --v-base: 0.2s;
+  --v-slow: 0.28s;
 
   /* 主色「混色基底」：浅色主题向白靠、深色主题向底色靠（Element 的 light-N 语义） */
   --v-ramp-base: #fff;
@@ -295,8 +299,7 @@ h4 {
   -webkit-backdrop-filter: var(--v-glass-backdrop, none);
   backdrop-filter: var(--v-glass-backdrop, none);
   overflow: hidden;
-  transition: box-shadow var(--v-base) var(--v-ease), transform var(--v-base) var(--v-ease),
-    border-color var(--v-base) var(--v-ease);
+  transition: box-shadow var(--v-base) var(--v-ease), border-color var(--v-base) var(--v-ease);
 }
 
 /* 卡片顶缘的一道渐变高光：不抢眼，但让「玻璃」立起来 */
@@ -348,17 +351,21 @@ h4 {
   --el-button-hover-border-color: var(--v-border-strong);
   font-weight: 500;
   border-radius: var(--v-radius-sm);
-  transition: transform var(--v-fast) var(--v-ease), box-shadow var(--v-base) var(--v-ease),
+  transition: transform var(--v-fast) var(--v-ease-out), box-shadow var(--v-base) var(--v-ease),
     background-color var(--v-base) var(--v-ease), border-color var(--v-base) var(--v-ease),
     color var(--v-base) var(--v-ease);
 }
 
-.el-button:not(.is-text):not(.is-link):not(.is-disabled):hover {
-  transform: translateY(-1px);
+/* 悬停位移只在精确指针上生效：触屏的 sticky hover 会让按钮一直「浮着」 */
+@media (hover: hover) and (pointer: fine) {
+  .el-button:not(.is-text):not(.is-link):not(.is-disabled):hover {
+    transform: translateY(-1px);
+  }
 }
 
+/* 按下反馈要立刻可见：scale 比 1px 位移更容易被感知 */
 .el-button:not(.is-text):not(.is-link):not(.is-disabled):active {
-  transform: translateY(0.5px) scale(0.99);
+  transform: translateY(0) scale(0.97);
 }
 
 .el-button--primary:not(.is-plain):not(.is-text):not(.is-link) {
@@ -368,8 +375,9 @@ h4 {
   border: none;
   color: var(--v-primary-ink);
   box-shadow: var(--v-glow);
-  transition: background-position var(--v-slow) var(--v-ease), transform var(--v-fast) var(--v-ease),
-    box-shadow var(--v-base) var(--v-ease), filter var(--v-base) var(--v-ease);
+  transition: background-position var(--v-base) var(--v-ease-out),
+    transform var(--v-fast) var(--v-ease-out), box-shadow var(--v-base) var(--v-ease),
+    filter var(--v-base) var(--v-ease);
 }
 
 .el-button--primary:not(.is-plain):not(.is-text):not(.is-link):hover {
@@ -485,7 +493,8 @@ h4 {
 .el-radio__inner {
   border-radius: 5px;
   border-color: var(--v-border-strong);
-  transition: all var(--v-fast) var(--v-ease);
+  transition: background-color var(--v-fast) var(--v-ease),
+    border-color var(--v-fast) var(--v-ease), box-shadow var(--v-fast) var(--v-ease);
 }
 
 .el-radio__inner {
@@ -506,7 +515,9 @@ h4 {
 
 .el-radio-button__inner {
   border-color: var(--v-border);
-  transition: all var(--v-base) var(--v-ease);
+  transition: background-color var(--v-fast) var(--v-ease),
+    border-color var(--v-fast) var(--v-ease), color var(--v-fast) var(--v-ease),
+    box-shadow var(--v-fast) var(--v-ease);
 }
 
 .el-radio-button__original-radio:checked + .el-radio-button__inner {
@@ -614,11 +625,8 @@ h4 {
   font-weight: 500;
   border-width: 1px;
   padding: 0 10px;
-  transition: transform var(--v-fast) var(--v-spring), box-shadow var(--v-base) var(--v-ease);
-}
-
-.el-tag:hover {
-  transform: translateY(-1px);
+  transition: background-color var(--v-fast) var(--v-ease),
+    border-color var(--v-fast) var(--v-ease), color var(--v-fast) var(--v-ease);
 }
 
 .el-tag--primary {
@@ -729,7 +737,8 @@ html.dark :is(
 .el-progress-bar__inner {
   background: var(--v-grad-brand);
   border-radius: 999px;
-  transition: width var(--v-slow) var(--v-ease);
+  /* 进度是持续变化量：linear 才像「在走」，且短时长避免宽度动画拖慢布局 */
+  transition: width var(--v-fast) linear;
 }
 
 /* ── 9. 弹层：对话框 / 抽屉 / 气泡 / 下拉 ──────────────────────────── */
@@ -738,7 +747,7 @@ html.dark :is(
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   background-color: color-mix(in srgb, var(--v-text) 34%, transparent);
-  animation: v-fade-in var(--v-base) var(--v-ease);
+  animation: v-fade-in var(--v-base) var(--v-ease-out);
 }
 
 .el-dialog {
@@ -747,7 +756,7 @@ html.dark :is(
   --el-dialog-box-shadow: var(--v-shadow-lg);
   border: 1px solid var(--v-glass-border);
   overflow: hidden;
-  animation: v-pop-in var(--v-slow) var(--v-spring);
+  animation: v-pop-in var(--v-slow) var(--v-ease-out);
 }
 
 .el-dialog__header {
@@ -804,7 +813,7 @@ html.dark :is(
      动画一旦包含 transform，就会在动画期间顶掉真实坐标 —— 表现为提示框先在
      左上角弹出、再闪回正确位置。translate/scale 独立属性同样不能用（会污染
      popper 自身的 rect 测量）。要「弹出感」请只做透明度。 */
-  animation: v-pop-fade var(--v-base) var(--v-spring);
+  animation: v-pop-fade var(--v-fast) var(--v-ease-out);
 }
 
 .el-popper.is-light .el-popper__arrow::before,
@@ -842,7 +851,7 @@ html.dark :is(
   backdrop-filter: blur(18px) saturate(1.6);
   box-shadow: var(--v-shadow-lg);
   padding: 12px 20px;
-  animation: v-msg-in var(--v-slow) var(--v-spring);
+  animation: v-msg-in var(--v-base) var(--v-ease-out);
 }
 
 /* 居中消息条靠 translateX(-50%) 定中，入场动画必须把它一并写进 transform，
@@ -873,7 +882,7 @@ html.dark :is(
   backdrop-filter: blur(20px) saturate(1.6);
   box-shadow: var(--v-shadow-lg);
   padding: 22px;
-  animation: v-pop-in var(--v-slow) var(--v-spring);
+  animation: v-pop-in var(--v-slow) var(--v-ease-out);
 }
 
 .el-message-box__title {
@@ -900,8 +909,8 @@ html.dark :is(
   position: relative;
   margin: 2px 8px;
   border-radius: var(--v-radius-sm);
-  transition: background-color var(--v-base) var(--v-ease), color var(--v-base) var(--v-ease),
-    box-shadow var(--v-base) var(--v-ease), transform var(--v-fast) var(--v-ease);
+  transition: background-color var(--v-fast) var(--v-ease), color var(--v-fast) var(--v-ease),
+    box-shadow var(--v-fast) var(--v-ease), transform var(--v-fast) var(--v-ease-out);
 }
 
 .el-menu-item:hover {
@@ -926,9 +935,9 @@ html.dark :is(
   height: 18px;
   border-radius: 0 3px 3px 0;
   background: var(--v-grad-brand);
-  transform: translateY(-50%) scaleY(0);
+  transform: translateY(-50%) scaleY(0.2);
   transform-origin: center;
-  animation: v-grow-in var(--v-slow) var(--v-spring) forwards;
+  animation: v-grow-in var(--v-fast) var(--v-ease-out) forwards;
 }
 
 .el-menu--collapse .el-menu-item {
@@ -967,7 +976,7 @@ html.dark :is(
    末帧值与元素自身样式一致（opacity:1 / 无 transform），不加填充模式视觉上完全相同。 */
 .layout-main > * ,
 .v-enter {
-  animation: v-fade-up var(--v-slow) var(--v-ease);
+  animation: v-fade-up var(--v-base) var(--v-ease-out);
 }
 
 /* ── 12. 动效关键帧 ────────────────────────────────────────────────── */
@@ -978,7 +987,7 @@ html.dark :is(
 }
 
 @keyframes v-fade-up {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -996,18 +1005,18 @@ html.dark :is(
 }
 
 @keyframes v-msg-in {
-  0% { opacity: 0; transform: translateY(-14px) scale(0.94); }
+  0% { opacity: 0; transform: translateY(-10px) scale(0.96); }
   100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* 居中消息条专用：保留 translateX(-50%)，避免入场时横向跳动 */
 @keyframes v-msg-in-center {
-  0% { opacity: 0; transform: translate(-50%, -14px) scale(0.94); }
+  0% { opacity: 0; transform: translate(-50%, -10px) scale(0.96); }
   100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
 }
 
 @keyframes v-grow-in {
-  from { transform: translateY(-50%) scaleY(0); }
+  from { transform: translateY(-50%) scaleY(0.2); }
   to { transform: translateY(-50%) scaleY(1); }
 }
 
@@ -1029,6 +1038,12 @@ html.dark :is(
   .el-dialog,
   .el-message-box {
     animation: none !important;
+  }
+
+  /* 位移类反馈直接去掉，保留颜色 / 透明度变化 */
+  .el-button:not(.is-text):not(.is-link):not(.is-disabled):hover,
+  .el-button:not(.is-text):not(.is-link):not(.is-disabled):active {
+    transform: none !important;
   }
 
   * {
