@@ -75,14 +75,16 @@ function applyOrder(saved) {
       pending.delete(path)
     }
   }
-  for (const item of NAV_ITEMS) {
-    if (pending.has(item.path)) ordered.push(item)
-  }
   // 仪表盘是后加入的入口：旧版保存的顺序里没有它，补到最前；
   // 若用户已经把仪表盘拖到别处，保存顺序里就有它，尊重用户选择。
-  if (!ordered.some((item) => item.path === '/dashboard')) {
-    const dashboard = NAV_ITEMS.find((item) => item.path === '/dashboard')
-    if (dashboard) ordered.unshift(dashboard)
+  // 注意必须赶在「补齐剩余项」之前处理，否则它会被追加到末尾、再也 unshift 不上去。
+  const dashboard = NAV_ITEMS.find((item) => item.path === '/dashboard')
+  if (dashboard && pending.has(dashboard.path)) {
+    ordered.unshift(dashboard)
+    pending.delete(dashboard.path)
+  }
+  for (const item of NAV_ITEMS) {
+    if (pending.has(item.path)) ordered.push(item)
   }
   return ordered
 }
