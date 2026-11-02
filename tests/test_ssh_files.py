@@ -119,6 +119,11 @@ class _FakeSFTP:
             if data is None:
                 raise IOError("No such file")
             return _Handle(data)
+        # 与 paramiko 一致：只有 w/a/+ 才置写标志（单独的 'x' 打开后不可写）
+        if not any(flag in mode for flag in "wa+"):
+            raise IOError("File not open for writing")
+        if "x" in mode and (path in self.files or path in self.dirs):
+            raise IOError("File exists")
         return _WriteHandle(self.files, path)
 
     def close(self):

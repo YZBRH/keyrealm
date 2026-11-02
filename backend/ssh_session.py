@@ -684,7 +684,9 @@ class _Session:
                 if is_dir:
                     sftp.mkdir(target)
                 else:
-                    with sftp.open(target, "wb") as handle:
+                    # 'wx' = O_EXCL | O_CREAT | O_WRONLY：检查后被抢先创建也不会覆盖。
+                    # 必须带 'w'——paramiko 只按 w/a/+ 置 WRITE 标志，单独的 'x' 打开不可写。
+                    with sftp.open(target, "wx") as handle:
                         handle.write(data)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or ("无法创建目录" if is_dir else "无法创建文件")) from exc
@@ -722,10 +724,9 @@ class _Session:
             else:
                 raise SshError("同目录下已存在同名文件或目录")
             try:
-                try:
-                    sftp.posix_rename(target, destination)
-                except (AttributeError, IOError, OSError):
-                    sftp.rename(target, destination)
+                # 标准 SSH_FXP_RENAME：目标已存在时由服务器拒绝（**不会覆盖**）。
+                # 不用 posix-rename：它的语义是「原子覆盖」，与这里「不覆盖同名」的承诺相反。
+                sftp.rename(target, destination)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "重命名失败") from exc
         return {"ok": True, "path": destination, "old_path": target,
