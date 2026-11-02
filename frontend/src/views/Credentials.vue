@@ -652,11 +652,14 @@ function applyFrame(dialog, frame) {
   dialog.listError = ''
 }
 
-function openList(cred, action, params = {}, actionsOverride = []) {
+function openList(cred, action, params = {}, actionsOverride = [], crumbLabel = '') {
   const dialog = actionDialog.value
   const sameCredential = dialog.credentialId === cred.id && dialog.visible
-  const crumb = sameCredential && dialog.listTitle
-    ? [...dialog.listCrumb, dialog.listTitle]
+  // 面包屑记录「上一层的入口名」：下钻时优先用被点的那一行（文件夹 / 桶的名字），
+  // 否则同一操作连续下钻会出现一长串重复的「匿名浏览对象/匿名浏览对象/…」。
+  const label = crumbLabel || dialog.listTitle
+  const crumb = sameCredential && label
+    ? [...dialog.listCrumb, label]
     : []
   // 行内动作要按 id 找到「目标操作」，所以必须一直带着完整操作表
   const known = (actionsOverride && actionsOverride.length)
@@ -804,7 +807,8 @@ function runRowAction(rowAction, row) {
   if (kind === 'list') {
     // 下钻：把当前帧压栈，返回时直接还原
     actionDialog.value.listStack = [...actionDialog.value.listStack, listFrame(actionDialog.value)]
-    openList({ id: actionDialog.value.credentialId, name: actionDialog.value.credentialName }, target, params)
+    openList({ id: actionDialog.value.credentialId, name: actionDialog.value.credentialName },
+      target, params, [], rowCrumbLabel(row))
     return
   }
   if (kind === 'form') {
@@ -827,6 +831,23 @@ function runRowAction(rowAction, row) {
 // 由双击直接触发，菜单里只在没有其它可用动作时才补一个「打开」。
 
 const listCtx = ref({ visible: false, x: 0, y: 0, row: null, actions: [] })
+
+/** 下钻面包屑用：取该行最能代表「进入的是哪个容器」的字段，只保留最后一段。 */
+function rowCrumbLabel(row) {
+  if (!row) return ''
+  const keys = ('folderPath,prefix,path,name,key,domain,zone,full_name,repo,bucket,subject,title')
+    .split(',')
+  let raw = ''
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+      raw = String(row[key])
+      break
+    }
+  }
+  const text = raw.replace(/\/+$/, '')
+  if (!text) return ''
+  return text.slice(text.lastIndexOf('/') + 1)
+}
 
 function listActionsFor(row) {
   const enabled = (actionDialog.value.listRowActions || [])
