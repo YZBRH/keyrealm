@@ -336,6 +336,13 @@ class VaultApi:
     def ssh_files_delete(self, session_id: str, remote_path: str, recursive: bool = False):
         return api.ssh_files_delete(session_id, remote_path, recursive)
 
+    def ssh_files_create(self, session_id: str, directory: str, name: str,
+                         is_dir: bool = False, content_b64: str = ""):
+        return api.ssh_files_create(session_id, directory, name, is_dir, content_b64)
+
+    def ssh_files_rename(self, session_id: str, remote_path: str, new_name: str):
+        return api.ssh_files_rename(session_id, remote_path, new_name)
+
     # ── 后台任务 ──
     def list_tasks(self):
         return api.list_tasks()

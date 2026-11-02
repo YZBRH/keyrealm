@@ -302,6 +302,8 @@ window.addEventListener('vault:credential_updated', (e) => {
 - **方法名与签名必须和主进程一致**：mock 直接冒充 pywebview 桥，所以它的键是**后端 IPC 名**
   （`list_proxies` / `set_tree_order` / `test_proxy_id` …，不是 `index.js` 里的驼峰包装名），
   参数顺序也要与 `main.py` 的 `VaultApi` 逐一对齐——桥接只走位置参数，错位不会报错、只会拿到错值。
+  新增前端接口时**同步在 `VaultApi` 上加同名方法**；`tests/test_api_bridge.py` 会扫描
+  `api/index.js` 里的 `call('x')` 并校验桥接方法都存在（漏加会直接测试失败）。
 - **返回值要贴合后端语义**：同样受 `call()` 的 `unwrap()` 约束（`{ok:false}` / `{error:…}` 被当失败抛出）；
   空值语义也要一致，例如代理 id 是 **32 位十六进制串**、`set_global_proxy(null)` = 直连、
   全局为直连时 `test_proxy_id()` 只测直连（`proxied` 为 `null`）。
