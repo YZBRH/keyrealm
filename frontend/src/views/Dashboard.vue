@@ -11,7 +11,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { Refresh, SetUp, VideoPlay } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 import BatchVerifyDialog from '@/components/BatchVerifyDialog.vue'
@@ -31,6 +31,61 @@ const clock = ref('')
 const batchVisible = ref(false)
 const batchCandidates = ref([])
 const batchLoading = ref(false)
+
+// ── 模块显隐（纯界面偏好，存 localStorage，与其它布局偏好一致）──
+const MODULE_KEY = 'vault.dashboard.hiddenModules'
+const MODULES = [
+  { key: 'health', row: 'top', label: '状态矩阵', desc: '凭据总数、状态与新鲜度分布' },
+  { key: 'core', row: 'top', label: '健康度核心', desc: '状态环、轨道粒子与健康度' },
+  { key: 'system', row: 'top', label: '系统状态', desc: 'MCP / 代理 / TLS / 匿名模式 / 任务' },
+  { key: 'categories', row: 'mid', label: '类别分布', desc: '按插件类别的凭据数量与状态构成' },
+  { key: 'risks', row: 'mid', label: '风险队列', desc: '失效、异常、从未验证与长期未验证' },
+  { key: 'activity', row: 'bottom', label: '最近活动', desc: '最近验证记录与进行中的后台任务' },
+  { key: 'groups', row: 'bottom', label: '分组矩阵', desc: '按分组统计凭据数量' },
+]
+const MODULE_KEYS = new Set(MODULES.map((item) => item.key))
+
+function readHiddenModules() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(MODULE_KEY) || '[]')
+    if (!Array.isArray(raw)) return []
+    const list = [...new Set(raw.filter((key) => MODULE_KEYS.has(key)))]
+    // 手工改坏或旧版本残留导致「全部隐藏」时回到默认，避免空白页
+    return list.length >= MODULES.length ? [] : list
+  } catch {
+    return []
+  }
+}
+
+const hiddenModules = ref(readHiddenModules())
+const customizeVisible = ref(false)
+const draftModules = ref([])
+
+const showModule = (key) => !hiddenModules.value.includes(key)
+const rowVisible = (row) => MODULES.some((item) => item.row === row && showModule(item.key))
+const anyModuleVisible = computed(() => MODULES.some((item) => showModule(item.key)))
+
+function openCustomize() {
+  draftModules.value = MODULES.filter((item) => showModule(item.key)).map((item) => item.key)
+  customizeVisible.value = true
+}
+
+function resetModules() {
+  draftModules.value = MODULES.map((item) => item.key)
+}
+
+function saveModules() {
+  const selected = new Set(draftModules.value.filter((key) => MODULE_KEYS.has(key)))
+  if (!selected.size) {
+    ElMessage.warning('至少保留一个显示模块')
+    return
+  }
+  hiddenModules.value = MODULES.map((item) => item.key).filter((key) => !selected.has(key))
+  try {
+    localStorage.setItem(MODULE_KEY, JSON.stringify(hiddenModules.value))
+  } catch { /* 隐私模式 / 存储被禁用：本次会话内仍生效 */ }
+  customizeVisible.value = false
+}
 
 let clockTimer = null
 let reloadTimer = null
@@ -278,6 +333,7 @@ onBeforeUnmount(() => {
       <span class="dash-live"><i /> LIVE</span>
       <div class="spacer" />
       <span class="dash-clock">{{ clock }}</span>
+      <el-button :icon="SetUp" @click="openCustomize">自定义</el-button>
       <el-button :icon="Refresh" :loading="refreshing" @click="load()">刷新</el-button>
       <el-button
         type="primary"
@@ -295,9 +351,9 @@ onBeforeUnmount(() => {
       </template>
     </el-alert>
 
-    <div v-if="overview" class="hud">
-      <div class="hud-row hud-top">
-        <section class="hud-card v-glass health-panel">
+    <div v-if="overview && anyModuleVisible" class="hud">
+      <div v-if="rowVisible('top')" class="hud-row hud-top">
+        <section v-if="showModule('health')" class="hud-card v-glass health-panel">
           <header class="hud-head">
             <span class="hud-title">STATUS MATRIX</span>
             <span class="hud-tag">{{ statusTotal }} CREDENTIALS</span>
@@ -375,7 +431,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="hud-card v-glass core-panel">
+        <section v-if="showModule('core')" class="hud-card v-glass core-panel">
           <DashboardCore
             :health="overview.health"
             :status="overview.status"
@@ -383,7 +439,7 @@ onBeforeUnmount(() => {
           />
         </section>
 
-        <section class="hud-card v-glass system-panel">
+        <section v-if="showModule('system')" class="hud-card v-glass system-panel">
           <header class="hud-head">
             <span class="hud-title">SYSTEM</span>
             <el-button link size="small" @click="router.push('/settings')">设置</el-button>
@@ -401,8 +457,8 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <div class="hud-row hud-mid">
-        <section class="hud-card v-glass category-panel">
+      <div v-if="rowVisible('mid')" class="hud-row hud-mid">
+        <section v-if="showModule('categories')" class="hud-card v-glass category-panel">
           <header class="hud-head">
             <span class="hud-title">CATEGORY DISTRIBUTION</span>
             <span class="hud-tag">{{ categoryRows.length }} 类</span>
@@ -427,7 +483,7 @@ onBeforeUnmount(() => {
           <div v-else class="hud-empty">暂无凭据类别</div>
         </section>
 
-        <section class="hud-card v-glass risk-panel">
+        <section v-if="showModule('risks')" class="hud-card v-glass risk-panel">
           <header class="hud-head">
             <span class="hud-title">RISK QUEUE</span>
             <span class="hud-tag">{{ riskRows.length }} 项</span>
@@ -449,8 +505,8 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <div class="hud-row hud-bottom">
-        <section class="hud-card v-glass activity-panel">
+      <div v-if="rowVisible('bottom')" class="hud-row hud-bottom">
+        <section v-if="showModule('activity')" class="hud-card v-glass activity-panel">
           <header class="hud-head">
             <span class="hud-title">RECENT ACTIVITY</span>
             <el-button link size="small" @click="router.push('/tasks')">任务</el-button>
@@ -486,7 +542,7 @@ onBeforeUnmount(() => {
           </template>
         </section>
 
-        <section class="hud-card v-glass group-panel">
+        <section v-if="showModule('groups')" class="hud-card v-glass group-panel">
           <header class="hud-head">
             <span class="hud-title">GROUP MATRIX</span>
             <el-button link size="small" @click="router.push('/groups')">管理</el-button>
@@ -510,9 +566,30 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <div v-else-if="overview" class="hud-blank">
+      <el-empty description="所有模块已隐藏" :image-size="70">
+        <el-button type="primary" @click="openCustomize">选择显示模块</el-button>
+      </el-empty>
+    </div>
+
     <div v-else v-loading="loading" class="dash-skeleton">
       <span v-if="!loading">暂无数据</span>
     </div>
+
+    <el-dialog v-model="customizeVisible" title="仪表盘模块" width="480px">
+      <p class="custom-hint">选择要显示的模块（至少保留一个），设置仅保存在本机。</p>
+      <el-checkbox-group v-model="draftModules" class="module-list">
+        <el-checkbox v-for="item in MODULES" :key="item.key" :value="item.key" class="module-item">
+          <span class="module-name">{{ item.label }}</span>
+          <small>{{ item.desc }}</small>
+        </el-checkbox>
+      </el-checkbox-group>
+      <template #footer>
+        <el-button @click="resetModules">恢复默认</el-button>
+        <el-button @click="customizeVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveModules">保存</el-button>
+      </template>
+    </el-dialog>
 
     <BatchVerifyDialog v-model="batchVisible" :candidates="batchCandidates" />
   </div>
@@ -580,21 +657,20 @@ onBeforeUnmount(() => {
 }
 
 .hud-row {
-  display: grid;
+  display: flex;
   gap: 16px;
   align-items: stretch;
 }
 
-.hud-top {
-  grid-template-columns: minmax(230px, 0.9fr) minmax(340px, 1.25fr) minmax(240px, 0.85fr);
-}
+/* 用 flex 而不是固定网格：模块可被自定义隐藏，剩余面板要能自动铺满 */
+.hud-top > .health-panel { flex: 0.9 1 230px; }
+.hud-top > .core-panel { flex: 1.25 1 340px; }
+.hud-top > .system-panel { flex: 0.85 1 240px; }
 
-.hud-mid {
-  grid-template-columns: 1.1fr 1fr;
-}
-
-.hud-bottom {
-  grid-template-columns: 1.2fr 1fr;
+.hud-mid > *,
+.hud-bottom > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .hud-card {
@@ -1092,6 +1168,50 @@ onBeforeUnmount(() => {
   border-radius: var(--v-radius-lg);
 }
 
+.hud-blank {
+  min-height: 52vh;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--v-border);
+  border-radius: var(--v-radius-lg);
+}
+
+/* ── 模块自定义对话框 ─────────────────────────────────── */
+.custom-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--v-text-3);
+}
+
+.module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.module-item {
+  height: auto;
+  margin-right: 0;
+  align-items: flex-start;
+}
+
+.module-item :deep(.el-checkbox__label) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.45;
+}
+
+.module-name {
+  font-size: 13px;
+  color: var(--v-text);
+}
+
+.module-item small {
+  font-size: 11px;
+  color: var(--v-text-3);
+}
+
 @keyframes live-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.82); }
@@ -1099,22 +1219,29 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1280px) {
   .hud-top {
-    grid-template-columns: minmax(230px, 1fr) minmax(300px, 1.1fr);
+    flex-wrap: wrap;
   }
   .core-panel {
-    grid-column: 1 / -1;
     order: -1;
+    flex: 1 1 100%;
     min-height: 380px;
+  }
+  .hud-top > .health-panel,
+  .hud-top > .system-panel {
+    flex: 1 1 280px;
   }
   .hud-mid,
   .hud-bottom {
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 }
 
 @media (max-width: 860px) {
   .hud-top {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+  .hud-top > * {
+    flex-basis: auto;
   }
 }
 

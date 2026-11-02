@@ -370,6 +370,9 @@ App.vue
   `prefers-reduced-motion` 下只画静态帧。
 - **批量验证**：工具栏按钮打开 `components/BatchVerifyDialog.vue`（与凭据管理共用）——
   候选范围为**全部凭据**，默认全选可批量验证的条目，并发 / 超时与凭据页同一套回填与保存逻辑。
+- **模块自定义**：工具栏「自定义」可勾选要显示的模块（状态矩阵 / 核心 / 系统 / 类别 / 风险 /
+  最近活动 / 分组），至少保留一个；隐藏列表存 `localStorage['vault.dashboard.hiddenModules']`，
+  属于纯前端偏好。布局用 flex，隐藏后剩余面板自动铺满。
 - **下钻**：点状态 / 类别 / 分组 / 风险 / 最近验证项时，先写共享 `vaultStore.filters`
   再跳 `/credentials`（风险与最近项用名称搜索精确落点）。
 
