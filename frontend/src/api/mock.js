@@ -23,6 +23,7 @@ const minutesDate = (n) => new Date(Date.now() - n * 60_000)
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
 const LOG_LEVEL_VALUES = { DEBUG: 10, INFO: 20, WARNING: 30, ERROR: 40, CRITICAL: 50 }
 const MOCK_LOG_FILE = '<开发模式>/data/logs/keyrealm.log'
+const TLS_VERSIONS = ['auto', '1.0', '1.1', '1.2', '1.3']
 
 /** 生成一行与后端格式一致的日志文本：YYYY-MM-DD HH:MM:SS [LEVEL] name: message */
 function logLine(level, name, message, date = new Date()) {
@@ -108,6 +109,7 @@ function createState() {
     initialized: true,
     unlocked: false,
     mcpRunning: false,
+    mcpHost: '127.0.0.1',
     mcpPort: 8765,
     groups,
     plugins,
@@ -119,6 +121,27 @@ function createState() {
       created_at: daysAgo(2),
       last_used_at: minutesAgo(2),
     },
+    // 后台任务快照（字段与 backend/tasks.py 一致）
+    tasks: [
+      {
+        id: 'mocktask0001', kind: 'download', title: '下载对象 reports/2026-Q3.zip',
+        credential_id: 5, credential_type: 'api_tavily', action_id: 'download_object',
+        status: 'running', current: 3145728, total: 8388608, text: '正在下载 37%',
+        output: '', error: '', created_at: minutesAgo(3), finished_at: null,
+        cancel_requested: false,
+      },
+      {
+        id: 'mocktask0002', kind: 'download', title: '打包下载 assets/',
+        credential_id: 5, credential_type: 'api_tavily', action_id: 'download_prefix',
+        status: 'done', current: 5, total: 5, text: '',
+        output: '已保存到 /home/demo/assets.zip', error: '',
+        created_at: minutesAgo(70), finished_at: minutesAgo(65), cancel_requested: false,
+      },
+    ],
+    // 类别 / 插件默认设置（键：`category:<名>` / `plugin:<credential_type>`）
+    presetScopes: {},
+    tlsVersion: 'auto',
+    updateToken: '',
     schedules: [
       { id: 1, name: '每日全量验证', trigger_type: 'cron', trigger_args: { hour: 2, minute: 0 }, target_scope: 'all', target_id: null, credential_ids: [], enabled: true, last_run_at: daysAgo(1), next_run_at: daysAgo(-1), created_at: daysAgo(20) },
       { id: 2, name: '工作分组巡检', trigger_type: 'interval', trigger_args: { hours: 6 }, target_scope: 'group', target_id: 1, credential_ids: [], enabled: false, last_run_at: null, next_run_at: null, created_at: daysAgo(10) },
@@ -214,6 +237,69 @@ export function createMockApi() {
 
   const pluginOf = (credentialType) =>
     state.plugins.find((p) => p.credential_type === credentialType)
+
+  // ── 默认设置 / TLS / 简易操作 的公共辅助 ─────────────────
+  const RESERVED_KEYS = ['_proxy_mode', '_proxy_id', '_tls_version']
+
+  /** 可预设字段：非敏感、未标 preset:false、不以 _ 开头（与后端 preset_store 同口径）。 */
+  const presetableFields = (plugin) => (plugin?.fields_schema || []).filter(
+    (f) => f.key && !String(f.key).startsWith('_') && !f.sensitive && f.preset !== false,
+  )
+
+  /** 类别级可预设字段 = 子插件并集，但任一个子插件里敏感 / 禁用的键一律排除（同后端）。 */
+  const categoryPresetableFields = (category) => {
+    const allowed = new Map()
+    const banned = new Set()
+    state.plugins
+      .filter((p) => p.category === category)
+      .forEach((plugin) => {
+        (plugin.fields_schema || []).forEach((field) => {
+          const key = field.key
+          if (!key || String(key).startsWith('_')) return
+          if (field.sensitive || field.preset === false) banned.add(key)
+          else if (!allowed.has(key)) allowed.set(key, field)
+        })
+      })
+    return [...allowed.values()].filter((field) => !banned.has(field.key))
+  }
+
+  const scopeStoreKey = (scope, scopeKey) => `${scope}:${scopeKey}`
+  const scopeValuesOf = (scope, scopeKey) => state.presetScopes[scopeStoreKey(scope, scopeKey)] || {}
+
+  /** 新建凭据时的默认值：插件级覆盖类别级，再按该插件可预设键过滤（含保留键）。 */
+  const presetDefaultsFor = (credentialType) => {
+    const plugin = pluginOf(credentialType)
+    if (!plugin) return {}
+    const merged = {
+      ...scopeValuesOf('category', plugin.category),
+      ...scopeValuesOf('plugin', credentialType),
+    }
+    const allowed = new Set([...presetableFields(plugin).map((f) => f.key), ...RESERVED_KEYS])
+    return Object.fromEntries(
+      Object.entries(merged).filter(([key]) => allowed.has(key)),
+    )
+  }
+
+  /** 某凭据可用的简易操作（与 list_credential_actions / credential_capabilities 共用）。 */
+  const credentialActionsFor = (cred) => {
+    if (!cred) return []
+    if (cred.credential_type === 'remote_ssh') {
+      return [
+        { id: 'console', name: 'SSH 控制台', kind: 'console' },
+        { id: 'files', name: '文件管理', kind: 'files' },
+      ]
+    }
+    if (cred.credential_type === 'mail_smtp') {
+      return [{
+        id: 'inbox', name: '查看收件箱', kind: 'form', submit: '拉取',
+        fields: [{ key: 'count', label: '条数', type: 'text', default: '10' }],
+      }]
+    }
+    const plugin = pluginOf(cred.credential_type)
+    return plugin && plugin.has_actions
+      ? [{ id: 'chat', name: '简单对话', kind: 'chat', model: 'mock-model' }]
+      : []
+  }
 
   /** 界面预览位置的脱敏出口：关闭预览时统一 ******（对齐后端 display_secret）。 */
   const displaySecret = (value) => (state.secretPreview ? maskSecret(value) : '******')
@@ -471,6 +557,18 @@ export function createMockApi() {
       return { ok: true, total: targets.length }
     },
 
+    async get_batch_options() {
+      await delay(40)
+      return {
+        ok: true,
+        concurrency: 8,
+        timeout: 20,
+        concurrency_range: [1, 32],
+        timeout_range: [5, 300],
+        defaults: { concurrency: 8, timeout: 20 },
+      }
+    },
+
     async check_duplicate_credential(credentialType, data = {}) {
       await delay(120)
       requireUnlocked()
@@ -624,7 +722,7 @@ export function createMockApi() {
         running: state.mcpRunning,
         port: state.mcpPort,
         active_tokens: state.mcpToken ? 1 : 0,
-        url: `http://localhost:${state.mcpPort}/sse`,
+        url: `http://${state.mcpHost}:${state.mcpPort}/sse`,
       }
     },
 
@@ -640,6 +738,46 @@ export function createMockApi() {
       state.mcpRunning = false
       emit('vault:mcp_status', { running: false, port: state.mcpPort, active_tokens: 0 })
       return { ok: true }
+    },
+
+    async get_mcp_options() {
+      await delay(40)
+      return {
+        ok: true,
+        host: state.mcpHost,
+        port: state.mcpPort,
+        defaults: { host: '127.0.0.1', port: 8765 },
+        running: state.mcpRunning,
+      }
+    },
+
+    async set_mcp_options(host, port) {
+      await delay(120)
+      const nextHost = String(host || '').trim() || '127.0.0.1'
+      // Mock 只做最基本的形状校验；合法主机交给后端判断
+      if (!/^[A-Za-z0-9.:-]+$/.test(nextHost)) {
+        return { ok: false, message: `监听地址不合法：${nextHost}（只允许 IP 或 localhost）` }
+      }
+      const nextPort = Number(port)
+      if (!Number.isInteger(nextPort) || nextPort < 1 || nextPort > 65535) {
+        return { ok: false, message: '端口需在 1–65535 之间' }
+      }
+      const wasRunning = state.mcpRunning
+      state.mcpHost = nextHost
+      state.mcpPort = nextPort
+      emit('vault:mcp_status', {
+        running: state.mcpRunning,
+        host: state.mcpHost,
+        port: state.mcpPort,
+        active_tokens: state.mcpToken ? 1 : 0,
+      })
+      return {
+        ok: true,
+        host: state.mcpHost,
+        port: state.mcpPort,
+        restarted: wasRunning,
+        url: `http://${state.mcpHost}:${state.mcpPort}/sse`,
+      }
     },
 
     async list_mcp_permissions() {
@@ -727,12 +865,51 @@ export function createMockApi() {
       return { ok: true }
     },
 
+    // ── 后台任务 ──────────────────────────────────────────
+    async list_tasks() {
+      await delay(60)
+      const items = clone(state.tasks)
+      // 与后端一致：先按创建时间倒序，再让进行中的排在最前（保持稳定）
+      items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+      items.sort((a, b) =>
+        (a.status === 'running' ? 0 : 1) - (b.status === 'running' ? 0 : 1))
+      return items
+    },
+
+    async cancel_task(taskId) {
+      await delay(80)
+      const task = state.tasks.find((item) => item.id === String(taskId))
+      if (!task || task.status !== 'running') {
+        return { ok: false, error: '任务不存在或已结束' }
+      }
+      task.cancel_requested = true
+      task.text = task.text || '正在取消…'
+      emit('vault:tasks', clone(task))
+      // Mock 没有真实工作线程：模拟插件在下一个检查点停下
+      setTimeout(() => {
+        const current = state.tasks.find((item) => item.id === task.id)
+        if (!current || current.status !== 'running') return
+        current.status = 'canceled'
+        current.text = '已取消'
+        current.finished_at = iso()
+        emit('vault:tasks', clone(current))
+      }, 400)
+      return { ok: true }
+    },
+
+    async clear_finished_tasks() {
+      await delay(80)
+      const before = state.tasks.length
+      state.tasks = state.tasks.filter((item) => item.status === 'running')
+      return { ok: true, removed: before - state.tasks.length }
+    },
+
     // ── 托盘 ──────────────────────────────────────────────
     async get_tray_status() {
       await delay(40)
       return {
         mcp_running: state.mcpRunning,
-        mcp_host: '127.0.0.1',
+        mcp_host: state.mcpHost,
         mcp_port: state.mcpPort,
         active_tokens: state.mcpToken ? 1 : 0,
         is_locked: !state.unlocked,
@@ -867,6 +1044,80 @@ export function createMockApi() {
       await delay(40)
       state.anonymousMode = Boolean(enabled)
       return { ok: true, enabled: state.anonymousMode }
+    },
+
+    // ── 全局 TLS 版本 ─────────────────────────────────────
+    async get_tls_options() {
+      await delay(40)
+      return { ok: true, tls_version: state.tlsVersion, tls_versions: [...TLS_VERSIONS] }
+    },
+
+    async set_tls_version(value = '') {
+      await delay(40)
+      const text = String(value || '').trim().toLowerCase()
+      state.tlsVersion = TLS_VERSIONS.includes(text) ? text : 'auto'
+      return { ok: true, tls_version: state.tlsVersion, tls_versions: [...TLS_VERSIONS] }
+    },
+
+    // ── 类别 / 插件默认设置 ───────────────────────────────
+    async get_credential_defaults(credentialType) {
+      await delay(60)
+      const plugin = pluginOf(credentialType)
+      return {
+        ok: true,
+        values: clone(presetDefaultsFor(credentialType)),
+        // 未知插件在后端 plugin_uses_proxy() 里返回 False
+        uses_proxy: !!plugin,
+        inherited_proxy: '',
+        inherited_tls: state.tlsVersion,
+        tls_versions: [...TLS_VERSIONS],
+      }
+    },
+
+    async get_scope_options(scope, scopeKey, credentialType = '') {
+      await delay(60)
+      const fields = scope === 'plugin'
+        ? presetableFields(pluginOf(credentialType || scopeKey))
+        : categoryPresetableFields(scopeKey)
+      return {
+        ok: true,
+        scope,
+        scope_key: scopeKey,
+        values: clone(scopeValuesOf(scope, scopeKey)),
+        fields,
+        reserved: [...RESERVED_KEYS],
+        uses_proxy: scope === 'plugin'
+          ? !!pluginOf(credentialType || scopeKey)
+          : state.plugins.some((p) => p.category === scopeKey),
+        tls_versions: [...TLS_VERSIONS],
+      }
+    },
+
+    async set_scope_options(scope, scopeKey, values, credentialType = '') {
+      await delay(80)
+      if (scope !== 'category' && scope !== 'plugin') {
+        return { ok: false, message: `无效作用域：${scope}` }
+      }
+      const allowed = new Set([
+        ...(scope === 'plugin'
+          ? presetableFields(pluginOf(credentialType || scopeKey)).map((f) => f.key)
+          : categoryPresetableFields(scopeKey).map((f) => f.key)),
+        ...RESERVED_KEYS,
+      ])
+      const cleaned = {}
+      Object.entries(values || {}).forEach(([key, value]) => {
+        if (!allowed.has(key)) return
+        if (RESERVED_KEYS.includes(key) && (value === undefined || value === null || value === '')) return
+        cleaned[key] = value
+      })
+      state.presetScopes[scopeStoreKey(scope, scopeKey)] = clone(cleaned)
+      return { ok: true, scope, scope_key: scopeKey, values: clone(cleaned) }
+    },
+
+    async clear_scope_options(scope, scopeKey) {
+      await delay(60)
+      delete state.presetScopes[scopeStoreKey(scope, scopeKey)]
+      return { ok: true }
     },
 
     // ── 开屏动画 ──────────────────────────────────────────
@@ -1090,23 +1341,27 @@ export function createMockApi() {
     async list_credential_actions(credentialId) {
       await delay(60)
       const cred = state.credentials.find((c) => c.id === Number(credentialId))
-      if (!cred) return []
-      if (cred.credential_type === 'mail_smtp') {
-        return [{
-          id: 'inbox', name: '查看收件箱', kind: 'form', submit: '拉取',
-          fields: [{ key: 'count', label: '条数', type: 'text', default: '10' }],
-        }]
+      return credentialActionsFor(cred)
+    },
+
+    async credential_capabilities(credentialId) {
+      await delay(60)
+      const cred = state.credentials.find((c) => c.id === Number(credentialId))
+      // 与后端一致：锁库 / 凭据不存在都返回「未知」，由前端 fail-open。
+      if (!state.unlocked || !cred) return { available: null, note: '', error: true }
+      return {
+        available: credentialActionsFor(cred).map((a) => String(a.id)),
+        note: '',
+        error: false,
       }
-      if (cred.credential_type === 'remote_ssh') {
-        return [
-          { id: 'console', name: 'SSH 控制台', kind: 'console' },
-          { id: 'files', name: '文件管理', kind: 'files' },
-        ]
-      }
-      const plugin = state.plugins.find((p) => p.credential_type === cred.credential_type)
-      return plugin && plugin.has_actions
-        ? [{ id: 'chat', name: '简单对话', kind: 'chat', model: 'mock-model' }]
-        : []
+    },
+
+    async list_draft_models(credentialType, data = null, force = false) {
+      await delay(120)
+      const plugin = pluginOf(credentialType)
+      if (!plugin) return []
+      const hasModelField = (plugin.fields_schema || []).some((f) => f.type === 'model')
+      return hasModelField ? ['mock-model', 'mock-model-mini', 'mock-model-pro'] : []
     },
 
     async run_credential_action(credentialId, actionId, params) {
@@ -1286,6 +1541,16 @@ export function createMockApi() {
       }
     },
 
+    // ── 系统「另存为」 ────────────────────────────────────
+    async pick_save_path(defaultName = '', fileTypes = null) {
+      await delay(80)
+      const safe = String(defaultName || 'download')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/\.\./g, '_')
+        .slice(0, 120) || 'download'
+      return { ok: true, path: `/mock/downloads/${safe}` }
+    },
+
     // ── 备份 / 恢复 ────────────────────────────────────────
     async export_backup(scope = 'all', encrypted = true) {
       await delay(140)
@@ -1402,6 +1667,26 @@ export function createMockApi() {
     async set_update_auto_check(enabled) {
       await delay(40)
       return { ok: true, enabled: Boolean(enabled) }
+    },
+    async get_update_token() {
+      await delay(40)
+      const token = String(state.updateToken || '')
+      return {
+        ok: true,
+        configured: !!token,
+        mask: token ? maskSecret(token) : '',
+      }
+    },
+    async set_update_token(token) {
+      await delay(60)
+      const text = String(token || '').trim()
+      if (!text) {
+        state.updateToken = ''
+        return { ok: true, configured: false, mask: '' }
+      }
+      if (!state.unlocked) return { ok: false, message: '请先解锁后再保存访问令牌' }
+      state.updateToken = text
+      return { ok: true, configured: true, mask: maskSecret(text) }
     },
     async take_update_notice() {
       await delay(20)
