@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Back, Check, CircleClose, CopyDocument, Delete, Edit, Expand, Fold, Operation, Plus, Refresh, Search, SetUp, Sort } from '@element-plus/icons-vue'
 
+import BatchVerifyDialog from '@/components/BatchVerifyDialog.vue'
 import CredentialForm from '@/components/CredentialForm.vue'
 import ScopeDefaultsDialog from '@/components/ScopeDefaultsDialog.vue'
 import SshConsole from '@/components/SshConsole.vue'
@@ -23,7 +24,6 @@ const editing = ref(null)
 // 正在验证中的凭据 id 列表：逐条独立，互不影响——只记单个 id 的话，点了 A 再点 B
 // 会让 A 的按钮重新可点，重复触发同一凭据的验证。
 const verifyingIds = ref([])
-const batchStarting = ref(false)
 
 const filters = vaultStore.filters
 
@@ -45,15 +45,8 @@ const createDefaultType = computed(() => {
   return ''
 })
 
-// ── 批量验证：手动勾选（含一键全选）后并发验证 ──
+// ── 批量验证：对话框与仪表盘共用 components/BatchVerifyDialog.vue ──
 const batchPickVisible = ref(false)
-const batchPickIds = ref([])
-
-// 运行参数：打开对话框时从后端回填，点「验证」时随本次验证一起保存。
-// 边界（min/max）由后端下发，避免前后端各写一份常量。
-const batchConcurrency = ref(8)
-const batchTimeout = ref(20)
-const batchLimits = ref({ concurrency_range: [1, 32], timeout_range: [5, 300] })
 
 // 批量验证的运行状态。两个来源要分开看：
 //   · 手动批量（用户在「批量验证」对话框里点的）→ **整页只读**：新增、编辑、删除、行内动作
@@ -74,61 +67,10 @@ function isBatchVerifying(id) {
   return batchVerifyIds.value.has(String(id))
 }
 
-/** 该类型是否允许批量验证（manifest batch_verify=false 的类型只能手动单条验证；插件被禁用的也排除） */
-function canBatchVerify(type) {
-  const plugin = pluginFor(type)
-  return isPluginEnabled(type) && (!plugin || plugin.batch_verify !== false)
-}
-
-const pickableCredentials = computed(() =>
-  vaultStore.credentials.filter((c) => canBatchVerify(c.credential_type)),
-)
-const pickAllChecked = computed(
-  () =>
-    pickableCredentials.value.length > 0 &&
-    batchPickIds.value.length === pickableCredentials.value.length,
-)
-const pickIndeterminate = computed(
-  () =>
-    batchPickIds.value.length > 0 &&
-    batchPickIds.value.length < pickableCredentials.value.length,
-)
-
 function openBatchPick() {
   // 批量验证进行中不允许再开一轮（按钮也已置灰，这里防的是快捷键/程序化入口）
   if (batchRunning.value) return
-  batchPickIds.value = pickableCredentials.value.map((c) => c.id)
   batchPickVisible.value = true
-  // 回填上次保存的并发数 / 超时与取值范围（失败不阻塞对话框，沿用本地默认值）
-  vaultStore
-    .fetchBatchOptions()
-    .then((opt) => {
-      if (!opt || opt.ok === false) return
-      batchConcurrency.value = Number(opt.concurrency) || batchConcurrency.value
-      batchTimeout.value = Number(opt.timeout) || batchTimeout.value
-      if (opt.concurrency_range) batchLimits.value.concurrency_range = opt.concurrency_range
-      if (opt.timeout_range) batchLimits.value.timeout_range = opt.timeout_range
-    })
-    .catch(() => {})
-}
-
-function onPickAll(checked) {
-  batchPickIds.value = checked ? pickableCredentials.value.map((c) => c.id) : []
-}
-
-async function startPickedBatch() {
-  const ids = [...batchPickIds.value]
-  if (!ids.length) return
-  batchPickVisible.value = false
-  batchStarting.value = true
-  try {
-    await vaultStore.batchVerify('all', null, null, ids,
-      batchConcurrency.value, batchTimeout.value)
-  } catch (err) {
-    ElMessage.error(err.message || '批量验证启动失败')
-  } finally {
-    batchStarting.value = false
-  }
 }
 
 // ── 批量删除：与「批量验证」同一套勾选对话框，但默认**全不选**。
@@ -2221,7 +2163,7 @@ onMounted(async () => {
         :loading="vaultStore.loadingCredentials"
         @click="load"
       >刷新</el-button>
-      <el-button :icon="Refresh" :loading="batchStarting" :disabled="batchRunning" @click="openBatchPick">批量验证</el-button>
+      <el-button :icon="Refresh" :disabled="batchRunning" @click="openBatchPick">批量验证</el-button>
       <el-button :icon="CopyDocument" :disabled="batchLocked" @click="openDedupe">去重</el-button>
       <el-button type="danger" plain :icon="Delete" :disabled="batchLocked" @click="openBatchDelete">批量删除</el-button>
       <el-button type="primary" :icon="Plus" :disabled="batchLocked" @click="openCreate">添加凭据</el-button>
@@ -2510,80 +2452,7 @@ onMounted(async () => {
       </el-card>
     </div>
 
-    <el-dialog
-      v-model="batchPickVisible"
-      title="批量验证"
-      width="560px"
-      :close-on-click-modal="false"
-    >
-      <div class="pick-toolbar">
-        <el-checkbox
-          :model-value="pickAllChecked"
-          :indeterminate="pickIndeterminate"
-          :disabled="batchRunning"
-          @change="onPickAll"
-        >全选</el-checkbox>
-        <span class="pick-count text-muted">
-          已选 {{ batchPickIds.length }} / {{ pickableCredentials.length }}
-        </span>
-      </div>
-      <div class="pick-options">
-        <span class="pick-opt">
-          <span class="text-muted">并发线程数</span>
-          <el-input-number
-            v-model="batchConcurrency"
-            :min="batchLimits.concurrency_range[0]"
-            :max="batchLimits.concurrency_range[1]"
-            :step="1"
-            step-strictly
-            size="small"
-            controls-position="right"
-          />
-        </span>
-        <span class="pick-opt">
-          <span class="text-muted">超时（秒）</span>
-          <el-input-number
-            v-model="batchTimeout"
-            :min="batchLimits.timeout_range[0]"
-            :max="batchLimits.timeout_range[1]"
-            :step="1"
-            step-strictly
-            size="small"
-            controls-position="right"
-          />
-        </span>
-        <span class="text-muted pick-opt-hint">并发越高越快，但可能触发目标限流</span>
-      </div>
-      <div class="pick-list">
-        <el-checkbox-group v-model="batchPickIds">
-          <div
-            v-for="row in vaultStore.credentials"
-            :key="row.id"
-            class="pick-row"
-            :class="{ 'is-disabled': !canBatchVerify(row.credential_type) }"
-          >
-            <el-checkbox :value="row.id" :disabled="batchRunning || !canBatchVerify(row.credential_type)">
-              <span class="pick-name">{{ row.name }}</span>
-              <span class="pick-type text-muted">{{ typeLabel(row.credential_type) }}</span>
-            </el-checkbox>
-            <el-tag v-if="!canBatchVerify(row.credential_type)" size="small" type="info">
-              {{ isPluginEnabled(row.credential_type) ? '需手动验证' : '插件已禁用' }}
-            </el-tag>
-          </div>
-        </el-checkbox-group>
-        <el-empty
-          v-if="!vaultStore.credentials.length"
-          description="暂无可验证的凭据"
-          :image-size="60"
-        />
-      </div>
-      <template #footer>
-        <el-button @click="batchPickVisible = false">取消</el-button>
-        <el-button type="primary" :disabled="!batchPickIds.length || batchRunning" @click="startPickedBatch">
-          验证 {{ batchPickIds.length }} 条
-        </el-button>
-      </template>
-    </el-dialog>
+    <BatchVerifyDialog v-model="batchPickVisible" :candidates="vaultStore.credentials" />
 
     <el-dialog
       v-model="deletePickVisible"
