@@ -970,7 +970,7 @@ Release 标签、更新时下载预编译包替换；测试版按 `main` 的版�
 （`appStore.applyLocked()` → 清空明文 → `watch(appStore.unlocked)` 推回 `/unlock`）。
 详见 [ARCHITECTURE.md §2.8](ARCHITECTURE.md)。
 
-**「匿名模式」**（`settings.anonymous_mode`，默认关）：开启后 `plugin_manager` 在调用插件验证 / 操作 / 能力探测 / 模型列表前先解析该凭据的最终出口；若为直连（含显式直连、全局无代理且环境无代理），直接返回错误而不发起网络请求。SSH 控制台 / SFTP 文件会话也在建连前拦截。
+**「匿名模式」**（`settings.anonymous_mode`，默认关）：开启后 `plugin_manager` 在调用插件验证 / 操作 / 能力探测 / 模型列表前先解析该凭据的最终出口（条目 > 插件/类别预设 > 环境变量 > 全局默认代理）；若为直连（含显式直连、全局与环境都没有代理），直接返回错误而不发起网络请求。SSH 控制台 / SFTP 文件会话也在建连前拦截。被拦时日志会记下解析结果（各层有无代理），便于排查「配了代理却被拦」。
 
 **「不锁定」**（`settings.never_lock`，默认关）：开启后 `idle_lock` 直接跳过空闲判定，
 解锁/创建/改密时把当前密钥交给系统凭据保护（`backend/session_key.py`：Windows DPAPI /

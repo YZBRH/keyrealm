@@ -36,6 +36,18 @@ SETTING_GLOBAL_ID = "global_proxy_id"
 # 旧版单值：保留作为「没启用多代理」时的兜底，也是进程环境变量 VAULT_PROXY 的来源
 SETTING_LEGACY_URL = "verify_proxy"
 
+# 与插件 SDK 的回落顺序保持一致（VAULT_PROXY 是界面写入的，后者是外部 export 的）
+ENV_KEYS = ("VAULT_PROXY", "ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy")
+
+
+def env_url() -> Optional[str]:
+    """进程环境里配置的代理（未被界面设置覆盖时的实际出口）。"""
+    for key in ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            return value
+    return None
+
 
 # ── 注册表 CRUD ──────────────────────────────────────────
 
@@ -232,8 +244,8 @@ def resolve_credential_proxy(data: dict, credential_type: str = "") -> Union[obj
     1. **条目自己**的设置（``_proxy_mode`` / ``_proxy_id``）
     2. **子模块预设**（该 credential_type 的默认设置）
     3. **上层模块预设**（该类别目录的默认设置）
-    4. **全局设置** —— 用 ``ctx.UNSET`` 表达，让 ``proxy()`` 回落到 ``VAULT_PROXY`` 环境变量
-       （它由全局默认代理写入，见 ``set_global_proxy``）
+    4. **全局设置** —— 环境变量（外部 export 优先）> 界面里的全局默认代理；
+       两者都没有才是 ``ctx.UNSET``（实际直连）。
 
     返回 ``ctx.DIRECT``（直连）/ 代理 URL / ``ctx.UNSET``（继续用环境变量那条路）。
     """
@@ -249,7 +261,13 @@ def resolve_credential_proxy(data: dict, credential_type: str = "") -> Union[obj
         if inherited is not None:
             return inherited
     # 4) 全局
-    return ctx.UNSET
+    #
+    # **这里必须解析成具体 URL，不能把「回退环境变量」留给调用方**：全局代理存在库里
+    # （global_proxy_id），进程环境变量 VAULT_PROXY 只是它的同步副本。MCP / CLI / 子进程，
+    # 以及「设置改了但该进程没同步」的进程里环境是空的——只查环境就会把「库里配了代理」
+    # 误判成直连（匿名模式因此误拦），而且实际请求也会真的直连出去，等于绕过匿名模式。
+    # 环境变量仍优先，保持「外部 export 压过界面设置」的老契约。
+    return env_url() or global_url() or ctx.UNSET
 
 
 @contextlib.contextmanager
@@ -282,17 +300,14 @@ def describe_outlet(resolved: Union[object, str]) -> str:
 def effective_url(resolved: Union[object, str]) -> Optional[str]:
     """解析结果最终会用的代理 URL；``None`` 表示实际是直连。
 
-    ``ctx.UNSET`` 表示继续回退环境变量，因此这里与插件 SDK 使用同一组变量。
+    ``ctx.UNSET`` 表示「这一层没指定」：与 ``resolve_credential_proxy`` 的第 4 步同口径，
+    先看环境变量、再看库里的全局默认代理——只查环境变量会在环境未同步的进程里误判成直连。
     """
     if resolved is ctx.DIRECT:
         return None
     if resolved is not ctx.UNSET:
         return str(resolved) or None
-    for key in ("VAULT_PROXY", "ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"):
-        value = os.environ.get(key)
-        if value:
-            return value
-    return None
+    return env_url() or global_url()
 
 
 def missing_proxy_ref(data: dict, credential_type: str = ""):

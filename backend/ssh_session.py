@@ -16,7 +16,6 @@ import base64
 import hashlib
 import io
 import mimetypes
-import os
 import posixpath
 import re
 import socket
@@ -142,18 +141,9 @@ def _strip_pty_echo(text: str, command: str) -> str:
 def _proxy_url(data: dict) -> Optional[str]:
     """该凭据实际生效的代理 URL（含代理链的本机转发器）；直连返回 None。"""
     from . import proxy_store
-    from . import vault_proxy_ctx as ctx
 
     resolved = proxy_store.resolve_credential_proxy(data, "remote_ssh")
-    if resolved is ctx.DIRECT:
-        return None
-    if resolved is ctx.UNSET:
-        for key in ("VAULT_PROXY", "ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"):
-            value = os.environ.get(key)
-            if value:
-                return value
-        return None
-    return str(resolved)
+    return proxy_store.effective_url(resolved)
 
 
 def _open_transport_socket(host: str, port: int, timeout: float, data: dict) -> socket.socket:

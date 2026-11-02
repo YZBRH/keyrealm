@@ -85,6 +85,41 @@ def test_explicit_direct_is_blocked_even_with_env_proxy():
         _clear_env()
 
 
+def test_global_proxy_in_db_is_used_even_without_env_sync():
+    """库里配了全局代理、进程环境变量没同步（MCP / 子进程 / 改完设置未同步）时不能误判直连。"""
+    _clear_env()
+    api.set_anonymous_mode(True)
+    created = proxy_store.create_proxy("anon-global", "socks5://127.0.0.1:1080")
+    pid = created["id"]
+    proxy_store.set_global_proxy(pid)
+    # 模拟「另一个进程」：设置写进了共享库，但本进程环境里没有 VAULT_PROXY
+    _clear_env()
+    try:
+        assert proxy_store.global_proxy_id() == str(pid)
+        assert anonymous.blocked_reason({}, "llm_openai") == ""
+        # 真正发请求的上下文必须是同一个出口（否则「检查通过」但实际直连）
+        with proxy_store.credential_proxy_scope({}, "llm_openai") as outlet:
+            assert outlet == "socks5://127.0.0.1:1080"
+            assert ctx.current() == "socks5://127.0.0.1:1080"
+    finally:
+        proxy_store.set_global_proxy(None)
+        _clear_env()
+
+
+def test_per_credential_proxy_is_not_blocked():
+    _clear_env()
+    api.set_anonymous_mode(True)
+    created = proxy_store.create_proxy("anon-own", "socks5://127.0.0.1:1081")
+    try:
+        data = {"_proxy_mode": "proxy", "_proxy_id": created["id"]}
+        assert anonymous.blocked_reason(data, "llm_openai") == ""
+        with proxy_store.credential_proxy_scope(data, "llm_openai") as outlet:
+            assert outlet == "socks5://127.0.0.1:1081"
+    finally:
+        proxy_store.delete_proxy(created["id"])
+        _clear_env()
+
+
 def test_ssh_console_and_files_are_blocked():
     _clear_env()
     api.set_anonymous_mode(True)
