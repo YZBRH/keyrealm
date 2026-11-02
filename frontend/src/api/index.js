@@ -186,6 +186,8 @@ export const api = {
   listCredentialModels: (id, force = false) => call('list_credential_models', id, force),
   // 版本信息：{version, build, schema_version, display}；display 形如 "1.0.0 (fe15e3b)"
   getVersion: () => call('get_version'),
+  // 仪表盘聚合（状态 / 类别 / 分组 / 风险 / 最近验证 / 任务 / 系统状态），一次 IPC 取全
+  getDashboardOverview: () => call('dashboard_overview'),
   listDraftModels: (credentialType, data = null) => call('list_draft_models', credentialType, data),
   streamCredentialAction: (id, actionId, params, title) =>
     call('stream_credential_action', id, actionId, params, title),

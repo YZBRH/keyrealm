@@ -341,6 +341,7 @@ window.addEventListener('vault:credential_updated', (e) => {
 App.vue
 ├── .v-aurora（背景极光层，纯装饰）
 ├── 侧边栏（Sidebar）
+│   ├── 仪表盘（Dashboard，默认首页）
 │   ├── 凭据管理（Credentials）
 │   ├── 插件管理（PluginManager）
 │   ├── 分组管理（Groups）
@@ -352,6 +353,25 @@ App.vue
 ├── 主内容区（router-view）
 └── 关闭确认弹窗（el-dialog）
 ```
+
+### 仪表盘（Dashboard，默认首页）
+
+- **路由**：`/` 重定向到 `/dashboard`；解锁 / 已认证后访问 setup / unlock 也回落到仪表盘。
+  侧栏新增项排在第一位；旧版保存的 `vault.layout.navOrder` 里没有它时，`applyOrder()`
+  会把它补到最前（已经手动拖过顺序的则保留用户位置）。
+- **数据**：一次 `api.getDashboardOverview()` → `backend/api.py::dashboard_overview()`，
+  聚合状态 / 新鲜度 / 类别 / 分组 / 风险队列 / 最近验证 / 后台任务 / 调度 / MCP / 代理 / TLS /
+  匿名模式。只读、锁库可用、不触发插件同步；返回体不含 `data_plain` / 密文。
+- **实时刷新**：订阅 `credentials_changed`、`credential_updated`、`plugins_changed`、
+  `vault:tasks`、`vault:mcp_status`、`vault:proxies_changed`、批量完成事件，700ms 去抖后重取；
+  页面不可见时不刷新。
+- **视觉**：中央 `DashboardCore.vue` 用 SVG 状态环 + Canvas 轨道粒子（零图表依赖），
+  颜色从 `--v-*` 令牌现读，`MutationObserver` 跟随主题切换；`ResizeObserver` 跟随侧栏折叠；
+  `prefers-reduced-motion` 下只画静态帧。
+- **批量验证**：工具栏按钮打开 `components/BatchVerifyDialog.vue`（与凭据管理共用）——
+  候选范围为**全部凭据**，默认全选可批量验证的条目，并发 / 超时与凭据页同一套回填与保存逻辑。
+- **下钻**：点状态 / 类别 / 分组 / 风险 / 最近验证项时，先写共享 `vaultStore.filters`
+  再跳 `/credentials`（风险与最近项用名称搜索精确落点）。
 
 > 侧边栏展开宽度 **176px**、折叠 64px；顶栏 62px。176px 是按**改名前的旧品牌名**
 > （`Credential Vault`，17 字符）定的——152px 时那个名字会被截断。现名 `Keyrealm` 只有 8 字符，

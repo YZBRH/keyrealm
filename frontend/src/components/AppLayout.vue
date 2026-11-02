@@ -13,6 +13,7 @@ import {
   InfoFilled,
   Key,
   List,
+  Odometer,
   RefreshLeft,
   Setting,
   Lock,
@@ -39,6 +40,7 @@ watch(collapsed, (value) => {
 
 // 导航项默认顺序。用户可在侧栏直接拖拽调整，顺序存 localStorage（纯界面偏好，不进后端）。
 const NAV_ITEMS = [
+  { path: '/dashboard', title: '仪表盘', icon: Odometer },
   { path: '/credentials', title: '凭据管理', icon: Key },
   { path: '/plugins', title: '插件管理', icon: Grid },
   { path: '/groups', title: '分组管理', icon: FolderOpened },
@@ -75,6 +77,12 @@ function applyOrder(saved) {
   }
   for (const item of NAV_ITEMS) {
     if (pending.has(item.path)) ordered.push(item)
+  }
+  // 仪表盘是后加入的入口：旧版保存的顺序里没有它，补到最前；
+  // 若用户已经把仪表盘拖到别处，保存顺序里就有它，尊重用户选择。
+  if (!ordered.some((item) => item.path === '/dashboard')) {
+    const dashboard = NAV_ITEMS.find((item) => item.path === '/dashboard')
+    if (dashboard) ordered.unshift(dashboard)
   }
   return ordered
 }

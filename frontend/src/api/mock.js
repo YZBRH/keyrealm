@@ -716,6 +716,135 @@ export function createMockApi() {
         display: '1.0.0 (mock-dev)' }
     },
 
+    async dashboard_overview() {
+      await delay(80)
+      const now = Date.now()
+      const status = { valid: 0, invalid: 0, error: 0, unknown: 0, plugin_disabled: 0 }
+      const freshness = { never: 0, day: 0, week: 0, month: 0, older: 0 }
+      const categories = new Map()
+      const categoryTypes = new Map()
+      state.plugins.forEach((plugin) => {
+        const key = plugin.category || ''
+        const set = categoryTypes.get(key) || new Set()
+        if (plugin.credential_type) set.add(plugin.credential_type)
+        categoryTypes.set(key, set)
+      })
+      const groups = new Map()
+      const risks = []
+      const recent = []
+      state.credentials.forEach((cred) => {
+        const value = status[cred.status] !== undefined ? cred.status : 'unknown'
+        status[value] += 1
+        const plugin = pluginOf(cred.credential_type)
+        if (plugin && plugin.enabled === false) status.plugin_disabled += 1
+        const catKey = (plugin && plugin.category) || '_'
+        const cat = categories.get(catKey) || {
+          category: (plugin && plugin.category) || '',
+          name: (plugin && plugin.category_name) || '未分类',
+          types: [...(categoryTypes.get((plugin && plugin.category) || '') || [])].sort(),
+          count: 0, valid: 0, invalid: 0, error: 0, unknown: 0,
+        }
+        cat.count += 1
+        cat[value] += 1
+        categories.set(catKey, cat)
+        const groupKey = cred.group_id == null ? 'none' : cred.group_id
+        const grp = groups.get(groupKey) || {
+          id: cred.group_id ?? null, name: cred.group_name || '未分组',
+          color: '', count: 0, valid: 0, invalid: 0, error: 0, unknown: 0,
+        }
+        grp.count += 1
+        grp[value] += 1
+        groups.set(groupKey, grp)
+
+        const verified = cred.last_verified_at ? new Date(cred.last_verified_at) : null
+        const ageDays = verified ? (now - verified.getTime()) / 86400000 : null
+        if (!verified || Number.isNaN(ageDays)) freshness.never += 1
+        else if (ageDays <= 1) freshness.day += 1
+        else if (ageDays <= 7) freshness.week += 1
+        else if (ageDays <= 30) freshness.month += 1
+        else freshness.older += 1
+        if (verified && !Number.isNaN(ageDays)) {
+          recent.push({
+            id: cred.id, name: cred.name, credential_type: cred.credential_type,
+            status: value, at: cred.last_verified_at,
+          })
+        }
+        const message = (cred.status_detail && cred.status_detail.message) || ''
+        let reason = ''
+        let severity = 9
+        if (value === 'invalid') { reason = message || '校验失败'; severity = 0 }
+        else if (value === 'error') { reason = message || '验证异常'; severity = 1 }
+        else if (!verified || Number.isNaN(ageDays)) { reason = '从未验证'; severity = 2 }
+        else if (ageDays > 7) { reason = `已 ${Math.floor(ageDays)} 天未验证`; severity = 3 }
+        if (severity < 9) {
+          risks.push({
+            id: cred.id, name: cred.name, credential_type: cred.credential_type,
+            category: (plugin && plugin.category) || '',
+            category_name: (plugin && plugin.category_name) || '未分类',
+            status: value, last_verified_at: cred.last_verified_at,
+            reason, severity, plugin_enabled: !(plugin && plugin.enabled === false),
+          })
+        }
+      })
+      state.groups.forEach((group) => {
+        const bucket = groups.get(group.id)
+        if (bucket) { bucket.name = group.name; bucket.color = group.color || '' }
+      })
+      risks.sort((a, b) => a.severity - b.severity)
+      recent.sort((a, b) => new Date(b.at) - new Date(a.at))
+      const running = state.tasks.filter((task) => task.status === 'running')
+      const enabledSchedules = state.schedules.filter((item) => item.enabled)
+      const nextRuns = enabledSchedules
+        .map((item) => (item.next_run_at ? new Date(item.next_run_at).getTime() : NaN))
+        .filter((value) => Number.isFinite(value))
+      const total = state.credentials.length
+      return {
+        ok: true,
+        generated_at: iso(),
+        totals: {
+          credentials: total,
+          groups: state.groups.length,
+          plugins: state.plugins.length,
+          enabled_plugins: state.plugins.filter((p) => p.enabled !== false).length,
+          schedules: state.schedules.length,
+          enabled_schedules: enabledSchedules.length,
+        },
+        health: { rate: total ? status.valid / total : 0, valid: status.valid, total },
+        status,
+        freshness,
+        categories: [...categories.values()].sort((a, b) => b.count - a.count),
+        groups: [...groups.values()].sort((a, b) => b.count - a.count),
+        risks: risks.slice(0, 12),
+        recent: recent.slice(0, 8),
+        tasks: {
+          running: running.length,
+          total: state.tasks.length,
+          items: running.slice(0, 4).map((task) => ({
+            id: task.id, title: task.title, current: task.current, total: task.total,
+            text: task.text,
+          })),
+        },
+        schedules: {
+          total: state.schedules.length,
+          enabled: enabledSchedules.length,
+          next_run_at: nextRuns.length ? new Date(Math.min(...nextRuns)).toISOString() : null,
+        },
+        system: {
+          mcp: {
+            running: state.mcpRunning, host: state.mcpHost, port: state.mcpPort,
+            active_tokens: state.mcpToken ? 1 : 0,
+            url: `http://${state.mcpHost}:${state.mcpPort}/sse`,
+          },
+          proxy: {
+            count: state.proxies.length + state.proxyChains.length,
+            display: proxySnapshot().global_display,
+          },
+          tls_version: state.tlsVersion,
+          anonymous: state.anonymousMode,
+        },
+      }
+    },
+
     async get_mcp_status() {
       await delay(60)
       return {

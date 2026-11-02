@@ -4,6 +4,7 @@ import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/AppLayout.vue'
 import Setup from '@/views/Setup.vue'
 import Unlock from '@/views/Unlock.vue'
+import Dashboard from '@/views/Dashboard.vue'
 import Credentials from '@/views/Credentials.vue'
 import PluginManager from '@/views/PluginManager.vue'
 import Groups from '@/views/Groups.vue'
@@ -21,8 +22,9 @@ const router = createRouter({
     {
       path: '/',
       component: AppLayout,
-      redirect: '/credentials',
+      redirect: '/dashboard',
       children: [
+        { path: 'dashboard', name: 'dashboard', component: Dashboard, meta: { title: '仪表盘' } },
         { path: 'credentials', name: 'credentials', component: Credentials, meta: { title: '凭据管理' } },
         { path: 'plugins', name: 'plugins', component: PluginManager, meta: { title: '插件管理' } },
         { path: 'groups', name: 'groups', component: Groups, meta: { title: '分组管理' } },
@@ -71,7 +73,7 @@ router.beforeEach(async (to) => {
     return to.name === 'unlock' ? true : { name: 'unlock' }
   }
   if (to.name === 'setup' || to.name === 'unlock') {
-    return { name: 'credentials' }
+    return { name: 'dashboard' }
   }
   return true
 })
