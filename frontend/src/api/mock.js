@@ -1260,6 +1260,12 @@ export function createMockApi() {
       return { ok: true, path: localPath, size: 0 }
     },
 
+    async ssh_files_delete(sessionId, remotePath, recursive = false) {
+      requireUnlocked()
+      if (!state.mockSshFiles[sessionId]) return { ok: false, error: '会话不存在或已断开' }
+      return { ok: true, path: remotePath, deleted: recursive ? 1 : 1 }
+    },
+
     // ── 备份 / 恢复 ────────────────────────────────────────
     async export_backup(scope = 'all', encrypted = true) {
       await delay(140)

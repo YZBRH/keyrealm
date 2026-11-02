@@ -64,6 +64,17 @@ class _FakeSFTP:
             raise IOError("No such file")
         return _Attr(Path(path).name, stat.S_IFREG | 0o644, len(data), 400)
 
+    def lstat(self, path):
+        return self.stat(path)
+
+    def remove(self, path):
+        if path not in self.files:
+            raise IOError("No such file")
+        del self.files[path]
+
+    def rmdir(self, path):
+        raise IOError("Directory not empty")
+
     def open(self, path, mode):
         if mode == "rb":
             data = self.files.get(path)
@@ -156,6 +167,28 @@ def test_download_to_local_file():
         assert result["ok"] is True
         assert result["size"] == 12
         assert local.read_bytes() == b"hello world\n"
+
+
+def test_delete_file_and_guard_root():
+    session, client = _session()
+    result = session.delete_path("/home/u/readme.txt")
+    assert result["ok"] is True and result["deleted"] == 1
+    assert "/home/u/readme.txt" not in client.sftp.files
+
+    for path in ("", "/"):
+        try:
+            session.delete_path(path)
+        except ssh_session.SshError as exc:
+            assert ("根目录" in str(exc)) or ("有效路径" in str(exc))
+        else:
+            raise AssertionError("根目录 / 空路径未被拒绝")
+
+    try:
+        session.delete_path("/home/u/alpha")
+    except ssh_session.SshError as exc:
+        assert "递归" in str(exc)
+    else:
+        raise AssertionError("非空目录未被拒绝")
 
 
 def test_close_closes_sftp():

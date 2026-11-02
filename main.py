@@ -333,6 +333,9 @@ class VaultApi:
     def ssh_files_download(self, session_id: str, remote_path: str, local_path: str):
         return api.ssh_files_download(session_id, remote_path, local_path)
 
+    def ssh_files_delete(self, session_id: str, remote_path: str, recursive: bool = False):
+        return api.ssh_files_delete(session_id, remote_path, recursive)
+
     # ── 后台任务 ──
     def list_tasks(self):
         return api.list_tasks()

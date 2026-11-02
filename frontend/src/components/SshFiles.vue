@@ -38,6 +38,10 @@ const preview = ref({
 })
 const previewLoading = ref(false)
 const fileInput = ref(null)
+const editing = ref(false)
+const editText = ref('')
+const editSaving = ref(false)
+const deletingPath = ref('')
 
 function b64ToBytes(value) {
   const binary = atob(value || '')
@@ -157,11 +161,84 @@ function onRowClick(row) {
 }
 
 function closePreview() {
+  editing.value = false
   preview.value.visible = false
 }
 
-async function openPreview(row) {
+function startEdit() {
+  if (preview.value.kind !== 'text' || preview.value.truncated) return
+  editText.value = preview.value.text
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+  editText.value = ''
+}
+
+async function saveEdit() {
+  if (!sessionId.value || !preview.value.path) return
+  editSaving.value = true
+  try {
+    const slash = preview.value.path.lastIndexOf('/')
+    const directory = slash > 0 ? preview.value.path.slice(0, slash) : '/'
+    const name = preview.value.path.slice(slash + 1)
+    const bytes = new TextEncoder().encode(editText.value)
+    const res = await api.sshFilesUpload(
+      sessionId.value, directory, name, bytesToB64(bytes.buffer),
+    )
+    if (!res || res.ok === false) {
+      ElMessage.error((res && res.error) || '保存失败')
+      return
+    }
+    ElMessage.success(`已保存 ${name}`)
+    const previewRow = { name, path: preview.value.path, size: res.size || 0 }
+    await load(path.value)
+    await openPreview(previewRow)
+  } catch (err) {
+    ElMessage.error(err.message || '保存失败')
+  } finally {
+    editSaving.value = false
+  }
+}
+
+async function deleteEntry(row) {
+  if (!sessionId.value || !row || !row.path) return
+  const isDir = !!row.is_dir
+  const message = isDir
+    ? `确定递归删除目录「${row.name}」及其全部内容？此操作不可恢复。`
+    : `确定删除文件「${row.name}」？此操作不可恢复。`
+  try {
+    await ElMessageBox.confirm(message, '删除确认', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+  deletingPath.value = row.path
+  try {
+    const res = await api.sshFilesDelete(sessionId.value, row.path, isDir)
+    if (!res || res.ok === false) {
+      ElMessage.error((res && res.error) || '删除失败')
+      return
+    }
+    ElMessage.success(`已删除 ${row.name}`)
+    if (preview.value.path === row.path) closePreview()
+    await load(path.value)
+  } catch (err) {
+    ElMessage.error(err.message || '删除失败')
+  } finally {
+    deletingPath.value = ''
+  }
+}
+
+async function openPreview(row, startEditing = false) {
   if (!sessionId.value) return
+  editing.value = false
+  editText.value = ''
   preview.value = {
     visible: true, name: row.name, path: row.path, kind: '', text: '',
     dataUrl: '', mime: '', size: row.size || 0, truncated: false,
@@ -188,6 +265,14 @@ async function openPreview(row) {
       mime: res.mime || '',
       size: res.size || 0,
       truncated: !!res.truncated,
+    }
+    if (startEditing) {
+      if (kind === 'text' && !res.truncated) {
+        editText.value = preview.value.text
+        editing.value = true
+      } else {
+        ElMessage.warning('该文件暂不支持在线编辑')
+      }
     }
   } catch (err) {
     ElMessage.error(err.message || '读取文件失败')
@@ -339,6 +424,25 @@ defineExpose({ open })
           <el-table-column label="修改时间" width="170">
             <template #default="{ row }">{{ formatTime(row.mtime) }}</template>
           </el-table-column>
+          <el-table-column label="操作" width="170" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="!row.is_dir"
+                size="small"
+                text
+                type="primary"
+                @click.stop="openPreview(row, true)"
+              >编辑</el-button>
+              <el-button v-if="!row.is_dir" size="small" text @click.stop="download(row)">下载</el-button>
+              <el-button
+                size="small"
+                text
+                type="danger"
+                :loading="deletingPath === row.path"
+                @click.stop="deleteEntry(row)"
+              >删除</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <div v-if="truncated" class="sf-hint">目录条目过多，仅显示前 2000 项。</div>
       </div>
@@ -352,6 +456,15 @@ defineExpose({ open })
           {{ formatSize(preview.size) }}<span v-if="preview.mime"> · {{ preview.mime }}</span>
         </div>
         <div v-if="previewLoading" class="sf-preview-empty">加载中…</div>
+        <el-input
+          v-else-if="editing"
+          v-model="editText"
+          class="sf-editor"
+          type="textarea"
+          :rows="12"
+          resize="none"
+          spellcheck="false"
+        />
         <pre v-else-if="preview.kind === 'text'" class="sf-preview-text">{{ preview.text }}</pre>
         <img
           v-else-if="preview.kind === 'image'"
@@ -362,7 +475,25 @@ defineExpose({ open })
         <div v-else class="sf-preview-empty">该文件为二进制或暂不支持预览。</div>
         <div v-if="preview.truncated" class="sf-hint">仅显示前 256KB，下载可获取完整文件。</div>
         <div class="sf-preview-actions">
-          <el-button size="small" type="primary" @click="download(preview)">下载</el-button>
+          <template v-if="editing">
+            <el-button size="small" :disabled="editSaving" @click="cancelEdit">取消</el-button>
+            <el-button size="small" type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+          </template>
+          <template v-else>
+            <el-button
+              v-if="preview.kind === 'text' && !preview.truncated"
+              size="small"
+              @click="startEdit"
+            >编辑</el-button>
+            <el-button size="small" type="primary" @click="download(preview)">下载</el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :loading="deletingPath === preview.path"
+              @click="deleteEntry(preview)"
+            >删除</el-button>
+          </template>
         </div>
       </div>
     </div>
@@ -475,6 +606,13 @@ defineExpose({ open })
   word-break: break-word;
   user-select: text;
   max-height: 300px;
+}
+.sf-editor :deep(.el-textarea__inner) {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: rgba(255, 255, 255, 0.03);
+  color: #d4d4d8;
 }
 .sf-preview-image {
   max-width: 100%;

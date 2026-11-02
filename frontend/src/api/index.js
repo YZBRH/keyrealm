@@ -203,6 +203,8 @@ export const api = {
     call('ssh_files_upload', sessionId, directory, name, contentB64),
   sshFilesDownload: (sessionId, remotePath, localPath) =>
     call('ssh_files_download', sessionId, remotePath, localPath),
+  sshFilesDelete: (sessionId, remotePath, recursive = false) =>
+    call('ssh_files_delete', sessionId, remotePath, recursive),
   batchVerify: (scope = 'all', groupId = null, credentialType = null, credentialIds = null,
     concurrency = null, timeout = null) =>
     call('batch_verify', scope, groupId, credentialType, credentialIds, concurrency, timeout),

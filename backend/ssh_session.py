@@ -581,6 +581,59 @@ class _Session:
                 raise SshError(str(exc) or "下载失败") from exc
         return {"ok": True, "path": local_path, "size": written}
 
+    def _remove_tree_locked(self, sftp, path: str, budget: list[int]) -> None:
+        if budget[0] <= 0:
+            raise SshError("目录条目过多，已中止递归删除")
+        for attr in sftp.listdir_attr(path):
+            child = posixpath.join(path, attr.filename)
+            mode = attr.st_mode or 0
+            if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                self._remove_tree_locked(sftp, child, budget)
+            else:
+                sftp.remove(child)
+                budget[0] -= 1
+        sftp.rmdir(path)
+        budget[0] -= 1
+
+    def delete_path(self, path: str, recursive: bool = False) -> dict:
+        raw = str(path or "").strip()
+        if not raw or raw in (".", ".."):
+            raise SshError("缺少有效路径")
+        with self.sftp_lock:
+            self.last_used = time.monotonic()
+            sftp = self._sftp_locked()
+            try:
+                target = sftp.normalize(raw)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "路径不合法") from exc
+            if not target or target == "/" or target in (".", ".."):
+                raise SshError("不能删除根目录")
+            try:
+                attr = sftp.lstat(target)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "路径不存在") from exc
+            mode = attr.st_mode or 0
+            is_link = stat.S_ISLNK(mode)
+            try:
+                if stat.S_ISDIR(mode) and not is_link:
+                    if not recursive:
+                        sftp.rmdir(target)
+                        deleted = 1
+                    else:
+                        budget = [5000]
+                        self._remove_tree_locked(sftp, target, budget)
+                        deleted = 5001 - budget[0]
+                else:
+                    sftp.remove(target)
+                    deleted = 1
+            except SshError:
+                raise
+            except (IOError, OSError) as exc:
+                if stat.S_ISDIR(mode) and not recursive:
+                    raise SshError("目录非空；如需连同内容删除，请使用递归删除") from exc
+                raise SshError(str(exc) or "删除失败") from exc
+        return {"ok": True, "path": target, "deleted": deleted}
+
     def write_file(self, directory: str, name: str, content_b64: str) -> dict:
         if not name or "/" in name or "\\" in name or name in (".", ".."):
             raise SshError("文件名不合法")
@@ -866,6 +919,21 @@ def download_to(session_id: str, remote_path: str, local_path: str) -> dict:
         return {"ok": False, "error": denied}
     try:
         return session.download_to(remote_path, local_path)
+    except SshError as exc:
+        if session.closed:
+            _drop(session_id)
+        return {"ok": False, "error": str(exc)}
+
+
+def delete_path(session_id: str, remote_path: str, recursive: bool = False) -> dict:
+    session = _get(session_id)
+    if session is None:
+        return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    denied = _anon_denied(session)
+    if denied:
+        return {"ok": False, "error": denied}
+    try:
+        return session.delete_path(remote_path, bool(recursive))
     except SshError as exc:
         if session.closed:
             _drop(session_id)

@@ -1067,6 +1067,13 @@ def ssh_files_download(session_id: str, remote_path: str, local_path: str) -> di
         return {"ok": False, "error": "缺少会话 ID"}
     return ssh_session.download_to(str(session_id), str(remote_path or ""),
                                    str(local_path or ""))
+
+
+def ssh_files_delete(session_id: str, remote_path: str, recursive: bool = False) -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    return ssh_session.delete_path(str(session_id), str(remote_path or ""),
+                                   bool(recursive))
 def ssh_close(session_id: str) -> dict:
     return ssh_session.close_session(str(session_id or ""))
 
