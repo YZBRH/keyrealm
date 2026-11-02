@@ -1,0 +1,55 @@
+{
+  "name": "Telnet",
+  "version": "1.1.0",
+  "credential_type": "remote_telnet",
+  "author": "Keyrealm",
+  "description": "管理 Telnet 登录凭据，实际尝试登录并确认成功 / 失败",
+  "icon": "logo.svg",
+  "fields": [
+    {
+      "key": "host",
+      "label": "主机",
+      "type": "text",
+      "required": true,
+      "placeholder": "192.0.2.10 或 example.com"
+    },
+    {
+      "key": "port",
+      "label": "端口",
+      "type": "text",
+      "required": true,
+      "default": "23",
+      "placeholder": "23"
+    },
+    {
+      "key": "username",
+      "label": "用户名",
+      "type": "text",
+      "required": true,
+      "placeholder": "admin"
+    },
+    {
+      "key": "password",
+      "label": "密码",
+      "type": "password",
+      "sensitive": true,
+      "required": true,
+      "placeholder": "登录密码",
+      "hint": "登录验证会在目标设备产生一次认证记录。"
+    },
+    {
+      "key": "timeout",
+      "label": "超时（秒）",
+      "type": "text",
+      "required": false,
+      "default": "10",
+      "hint": "连接 / 等待登录提示的超时。"
+    },
+    {
+      "key": "notes",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}

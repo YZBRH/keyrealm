@@ -1,0 +1,71 @@
+{
+  "name": "RDP",
+  "version": "1.1.0",
+  "credential_type": "remote_rdp",
+  "author": "Keyrealm",
+  "description": "管理 RDP 登录凭据，使用 NLA/CredSSP 校验账户密码（默认不回退完整登录）",
+  "icon": "logo.svg",
+  "fields": [
+    {
+      "key": "host",
+      "label": "主机",
+      "type": "text",
+      "required": true,
+      "placeholder": "192.0.2.10 或 example.com"
+    },
+    {
+      "key": "port",
+      "label": "端口",
+      "type": "text",
+      "required": true,
+      "default": "3389",
+      "placeholder": "3389"
+    },
+    {
+      "key": "username",
+      "label": "用户名",
+      "type": "text",
+      "required": true,
+      "placeholder": "Administrator"
+    },
+    {
+      "key": "password",
+      "label": "密码",
+      "type": "password",
+      "sensitive": true,
+      "required": true,
+      "placeholder": "登录密码（用于实际认证校验）",
+      "hint": "NLA/CredSSP 认证会在目标侧产生一次认证记录；默认不建立桌面会话。"
+    },
+    {
+      "key": "domain",
+      "label": "域",
+      "type": "text",
+      "required": false,
+      "placeholder": "可选，如 CORP",
+      "hint": "可选。也可在用户名中写成 DOMAIN\\user。"
+    },
+    {
+      "key": "allow_full_login",
+      "label": "允许回退完整登录",
+      "type": "checkbox",
+      "required": false,
+      "default": false,
+      "hint": "服务器未启用 NLA/CredSSP 时，完整 RDP 登录会创建桌面会话并留下更完整的登录记录。默认关闭，只做 NLA 认证。"
+    },
+    {
+      "key": "timeout",
+      "label": "超时（秒）",
+      "type": "text",
+      "required": false,
+      "default": "10",
+      "hint": "连接 / 协商超时。"
+    },
+    {
+      "key": "notes",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}

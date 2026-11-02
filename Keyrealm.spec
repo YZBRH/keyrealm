@@ -106,6 +106,22 @@ _COLLECT_PKGS = [
     "bcrypt",         # paramiko 的可选依赖（密钥 KDF）
     "nacl",           # pynacl：Ed25519 私钥
     "invoke",         # paramiko 的交互辅助
+    "aardwolf",       # RDP CredSSP/NLA 完整校验
+    "asyauth",        # aardwolf 的认证实现
+    "asysocks",       # aardwolf 的代理 / 网络层
+    "unicrypto",      # asyauth / asysocks 的加密原语
+    "arc4",           # RDP 加密
+    "asn1crypto",
+    "asn1tools",
+    "minikerberos",
+    "pyperclip",
+    "tqdm",
+    "colorama",
+    "Cryptodome",     # pycryptodomex（unicrypto 的加密后端）
+    "bitstruct",      # asn1tools
+    "pyparsing",      # asn1tools
+    "oscrypto",       # minikerberos
+    "six",            # minikerberos
     "pydantic",
     "pydantic_core",
     "annotated_types",
@@ -113,7 +129,7 @@ _COLLECT_PKGS = [
 if _cli:
     # 无桌面图像显示：这些包只在 GUI / 托盘路径上用到
     _COLLECT_PKGS = [p for p in _COLLECT_PKGS
-                     if p not in {"webview", "clr", "clr_loader", "pythonnet", "pystray", "PIL"}]
+                     if p not in {"webview", "clr", "clr_loader", "pythonnet", "pystray"}]
 
 for _pkg in _COLLECT_PKGS:
     try:
@@ -225,6 +241,13 @@ require(
     "telethon",
     "**无法校验 Telegram api_id/api_hash**",
     "pip install -r requirements.txt（含 telethon + python-socks）",
+)
+
+# RDP 凭据的 CredSSP/NLA 完整校验（plugins/remote/rdp）靠 aardwolf；运行时才 import。
+require(
+    "aardwolf",
+    "**无法完整校验 RDP 凭据**",
+    "pip install -r requirements.txt（含 aardwolf）",
 )
 
 # telethon 的 socks 支持另需 python-socks，**这一条要一起收**：缺它时 telethon 不报错，
@@ -345,9 +368,9 @@ if _cli:
 
 _excludes = ["plugins", "data", "tests", "docs", "pytest", "PyInstaller"]
 if _cli:
-    # 静态分析仍可能从函数体里看到 PIL 等导入（如 backend/icon_ink.py 的懒导入），
-    # 显式排除，确保 CLI 包真的不含桌面图像层。
-    _excludes += ["webview", "pystray", "PIL", "qtpy", "PySide6", "clr", "pythonnet"]
+    # 静态分析仍可能从函数体里看到桌面模块的懒导入；显式排除界面层。
+    # PIL 不能排：aardwolf 在导入时就 `from PIL import Image`，RDP 完整校验依赖它。
+    _excludes += ["webview", "pystray", "qtpy", "PySide6", "clr", "pythonnet"]
 
 a = Analysis(
     [str(ROOT / "main.py")],

@@ -10,6 +10,9 @@ APScheduler>=3.10
 cryptography>=42.0
 # paramiko：SSH 凭据验证与交互控制台（纯 Python，复用 cryptography）。
 paramiko>=3.4
+# aardwolf：RDP 凭据的 CredSSP/NLA 完整校验（含 asyauth / asysocks 等传递依赖）。
+# 只用于 plugins/remote/rdp，缺失时该插件会明确报错而不是把「服务可达」当成凭据有效。
+aardwolf>=0.2.16
 httpx[socks]>=0.27
 # PySocks：邮箱（SMTP/IMAP）走 SOCKS / HTTP CONNECT 隧道用。注释单独一行——
 # 写在包名后面容易被「按行取值」的解析器当成版本约束（构建脚本自己会先剥掉注释，
