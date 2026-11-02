@@ -1,9 +1,9 @@
 {
   "name": "FTP",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "remote_ftp",
   "author": "Keyrealm",
-  "description": "管理 FTP / FTPS 登录凭据并验证登录（支持匿名与显式 TLS）",
+  "description": "管理 FTP / FTPS 登录凭据并验证登录（支持匿名、显式与隐式 TLS）",
   "icon": "logo.svg",
   "fields": [
     {
@@ -51,9 +51,13 @@
         {
           "value": "explicit",
           "label": "显式 FTPS（AUTH TLS）"
+        },
+        {
+          "value": "implicit",
+          "label": "隐式 FTPS（通常端口 990）"
         }
       ],
-      "hint": "隐式 FTPS 请改用支持该模式的客户端；本插件只实现显式 AUTH TLS。"
+      "hint": "隐式 FTPS 连上后立即 TLS 握手；显式 FTPS 使用 AUTH TLS。证书默认不校验证书链。"
     },
     {
       "key": "passive",

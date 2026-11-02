@@ -1,7 +1,7 @@
 """FTP / FTPS 凭据：登录验证。
 
-支持普通 FTP 与显式 FTPS（AUTH TLS）。用户名留空时按匿名登录（anonymous）；
-连接可走框架的全局代理 / 代理链。
+支持普通 FTP、显式 FTPS（AUTH TLS）与隐式 FTPS（通常端口 990）。用户名留空时按匿名登录
+（anonymous）；连接可走框架的全局代理 / 代理链。
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ DEFAULT_TIMEOUT = 15.0
 
 def _tls_mode(data: dict) -> str:
     value = text(data, "tls").lower()
-    return value if value in ("none", "explicit") else "none"
+    return value if value in ("none", "explicit", "implicit") else "none"
 
 
 def validate(data):
@@ -29,7 +29,7 @@ def validate(data):
     if not port(data, DEFAULT_PORT):
         errors.append("端口必须是 1–65535 的整数")
     if text(data, "tls") and _tls_mode(data) != text(data, "tls").lower():
-        errors.append("TLS 方式只能是 none 或 explicit")
+        errors.append("TLS 方式只能是 none / explicit / implicit")
     raw_timeout = text(data, "timeout")
     if raw_timeout:
         try:
@@ -53,20 +53,21 @@ def verify(data):
     port_number = port(data, DEFAULT_PORT)
     username = text(data, "username") or "anonymous"
     password = str(data.get("password") or "")
-    tls = _tls_mode(data) == "explicit"
+    tls_mode = _tls_mode(data)
+    tls_label = {"explicit": "FTPS（显式）", "implicit": "FTPS（隐式）"}.get(tls_mode, "FTP")
     timeout_seconds = timeout(data, DEFAULT_TIMEOUT)
 
-    ftp = ftp_client(tls, timeout_seconds)
+    ftp = ftp_client(tls_mode, timeout_seconds)
     welcome = ""
     try:
         welcome = ftp.connect(host, port_number)
         ftp.set_pasv(truthy(data.get("passive", True)))
         ftp.login(username, password)
         server = (welcome or "").splitlines()[0][:200] if welcome else "FTP"
-        log(f"FTP 登录成功 user={mask_secret(username)} host={host}:{port_number} tls={tls}")
+        log(f"FTP 登录成功 user={mask_secret(username)} host={host}:{port_number} tls={tls_mode}")
         return VerifyResult(
             status="valid",
-            message=f"{'FTPS' if tls else 'FTP'} 登录成功",
+            message=f"{tls_label} 登录成功",
             account_info={"user": username, "server": server},
         )
     except ftplib.error_perm as exc:

@@ -3,7 +3,9 @@
 运行：.venv/bin/python tests/test_remote_services.py
 """
 import socketserver
+import ssl
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
@@ -29,6 +31,66 @@ class _Server:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
+
+
+def _self_signed_context(tmp: Path):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    import datetime
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = tmp / "cert.pem"
+    key_path = tmp / "key.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(cert_path), str(key_path))
+    return context
+
+
+class _TlsServer:
+    """隐式 FTPS：accept 后立即 TLS 握手，再交给 FTP handler。"""
+
+    def __init__(self, handler):
+        self.tmp = tempfile.TemporaryDirectory(prefix="kr-ftps-")
+        context = _self_signed_context(Path(self.tmp.name))
+
+        class TlsServer(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+
+            def get_request(inner):
+                sock, addr = super().get_request()
+                return context.wrap_socket(sock, server_side=True), addr
+
+        self.server = TlsServer(("127.0.0.1", 0), handler)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
+        self.tmp.cleanup()
 
 
 class TelnetHandler(socketserver.StreamRequestHandler):
@@ -192,6 +254,25 @@ def test_ftp_login_success_and_failure():
     bad = _run(FtpHandler, ftp_plugin, {"username": "admin", "password": "wrong"})
     assert bad.status == "invalid", bad
     assert "用户名或密码错误" in bad.message
+
+
+def test_implicit_ftps_login_success_and_failure():
+    server = _TlsServer(FtpHandler)
+    try:
+        ok = ftp_plugin.verify({
+            "host": "127.0.0.1", "port": str(server.port), "timeout": "5",
+            "username": "admin", "password": "secret", "tls": "implicit",
+        })
+        assert ok.status == "valid", ok
+        assert "隐式" in ok.message
+
+        bad = ftp_plugin.verify({
+            "host": "127.0.0.1", "port": str(server.port), "timeout": "5",
+            "username": "admin", "password": "wrong", "tls": "implicit",
+        })
+        assert bad.status == "invalid", bad
+    finally:
+        server.stop()
 
 
 def main():

@@ -134,11 +134,37 @@ class TunneledFTP_TLS(ftplib.FTP_TLS):
         return self.welcome
 
 
-def ftp_client(tls: bool, timeout_seconds: float):
-    if tls:
+class TunneledFTPImplicitTLS(ftplib.FTP_TLS):
+    """隐式 FTPS：连上后立即 TLS 握手（常见端口 990，欢迎语在 TLS 之后）。"""
+
+    def connect(self, host="", port=0, timeout=-999, source_address=None):
+        if host != "":
+            self.host = host
+        if port > 0:
+            self.port = port
+        if timeout != -999:
+            self.timeout = timeout
+        raw = open_socket(self.host, self.port, self.timeout)
+        self.sock = self.context.wrap_socket(raw, server_hostname=self.host)
+        self.af = self.sock.family
+        self.file = self.sock.makefile("r", encoding=self.encoding)
+        self.welcome = self.getresp()
+        return self.welcome
+
+
+def ftp_client(tls_mode: str, timeout_seconds: float):
+    mode = (tls_mode or "none").lower()
+    if mode == "implicit":
+        return TunneledFTPImplicitTLS(
+            timeout=timeout_seconds,
+            context=sdk_ssl_context(verify=False),
+        )
+    if mode == "explicit":
         # 凭据验证不因自签 / 内网证书被误判；TLS 版本仍走框架的统一策略。
-        context = sdk_ssl_context(verify=False)
-        return TunneledFTP_TLS(timeout=timeout_seconds, context=context)
+        return TunneledFTP_TLS(
+            timeout=timeout_seconds,
+            context=sdk_ssl_context(verify=False),
+        )
     return TunneledFTP(timeout=timeout_seconds)
 
 
