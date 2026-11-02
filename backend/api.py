@@ -1009,6 +1009,44 @@ def ssh_exec(session_id: str, command: str) -> dict:
     return ssh_session.run_command(str(session_id), str(command or ""))
 
 
+def ssh_files_open(credential_id: int) -> dict:
+    """打开只认证、不启动 shell 的 SFTP 文件会话。"""
+    data, error = _ssh_credential(credential_id)
+    if error:
+        return {"ok": False, "error": error}
+    return ssh_session.open_session(credential_id, data, shell=False)
+
+
+def ssh_files_list(session_id: str, path: str = "") -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    return ssh_session.list_files(str(session_id), str(path or ""))
+
+
+def ssh_files_read(session_id: str, path: str, max_bytes: Optional[int] = None) -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    if not str(path or "").strip():
+        return {"ok": False, "error": "缺少文件路径"}
+    try:
+        limit = int(max_bytes) if max_bytes is not None else None
+    except (TypeError, ValueError):
+        limit = None
+    return ssh_session.read_file(str(session_id), str(path), limit)
+
+
+def ssh_files_upload(session_id: str, directory: str, name: str, content_b64: str) -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    return ssh_session.write_file(str(session_id), str(directory or ""),
+                                  str(name or ""), str(content_b64 or ""))
+
+
+def ssh_files_download(session_id: str, remote_path: str, local_path: str) -> dict:
+    if not str(session_id or "").strip():
+        return {"ok": False, "error": "缺少会话 ID"}
+    return ssh_session.download_to(str(session_id), str(remote_path or ""),
+                                   str(local_path or ""))
 def ssh_close(session_id: str) -> dict:
     return ssh_session.close_session(str(session_id or ""))
 

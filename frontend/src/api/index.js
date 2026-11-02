@@ -194,6 +194,15 @@ export const api = {
   sshOpen: (credentialId, interactive = false) => call('ssh_open', credentialId, interactive),
   sshExec: (sessionId, command) => call('ssh_exec', sessionId, command),
   sshClose: (sessionId) => call('ssh_close', sessionId),
+  // ── SSH 文件管理（SFTP；只认证，不启动 shell）──────────
+  sshFilesOpen: (credentialId) => call('ssh_files_open', credentialId),
+  sshFilesList: (sessionId, path = '') => call('ssh_files_list', sessionId, path),
+  sshFilesRead: (sessionId, path, maxBytes = null) =>
+    call('ssh_files_read', sessionId, path, maxBytes),
+  sshFilesUpload: (sessionId, directory, name, contentB64) =>
+    call('ssh_files_upload', sessionId, directory, name, contentB64),
+  sshFilesDownload: (sessionId, remotePath, localPath) =>
+    call('ssh_files_download', sessionId, remotePath, localPath),
   batchVerify: (scope = 'all', groupId = null, credentialType = null, credentialIds = null,
     concurrency = null, timeout = null) =>
     call('batch_verify', scope, groupId, credentialType, credentialIds, concurrency, timeout),

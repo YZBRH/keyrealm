@@ -129,6 +129,7 @@ function createState() {
     autoLockMinutes: 0,
     neverLock: false,
     mockSshSessions: {},
+    mockSshFiles: {},
     lightMode: false,
     secretPreview: true,
     splashDisabled: false,
@@ -1083,6 +1084,12 @@ export function createMockApi() {
           fields: [{ key: 'count', label: '条数', type: 'text', default: '10' }],
         }]
       }
+      if (cred.credential_type === 'remote_ssh') {
+        return [
+          { id: 'console', name: 'SSH 控制台', kind: 'console' },
+          { id: 'files', name: '文件管理', kind: 'files' },
+        ]
+      }
       const plugin = state.plugins.find((p) => p.credential_type === cred.credential_type)
       return plugin && plugin.has_actions
         ? [{ id: 'chat', name: '简单对话', kind: 'chat', model: 'mock-model' }]
@@ -1165,6 +1172,79 @@ export function createMockApi() {
     async ssh_close(sessionId) {
       delete state.mockSshSessions[sessionId]
       return { ok: true }
+    },
+
+    // ── SSH 文件管理（Mock：固定虚拟目录，不建立真实连接）──
+    async ssh_files_open(credentialId) {
+      requireUnlocked()
+      const id = `mock-sftp-${Date.now()}`
+      state.mockSshFiles[id] = { path: '/home/mock' }
+      return {
+        ok: true,
+        session_id: id,
+        summary: 'mock@example.com',
+        mode: 'files',
+        host_key: 'SHA256:mock',
+      }
+    },
+
+    async ssh_files_list(sessionId, path = '') {
+      requireUnlocked()
+      const session = state.mockSshFiles[sessionId]
+      if (!session) return { ok: false, error: '会话不存在或已断开' }
+      const base = String(path || session.path || '/home/mock')
+      const home = '/home/mock'
+      let entries
+      if (base === '/' || base === '') {
+        entries = [
+          { name: 'home', path: '/home', is_dir: true, is_link: false, size: 0, mtime: 0 },
+          { name: 'etc', path: '/etc', is_dir: true, is_link: false, size: 0, mtime: 0 },
+          { name: 'readme.txt', path: '/readme.txt', is_dir: false, is_link: false, size: 42, mtime: 0 },
+        ]
+      } else if (base === '/etc') {
+        entries = [
+          { name: 'hostname', path: '/etc/hostname', is_dir: false, is_link: false, size: 12, mtime: 0 },
+          { name: 'hosts', path: '/etc/hosts', is_dir: false, is_link: false, size: 96, mtime: 0 },
+        ]
+      } else {
+        entries = [
+          { name: 'downloads', path: `${home}/downloads`, is_dir: true, is_link: false, size: 0, mtime: 0 },
+          { name: 'notes.txt', path: `${home}/notes.txt`, is_dir: false, is_link: false, size: 38, mtime: 0 },
+        ]
+      }
+      const parent = base === '/' ? '/' : base.replace(/\/[^/]*$/, '') || '/'
+      return { ok: true, path: base, home, parent, entries, truncated: false }
+    },
+
+    async ssh_files_read(sessionId, path, maxBytes = null) {
+      requireUnlocked()
+      if (!state.mockSshFiles[sessionId]) return { ok: false, error: '会话不存在或已断开' }
+      const name = String(path || '').split('/').pop() || 'file.txt'
+      const text = `（Mock）${name} 的预览内容\n第二行示例文本。\n`
+      const b64 = btoa(unescape(encodeURIComponent(text)))
+      return {
+        ok: true,
+        name,
+        path,
+        size: text.length,
+        mime: 'text/plain',
+        kind: 'text',
+        truncated: false,
+        content_b64: b64,
+      }
+    },
+
+    async ssh_files_upload(sessionId, directory, name, contentB64) {
+      requireUnlocked()
+      if (!state.mockSshFiles[sessionId]) return { ok: false, error: '会话不存在或已断开' }
+      const size = Math.floor(String(contentB64 || '').length * 0.75)
+      return { ok: true, path: `${directory || ''}/${name}`, size }
+    },
+
+    async ssh_files_download(sessionId, remotePath, localPath) {
+      requireUnlocked()
+      if (!state.mockSshFiles[sessionId]) return { ok: false, error: '会话不存在或已断开' }
+      return { ok: true, path: localPath, size: 0 }
     },
 
     // ── 备份 / 恢复 ────────────────────────────────────────

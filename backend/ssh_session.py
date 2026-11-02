@@ -15,9 +15,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import mimetypes
 import os
+import posixpath
 import re
 import socket
+import stat
 import threading
 import time
 import uuid
@@ -33,6 +36,12 @@ INIT_TIMEOUT = 10.0
 COMMAND_TIMEOUT = 30.0
 MAX_OUTPUT = 512 * 1024
 RECV_CHUNK = 65536
+
+# SFTP 文件操作上限：预览只看一小段，下载 / 上传走 JS 桥会有 base64 膨胀，限制在 20MB。
+SFTP_PREVIEW_MAX = 256 * 1024
+SFTP_DOWNLOAD_MAX = 20 * 1024 * 1024
+SFTP_UPLOAD_MAX = 20 * 1024 * 1024
+SFTP_DIR_MAX = 2000
 
 # 连接成功后首先执行：关闭本次会话的历史记录，减少在目标主机留下的痕迹。
 HISTORY_OFF = (
@@ -79,6 +88,28 @@ def _timeout(data: dict) -> float:
 def _clean(text: str) -> str:
     text = _ANSI_RE.sub("", text)
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _looks_text(data: bytes, mime: str) -> bool:
+    """粗判文件能否按文本预览（NUL 字节直接判二进制；UTF-8 / GB18030 可解码则算文本）。"""
+    if mime:
+        if mime.startswith("text/"):
+            return True
+        if mime in ("application/json", "application/xml", "application/javascript",
+                    "application/x-sh", "application/x-yaml"):
+            return True
+    sample = data[:8192]
+    if b"\x00" in sample:
+        return False
+    if not sample:
+        return True
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            sample.decode(encoding)
+            return True
+        except UnicodeDecodeError:
+            continue
+    return False
 
 
 _PROTOCOL_MARKERS = ("__KR_READY_%s", "__KR_START_%s", "__KR_PWD_%s", "__KR_RC_%s", "__KR_END_%s")
@@ -199,6 +230,8 @@ class _Session:
         self.created = time.monotonic()
         self.last_used = self.created
         self.lock = threading.Lock()
+        self.sftp = None
+        self.sftp_lock = threading.Lock()
         self.closed = False
 
     # ── 底层读写 ──────────────────────────────────────
@@ -415,10 +448,167 @@ class _Session:
             text = text[:MAX_OUTPUT] + "\n…（输出过长已截断）"
         return {"ok": True, "output": text, "cwd": "", "exit_code": code}
 
+    # ── SFTP 文件操作 ─────────────────────────────────
+
+    def _sftp_locked(self):
+        """获取（懒创建）SFTP 客户端；调用方必须持有 ``sftp_lock``。"""
+        if self.closed:
+            raise SshError("会话已断开，请重新连接")
+        if self.sftp is not None:
+            return self.sftp
+        try:
+            sftp = self.client.open_sftp()
+            channel = sftp.get_channel()
+            if channel is not None:
+                channel.settimeout(COMMAND_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001 - 服务器未启用 SFTP
+            raise SshError(f"无法启动 SFTP：{exc or type(exc).__name__}") from exc
+        self.sftp = sftp
+        return sftp
+
+    def list_dir(self, path: str) -> dict:
+        with self.sftp_lock:
+            self.last_used = time.monotonic()
+            sftp = self._sftp_locked()
+            try:
+                base = sftp.normalize(path or ".")
+                home = sftp.normalize(".")
+                attrs = sftp.listdir_attr(base)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "无法读取目录") from exc
+
+            entries = []
+            for attr in attrs[:SFTP_DIR_MAX]:
+                mode = attr.st_mode or 0
+                is_link = stat.S_ISLNK(mode)
+                is_dir = stat.S_ISDIR(mode)
+                entry_path = posixpath.join(base, attr.filename)
+                if is_link:
+                    try:
+                        target = sftp.stat(entry_path)
+                        is_dir = stat.S_ISDIR(target.st_mode or 0)
+                    except (IOError, OSError):
+                        pass
+                entries.append({
+                    "name": attr.filename,
+                    "path": entry_path,
+                    "is_dir": bool(is_dir),
+                    "is_link": bool(is_link),
+                    "size": int(attr.st_size or 0),
+                    "mtime": int(attr.st_mtime or 0),
+                })
+            entries.sort(key=lambda item: (not item["is_dir"], item["name"].lower()))
+            parent = posixpath.dirname(base.rstrip("/")) or "/"
+            return {
+                "ok": True,
+                "path": base,
+                "home": home,
+                "parent": parent,
+                "entries": entries,
+                "truncated": len(attrs) > SFTP_DIR_MAX,
+            }
+
+    def read_file(self, path: str, max_bytes: Optional[int] = None) -> dict:
+        limit = int(max_bytes or SFTP_PREVIEW_MAX)
+        limit = max(1, min(limit, SFTP_DOWNLOAD_MAX))
+        with self.sftp_lock:
+            self.last_used = time.monotonic()
+            sftp = self._sftp_locked()
+            try:
+                attr = sftp.stat(path)
+                if stat.S_ISDIR(attr.st_mode or 0):
+                    raise SshError("不能读取目录")
+                with sftp.open(path, "rb") as handle:
+                    data = handle.read(limit + 1)
+            except SshError:
+                raise
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "无法读取文件") from exc
+
+        truncated = len(data) > limit
+        data = data[:limit]
+        name = posixpath.basename(path)
+        mime, _ = mimetypes.guess_type(name)
+        if mime and mime.startswith("image/"):
+            kind = "image"
+        elif _looks_text(data, mime or ""):
+            kind = "text"
+        else:
+            kind = "binary"
+        return {
+            "ok": True,
+            "name": name,
+            "path": path,
+            "size": int(attr.st_size or 0),
+            "mime": mime or "application/octet-stream",
+            "kind": kind,
+            "truncated": truncated,
+            "content_b64": base64.b64encode(data).decode("ascii"),
+        }
+
+    def download_to(self, remote_path: str, local_path: str) -> dict:
+        """把远端文件流式写到本地路径（桌面端「另存为」后使用）。"""
+        if not local_path:
+            raise SshError("缺少本地保存路径")
+        with self.sftp_lock:
+            self.last_used = time.monotonic()
+            sftp = self._sftp_locked()
+            try:
+                attr = sftp.stat(remote_path)
+                if stat.S_ISDIR(attr.st_mode or 0):
+                    raise SshError("不能下载目录")
+                size = int(attr.st_size or 0)
+                if size > SFTP_DOWNLOAD_MAX:
+                    raise SshError(f"文件超过下载上限（{SFTP_DOWNLOAD_MAX // 1024 // 1024}MB）")
+                written = 0
+                with sftp.open(remote_path, "rb") as source:
+                    with open(local_path, "wb") as target:
+                        while True:
+                            chunk = source.read(65536)
+                            if not chunk:
+                                break
+                            written += len(chunk)
+                            if written > SFTP_DOWNLOAD_MAX:
+                                raise SshError(
+                                    f"文件超过下载上限（{SFTP_DOWNLOAD_MAX // 1024 // 1024}MB）"
+                                )
+                            target.write(chunk)
+            except SshError:
+                raise
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "下载失败") from exc
+        return {"ok": True, "path": local_path, "size": written}
+
+    def write_file(self, directory: str, name: str, content_b64: str) -> dict:
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            raise SshError("文件名不合法")
+        try:
+            data = base64.b64decode(content_b64 or "", validate=True)
+        except Exception as exc:  # noqa: BLE001 - binascii.Error
+            raise SshError("上传内容不是合法的 base64") from exc
+        if len(data) > SFTP_UPLOAD_MAX:
+            raise SshError(f"文件超过上传上限（{SFTP_UPLOAD_MAX // 1024 // 1024}MB）")
+        with self.sftp_lock:
+            self.last_used = time.monotonic()
+            sftp = self._sftp_locked()
+            try:
+                base = sftp.normalize(directory or ".")
+                target = posixpath.join(base, name)
+                with sftp.open(target, "wb") as handle:
+                    handle.write(data)
+            except (IOError, OSError) as exc:
+                raise SshError(str(exc) or "无法写入文件") from exc
+        return {"ok": True, "path": target, "size": len(data)}
+
     def close(self) -> None:
         if self.closed:
             return
         self.closed = True
+        try:
+            if self.sftp is not None:
+                self.sftp.close()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             if self.channel is not None:
                 self.channel.close()
@@ -467,11 +657,13 @@ def _close_many(sessions: list[_Session]) -> None:
             pass
 
 
-def open_session(credential_id: int, data: dict, interactive: bool = False) -> dict:
+def open_session(credential_id: int, data: dict, interactive: bool = False,
+                 shell: bool = True) -> dict:
     """建立连接与会话；返回前端需要的摘要信息。
 
     ``interactive=True`` 时优先申请 PTY（加载登录 shell 的 rc、满足需要 TTY 的程序），
     否则优先使用不申请 PTY 的静默 ``sh -s`` 会话。
+    ``shell=False`` 用于 SFTP 文件管理：只认证，不启动 shell / 不申请 PTY。
     """
     try:
         import paramiko  # noqa: PLC0415
@@ -541,12 +733,17 @@ def open_session(credential_id: int, data: dict, interactive: bool = False) -> d
 
     # 静默模式优先非交互 `sh -s`（无 PTY、无提示符/回显）；交互模式优先 PTY，
     # 以加载登录 shell 的 rc 并满足需要 TTY 的程序。另一条路径作为退路。
-    if interactive:
-        ready = session._try_pty() or session._try_pipe()
+    if shell:
+        if interactive:
+            ready = session._try_pty() or session._try_pipe()
+        else:
+            ready = session._try_pipe() or session._try_pty()
+        if not ready:
+            session.mode = "exec"
+            session.shell_kind = ""
     else:
-        ready = session._try_pipe() or session._try_pty()
-    if not ready:
-        session.mode = "exec"
+        # SFTP 文件会话：只认证，不启动 shell。
+        session.mode = "files"
         session.shell_kind = ""
 
     banner = session.banner
@@ -588,6 +785,59 @@ def run_command(session_id: str, command: str) -> dict:
     if session.closed:
         _drop(session_id)
     return result
+
+
+def _get(session_id: str) -> Optional[_Session]:
+    with _sessions_lock:
+        return _sessions.get(str(session_id))
+
+
+def list_files(session_id: str, path: str = "") -> dict:
+    session = _get(session_id)
+    if session is None:
+        return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    try:
+        return session.list_dir(path)
+    except SshError as exc:
+        if session.closed:
+            _drop(session_id)
+        return {"ok": False, "error": str(exc)}
+
+
+def read_file(session_id: str, path: str, max_bytes: Optional[int] = None) -> dict:
+    session = _get(session_id)
+    if session is None:
+        return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    try:
+        return session.read_file(path, max_bytes)
+    except SshError as exc:
+        if session.closed:
+            _drop(session_id)
+        return {"ok": False, "error": str(exc)}
+
+
+def write_file(session_id: str, directory: str, name: str, content_b64: str) -> dict:
+    session = _get(session_id)
+    if session is None:
+        return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    try:
+        return session.write_file(directory, name, content_b64)
+    except SshError as exc:
+        if session.closed:
+            _drop(session_id)
+        return {"ok": False, "error": str(exc)}
+
+
+def download_to(session_id: str, remote_path: str, local_path: str) -> dict:
+    session = _get(session_id)
+    if session is None:
+        return {"ok": False, "error": "会话不存在或已断开，请重新连接"}
+    try:
+        return session.download_to(remote_path, local_path)
+    except SshError as exc:
+        if session.closed:
+            _drop(session_id)
+        return {"ok": False, "error": str(exc)}
 
 
 def _drop(session_id: str) -> None:

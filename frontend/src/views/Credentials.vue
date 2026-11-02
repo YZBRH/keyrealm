@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, Back, Check, CircleClose, CopyDocument, Delete, 
 import CredentialForm from '@/components/CredentialForm.vue'
 import ScopeDefaultsDialog from '@/components/ScopeDefaultsDialog.vue'
 import SshConsole from '@/components/SshConsole.vue'
+import SshFiles from '@/components/SshFiles.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { useVaultStore } from '@/stores/vault'
 import { STATUS_OPTIONS, formatDateTimeFull, normalizeOptions, visibleFields } from '@/utils/format'
@@ -2677,13 +2678,21 @@ onMounted(async () => {
     <el-dialog
       v-model="actionDialog.visible"
       :title="actionDialog.title"
-      :width="actionDialog.kind === 'console' ? 'min(920px, 92vw)' : '640px'"
+      :width="actionDialog.kind === 'console' ? 'min(920px, 92vw)' : actionDialog.kind === 'files' ? 'min(1080px, 96vw)' : '640px'"
       :close-on-click-modal="false"
     >
       <div v-if="actionDialog.description" class="action-desc">{{ actionDialog.description }}</div>
 
       <template v-if="actionDialog.kind === 'console'">
         <SshConsole
+          v-if="actionDialog.visible"
+          :credential-id="Number(actionDialog.credentialId)"
+          :credential-name="actionDialog.credentialName"
+        />
+      </template>
+
+      <template v-else-if="actionDialog.kind === 'files'">
+        <SshFiles
           v-if="actionDialog.visible"
           :credential-id="Number(actionDialog.credentialId)"
           :credential-name="actionDialog.credentialName"

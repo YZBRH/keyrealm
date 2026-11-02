@@ -451,4 +451,9 @@ def actions(data):
         "name": "SSH 控制台",
         "kind": "console",
         "description": "打开交互式命令控制台（关闭窗口即断开）",
+    }, {
+        "id": "files",
+        "name": "文件管理",
+        "kind": "files",
+        "description": "通过 SFTP 浏览、预览、下载与上传远程文件",
     }]

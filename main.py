@@ -316,6 +316,23 @@ class VaultApi:
     def ssh_close(self, session_id: str):
         return api.ssh_close(session_id)
 
+    # ── SSH 文件管理（SFTP） ──────────────────────────────
+    def ssh_files_open(self, credential_id: int):
+        return api.ssh_files_open(credential_id)
+
+    def ssh_files_list(self, session_id: str, path: str = ""):
+        return api.ssh_files_list(session_id, path)
+
+    def ssh_files_read(self, session_id: str, path: str, max_bytes=None):
+        return api.ssh_files_read(session_id, path, max_bytes)
+
+    def ssh_files_upload(self, session_id: str, directory: str, name: str,
+                         content_b64: str):
+        return api.ssh_files_upload(session_id, directory, name, content_b64)
+
+    def ssh_files_download(self, session_id: str, remote_path: str, local_path: str):
+        return api.ssh_files_download(session_id, remote_path, local_path)
+
     # ── 后台任务 ──
     def list_tasks(self):
         return api.list_tasks()
