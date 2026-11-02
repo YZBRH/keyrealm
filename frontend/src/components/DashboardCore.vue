@@ -3,8 +3,9 @@
  * 仪表盘中央核心：状态环 + 轨道粒子 + 健康度数字。
  *
  * 零图表依赖：环用 SVG（颜色直接吃 --v-* 主题令牌），粒子用 Canvas（从主题令牌现读颜色）。
- * 6 套主题切换时通过 MutationObserver 重新取色；侧栏折叠不会触发 window.resize，
- * 因此尺寸用 ResizeObserver 跟踪；prefers-reduced-motion 下只画静态帧、不跑 RAF。
+ * 粒子**只做缓慢公转、不做透明度闪烁**；6 套主题切换时通过 MutationObserver 重新取色；
+ * 侧栏折叠不会触发 window.resize，因此尺寸用 ResizeObserver 跟踪；
+ * prefers-reduced-motion 下只画静态帧、不跑 RAF。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -65,7 +66,7 @@ function animateRate(target) {
   const from = rate.value
   const started = performance.now()
   const step = (now) => {
-    const progress = Math.min(1, (now - started) / 700)
+    const progress = Math.min(1, (now - started) / 300)
     const eased = 1 - Math.pow(1 - progress, 3)
     rate.value = from + (target - from) * eased
     if (progress < 1) rateRaf = requestAnimationFrame(step)
@@ -89,7 +90,13 @@ const percent = computed(() => {
   return valid >= total ? Math.min(100, rounded) : Math.min(99, rounded)
 })
 
-// ── Canvas 轨道粒子 ───────────────────────────────────────
+function prefersReduced() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+// ── Canvas 轨道粒子（恒定亮度，不闪烁）────────────────────
 let ctx = null
 let raf = 0
 let dpr = 1
@@ -102,12 +109,6 @@ let running = false
 let resizeObserver = null
 let themeObserver = null
 let reducedMedia = null
-
-function prefersReduced() {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
 
 function readColors() {
   const el = rootRef.value
@@ -127,8 +128,7 @@ function seedParticles() {
     radius: (0.30 + Math.random() * 0.62) * (shortSide / 2),
     speed: (Math.random() < 0.5 ? -1 : 1) * (0.00008 + Math.random() * 0.00022),
     size: 0.6 + Math.random() * 1.6,
-    phase: Math.random() * Math.PI * 2,
-    twinkle: 0.0012 + Math.random() * 0.0028,
+    // 固定透明度：保留粒子层，但不做闪烁
     alpha: 0.35 + Math.random() * 0.55,
     color: Math.floor(Math.random() * 4),
   }))
@@ -167,8 +167,7 @@ function draw(now) {
     const angle = particle.angle + (reduced ? 0 : elapsed * particle.speed)
     const x = cx + Math.cos(angle) * particle.radius
     const y = cy + Math.sin(angle) * particle.radius * 0.86
-    const twinkle = reduced ? 1 : (0.55 + 0.45 * Math.sin(elapsed * particle.twinkle + particle.phase))
-    ctx.globalAlpha = particle.alpha * twinkle
+    ctx.globalAlpha = particle.alpha
     ctx.fillStyle = colors[particle.color % colors.length]
     ctx.beginPath()
     ctx.arc(x, y, particle.size, 0, Math.PI * 2)
@@ -216,7 +215,6 @@ onMounted(() => {
       resizeObserver.observe(canvasRef.value.parentElement)
     }
   }
-  // 主题切换只改 data-theme / class，不触发任何事件——直接观察这两个属性
   themeObserver = new MutationObserver(() => {
     readColors()
     if (prefersReduced()) draw(0)
@@ -371,7 +369,7 @@ onBeforeUnmount(() => {
   stroke-linecap: butt;
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
-  transition: stroke-dasharray var(--v-slow) var(--v-ease);
+  transition: stroke-dasharray var(--v-base) var(--v-ease-out);
 }
 
 .core-ring-seg.is-valid { stroke: var(--v-success); }

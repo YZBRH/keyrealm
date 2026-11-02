@@ -92,6 +92,22 @@ Chromium 只要 `backdrop-filter` 的计算值不是 `none`，就会给元素建
 即便看不出变化，GPU 和 CPU 也一直有开销。判定标准很简单——**信息量为零的常驻闪动不要加**。
 连带的另一条：静态元素不写 `will-change`（不动的元素没必要常驻提升合成层）。
 
+**唯一例外是仪表盘的 Vault Core HUD**：中央扫描环与 Canvas 轨道粒子需要缓慢运动来表达「系统在运行」。
+粒子**固定透明度、不闪烁**；页面不可见时停止 RAF，`prefers-reduced-motion` 下只画静态帧；离开仪表盘即卸载。
+
+**时长与曲线统一走令牌**（`base.css`）：
+
+| 令牌 | 值 | 用途 |
+| --- | --- | --- |
+| `--v-fast` | 0.14s | 按下反馈、悬停、菜单指示条 |
+| `--v-base` | 0.20s | 弹层、消息条、页面进入、图表变化 |
+| `--v-slow` | 0.28s | 模态、主题切换 |
+| `--v-ease-out` | `cubic-bezier(0.23, 1, 0.32, 1)` | 进入 / 退出（起始快，响应感来自这里） |
+| `--v-ease-in-out` | `cubic-bezier(0.77, 0, 0.175, 1)` | 屏内位移（侧栏展开等） |
+
+弹窗/消息不使用回弹曲线；按钮 `:active` 用 `scale(0.97)` 给出即时反馈；悬停位移只挂在
+`(hover: hover) and (pointer: fine)` 上，避免触屏 sticky hover。
+
 **浮层（popper）的进场动画只允许动 `opacity`。** Element Plus 的 popper 默认开
 `gpuAcceleration`，定位结果写在内联 `transform: translate3d(x, y, 0)` 上；而 **CSS 动画声明的
 优先级高于内联样式**，动画里只要出现 `transform`，动画期间就会顶掉真实坐标——现象是提示框先在
@@ -366,7 +382,7 @@ App.vue
   `vault:tasks`、`vault:mcp_status`、`vault:proxies_changed`、批量完成事件，700ms 去抖后重取；
   页面不可见时不刷新。
 - **视觉**：中央 `DashboardCore.vue` 用 SVG 状态环 + Canvas 轨道粒子（零图表依赖），
-  颜色从 `--v-*` 令牌现读，`MutationObserver` 跟随主题切换；`ResizeObserver` 跟随侧栏折叠；
+  颜色直接取 `--v-*` 令牌，6 套主题自动适配；粒子只做缓慢公转、透明度恒定不闪烁；
   `prefers-reduced-motion` 下只画静态帧。
 - **批量验证**：工具栏按钮打开 `components/BatchVerifyDialog.vue`（与凭据管理共用）——
   候选范围为**全部凭据**，默认全选可批量验证的条目，并发 / 超时与凭据页同一套回填与保存逻辑。

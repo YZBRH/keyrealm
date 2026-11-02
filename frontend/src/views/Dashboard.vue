@@ -6,7 +6,7 @@
  * 最近验证 / 任务 / 系统状态），前端不再拉全量凭据二次统计。全局事件只做**去抖重取**：
  * 验证 / 插件 / 任务 / MCP / 代理变化都会让快照过期。
  *
- * 视觉：中央核心由 DashboardCore 负责（SVG 状态环 + Canvas 轨道粒子，零图表依赖）；
+ * 视觉：中央核心由 DashboardCore 负责（SVG 状态环，零图表依赖）；
  * 其余面板全部用 `--v-*` 主题令牌，6 套主题自动适配。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -36,7 +36,7 @@ const batchLoading = ref(false)
 const MODULE_KEY = 'vault.dashboard.hiddenModules'
 const MODULES = [
   { key: 'health', row: 'top', label: '状态矩阵', desc: '凭据总数、状态与新鲜度分布' },
-  { key: 'core', row: 'top', label: '健康度核心', desc: '状态环、轨道粒子与健康度' },
+  { key: 'core', row: 'top', label: '健康度核心', desc: '状态环、轨道与健康度' },
   { key: 'system', row: 'top', label: '系统状态', desc: 'MCP / 代理 / TLS / 匿名模式 / 任务' },
   { key: 'categories', row: 'mid', label: '类别分布', desc: '按插件类别的凭据数量与状态构成' },
   { key: 'risks', row: 'mid', label: '风险队列', desc: '失效、异常、从未验证与长期未验证' },
@@ -330,7 +330,6 @@ onBeforeUnmount(() => {
     <div class="page-toolbar dash-toolbar">
       <h2 class="section-title">仪表盘</h2>
       <span class="dash-kicker">VAULT // OVERVIEW</span>
-      <span class="dash-live"><i /> LIVE</span>
       <div class="spacer" />
       <span class="dash-clock">{{ clock }}</span>
       <el-button :icon="SetUp" @click="openCustomize">自定义</el-button>
@@ -617,28 +616,6 @@ onBeforeUnmount(() => {
   color: var(--v-text-3);
 }
 
-.dash-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border: 1px solid var(--v-border);
-  border-radius: 999px;
-  font-family: 'JetBrains Mono', 'SFMono-Regular', monospace;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  color: var(--v-text-2);
-}
-
-.dash-live i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--v-success);
-  box-shadow: 0 0 8px var(--v-success);
-  animation: live-pulse 2.2s ease-in-out infinite;
-}
-
 .dash-clock {
   font-family: 'JetBrains Mono', 'SFMono-Regular', monospace;
   font-size: 12px;
@@ -789,7 +766,7 @@ onBeforeUnmount(() => {
 .fresh-bar span {
   display: block;
   height: 100%;
-  transition: width var(--v-slow) var(--v-ease);
+  transition: width var(--v-base) var(--v-ease-out);
 }
 
 .status-legend {
@@ -912,9 +889,9 @@ onBeforeUnmount(() => {
   background: var(--v-text-3);
 }
 
-.system-dot.is-ok { background: var(--v-success); box-shadow: 0 0 7px var(--v-success); }
-.system-dot.is-warn { background: var(--v-warning); box-shadow: 0 0 7px var(--v-warning); }
-.system-dot.is-busy { background: var(--v-accent-2); box-shadow: 0 0 7px var(--v-accent-2); }
+.system-dot.is-ok { background: var(--v-success); }
+.system-dot.is-warn { background: var(--v-warning); }
+.system-dot.is-busy { background: var(--v-accent-2); }
 .system-dot.is-info { background: var(--v-info); }
 .system-dot.is-off { background: var(--v-text-3); }
 
@@ -998,7 +975,7 @@ onBeforeUnmount(() => {
   height: 100%;
   border-radius: inherit;
   background: var(--v-primary);
-  transition: width var(--v-slow) var(--v-ease);
+  transition: width var(--v-base) var(--v-ease-out);
   overflow: hidden;
 }
 
@@ -1046,8 +1023,8 @@ onBeforeUnmount(() => {
   flex: none;
 }
 
-.risk-dot.is-danger { background: var(--v-danger); box-shadow: 0 0 8px var(--v-danger); }
-.risk-dot.is-warning { background: var(--v-warning); box-shadow: 0 0 8px var(--v-warning); }
+.risk-dot.is-danger { background: var(--v-danger); }
+.risk-dot.is-warning { background: var(--v-warning); }
 .risk-dot.is-info { background: var(--v-info); }
 .risk-dot.is-stale { background: var(--v-text-3); }
 
@@ -1212,11 +1189,6 @@ onBeforeUnmount(() => {
   color: var(--v-text-3);
 }
 
-@keyframes live-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.82); }
-}
-
 @media (max-width: 1280px) {
   .hud-top {
     flex-wrap: wrap;
@@ -1246,9 +1218,6 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dash-live i {
-    animation: none;
-  }
   .status-bar span,
   .fresh-bar span,
   .bar-fill {
