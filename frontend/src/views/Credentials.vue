@@ -2178,7 +2178,16 @@ onMounted(async () => {
           clearable
           class="filter-search"
         />
-        <el-select v-model="filters.group_id" placeholder="全部分组" clearable class="filter-item" @change="applyFilters">
+        <el-select
+          v-model="filters.group_id"
+          placeholder="全部分组"
+          clearable
+          filterable
+          default-first-option
+          popper-class="group-filter-popper"
+          class="filter-item"
+          @change="applyFilters"
+        >
           <el-option v-for="option in groupOptions" :key="option.value" :label="option.label" :value="option.value" />
         </el-select>
         <el-select v-model="filters.status" placeholder="全部状态" clearable class="filter-item" @change="applyFilters">
@@ -2978,6 +2987,16 @@ onMounted(async () => {
 
 .filter-item {
   width: 170px;
+}
+
+/* 分组下拉：分组多时限制高度、内部滚动（popper teleport 到 body，必须用 :global） */
+:global(.group-filter-popper .el-select-dropdown__wrap) {
+  max-height: 240px;
+  overscroll-behavior: contain;
+}
+
+:global(.group-filter-popper .el-select-dropdown__list) {
+  padding: 4px;
 }
 
 .content-row {
