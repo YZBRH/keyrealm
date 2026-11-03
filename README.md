@@ -131,7 +131,7 @@
 | 域名解析 | 3 | DNSPod、DuckDNS、GoDaddy |
 | 开发者平台 | 4 | GitHub、Hugging Face、Weights & Biases、npm |
 | 地图 | 3 | 高德地图、百度地图、腾讯地图（腾讯位置服务） |
-| 交易所 | 2 | OKX、Binance |
+| 交易所 | 3 | OKX、Binance、国信证券（Skill 网关 / 开放 API） |
 | 邮箱 / 短信 | 2 | 通用 SMTP（覆盖 Gmail / QQ / 163 / 126 等）、短信 / 接码网关 |
 | 主机管理 | 4 | SSH（密码 / 私钥，私钥默认 PK_OK 静默校验；控制台 + SFTP 文件管理）、Telnet（登录校验）、RDP（NLA/CredSSP 登录校验）、FTP / FTPS（显式 / 隐式，登录验证） |
 

@@ -1,0 +1,141 @@
+{
+  "name": "国信证券",
+  "version": "1.0.0",
+  "credential_type": "exchange_guosen",
+  "author": "Keyrealm",
+  "description": "管理并验证国信证券 Skill 网关 API Key 与开放 API AK/SK",
+  "icon": "📈",
+  "fields": [
+    {
+      "key": "kind",
+      "label": "密钥种类",
+      "type": "select",
+      "required": true,
+      "default": "skill_gateway",
+      "options": [
+        {
+          "value": "skill_gateway",
+          "label": "Skill 网关（GS_API_KEY）"
+        },
+        {
+          "value": "openapi_aksk",
+          "label": "开放 API（AK / SK）"
+        }
+      ],
+      "hint": "两种体系互不通用：Skill 网关用单个 GS_API_KEY；开放 API 用 AK/SK 对请求做 HMAC-SHA256 签名。"
+    },
+    {
+      "key": "api_key",
+      "label": "GS_API_KEY",
+      "type": "password",
+      "required": true,
+      "sensitive": true,
+      "show_if": {
+        "kind": "skill_gateway"
+      },
+      "placeholder": "V2V-...",
+      "hint": "国信 Skills 中心签发的 API Key，可在「小信智慧助手 Skills 中心」登录后复制。"
+    },
+    {
+      "key": "soft_name",
+      "label": "接入渠道（softName）",
+      "type": "select",
+      "required": true,
+      "default": "tx_skills",
+      "show_if": {
+        "kind": "skill_gateway"
+      },
+      "options": [
+        {
+          "value": "tx_skills",
+          "label": "主站 / 金太阳（tx_skills）"
+        },
+        {
+          "value": "coze_skills",
+          "label": "Coze（coze_skills）"
+        }
+      ],
+      "hint": "必须是国信已注册的渠道名；填成未注册的值网关会返回「参数不匹配」。"
+    },
+    {
+      "key": "base_url",
+      "label": "Skill 网关地址",
+      "type": "url",
+      "required": false,
+      "default": "https://dgzt.guosen.com.cn/skills",
+      "show_if": {
+        "kind": "skill_gateway"
+      },
+      "hint": "默认国信 Skill 网关；一般无需修改。"
+    },
+    {
+      "key": "access_key",
+      "label": "Access Key（AK）",
+      "type": "password",
+      "required": true,
+      "sensitive": true,
+      "show_if": {
+        "kind": "openapi_aksk"
+      },
+      "placeholder": "开放 API 应用生成的 AK"
+    },
+    {
+      "key": "secret_key",
+      "label": "Secret Key（SK）",
+      "type": "password",
+      "required": true,
+      "sensitive": true,
+      "show_if": {
+        "kind": "openapi_aksk"
+      },
+      "placeholder": "与 AK 配对的 SK"
+    },
+    {
+      "key": "verify_url",
+      "label": "验证接口 URL",
+      "type": "url",
+      "required": false,
+      "show_if": {
+        "kind": "openapi_aksk"
+      },
+      "placeholder": "https://.../api/...",
+      "hint": "开放 API 没有通用校验接口，需填写一个已授权接口的完整 URL 才能在线验证；留空时只保存 AK/SK、不做在线校验。"
+    },
+    {
+      "key": "route_project",
+      "label": "X-GS-API-PROJECT",
+      "type": "text",
+      "required": false,
+      "show_if": {
+        "kind": "openapi_aksk"
+      },
+      "hint": "开放 API 项目路由头；按项目文档填写，未提供可留空。"
+    },
+    {
+      "key": "route_cluster",
+      "label": "X-GS-API-CLUSTER",
+      "type": "text",
+      "required": false,
+      "show_if": {
+        "kind": "openapi_aksk"
+      },
+      "hint": "开放 API 集群路由头；按项目文档填写，未提供可留空。"
+    },
+    {
+      "key": "route_router",
+      "label": "X-GS-API-ROUTER",
+      "type": "text",
+      "required": false,
+      "show_if": {
+        "kind": "openapi_aksk"
+      },
+      "hint": "开放 API 路由头；按项目文档填写，未提供可留空。"
+    },
+    {
+      "key": "notes",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}

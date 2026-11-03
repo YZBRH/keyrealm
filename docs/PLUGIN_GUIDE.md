@@ -79,7 +79,8 @@ plugins/
 ├── exchange/                   # 类别目录（交易所）
 │   ├── category.json
 │   ├── okx/
-│   └── binance/
+│   ├── binance/
+│   └── guosen/                 # 国信证券（Skill 网关 GS_API_KEY / 开放 API AK+SK）
 ├── mail/                       # 类别目录（邮箱 / 短信）
 │   ├── category.json
 │   ├── mail_common.py          # 类别共享模块：仅本类别特有的辅助（SOCKS 解析、TunneledSMTP/IMAP）
@@ -1223,7 +1224,7 @@ SMTP 与 IMAP 两条路径共用同一策略。
   telegram（机器人信息、发送消息（写））· discord（Webhook 信息）·
   wechat_ilink —— 拉取消息（`list`，短轮询）→ 行内「下载」下钻到附件下载（图片 / 语音 / 文件 / 视频，
   CDN 密文本地 AES 解密后经 `save_to` 写盘）
-- **exchange**：okx（账户余额）· binance（账户信息、交易所时间）
+- **exchange**：okx（账户余额）· binance（账户信息、交易所时间）· guosen（Skill 网关 / 开放 API 两类密钥校验，无操作）
 - **api**：coze（工作区列表）· tavily（执行搜索）· firecrawl（抓取网页）·
   metaso（搜索（`list`，行内「阅读」下钻）· 网页解析）·
   baidu_face（人脸库分组列表（`list`，只读））·
