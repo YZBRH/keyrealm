@@ -708,35 +708,51 @@ def get_batch_options() -> dict:
 
 
 def check_duplicate_credential(credential_type: str, data: dict) -> list:
-    """检测与新增数据重复的既有凭据：任一敏感字段值与既有凭据
-    解密后任意字符串字段值相同即视为重复。返回匹配项摘要列表。"""
+    """检测与新增数据重复的既有凭据。
+
+    判据是「同类型 + 目标相同 + 敏感字段值重合」：同一个密码 / 密钥用在不同的主机、
+    端点或项目上不算重复；目标字段由 manifest 语义决定（见 ``plugin_manager.target_fields``）。
+    返回匹配项摘要列表。
+    """
     key = _get_key()
     if key is None:
         return []
 
     plugin_record = db.get_plugin_by_type(credential_type)
-    sensitive_keys = set()
-    if plugin_record:
-        for f in plugin_record.get("fields_schema", []):
-            if f.get("sensitive"):
-                sensitive_keys.add(f["key"])
-    new_values = {str(data[k]).strip() for k in sensitive_keys if data.get(k)}
+    schema = (plugin_record or {}).get("fields_schema") or []
+    sensitive_fields = [f for f in schema
+                        if isinstance(f, dict) and f.get("sensitive") and f.get("key")]
+
+    def _values(source: dict) -> set[str]:
+        return {
+            str(source[f["key"]]).strip()
+            for f in sensitive_fields
+            if source.get(f["key"])
+            and not isinstance(source.get(f["key"]), (dict, list))
+            and plugin_manager.field_visible(f, source)
+        }
+
+    new_values = _values(data)
     if not new_values:
         return []
+    new_target = tuple(plugin_manager.target_fields(credential_type, data, schema))
 
     matches = []
-    for cred in db.list_credentials():
+    for cred in db.list_credentials(credential_type=credential_type):
         try:
             existing = decrypt_dict(key, cred["data_encrypted"])
         except Exception:
             continue
-        existing_values = {str(v).strip() for v in existing.values() if isinstance(v, str) and v}
-        if new_values & existing_values:
-            matches.append({
-                "id": cred["id"],
-                "name": cred["name"],
-                "credential_type": cred["credential_type"],
-            })
+        if not (_values(existing) & new_values):
+            continue
+        # 目标不同 = 同一把钥匙开另一扇门，不能提示为重复。
+        if tuple(plugin_manager.target_fields(credential_type, existing, schema)) != new_target:
+            continue
+        matches.append({
+            "id": cred["id"],
+            "name": cred["name"],
+            "credential_type": cred["credential_type"],
+        })
     return matches
 
 
@@ -753,11 +769,12 @@ def find_duplicate_credentials(
     credential_types: Optional[list] = None,
     search: Optional[str] = None,
 ) -> dict:
-    """在指定范围内查找「同类型 + 敏感字段值完全相同」的凭据组。
+    """在指定范围内查找「同类型 + 目标相同 + 敏感字段值完全相同」的凭据组。
 
-    与新增时的 ``check_duplicate_credential``（任一敏感值重合即提示）不同，去重按**完整
+    与新增时的 ``check_duplicate_credential``（敏感值有重合即提示）不同，去重按**完整
     敏感字段组合**判定：只有全部非空敏感字段都相同才算同一把凭据，避免把「同一个 Access
-    Key ID、不同 Secret」这类条目误删。只在同一 ``credential_type`` 内比对。
+    Key ID、不同 Secret」这类条目误删。同时要求目标字段（主机 / 端点 / 项目等）一致——
+    同一个密码用在不同主机上不是重复。只在同一 ``credential_type`` 内比对。
     """
     key = _get_key()
     if key is None:
@@ -779,10 +796,11 @@ def find_duplicate_credentials(
         record = plugins.get(ctype)
         if not record:
             continue
+        fields = record.get("fields_schema") or []
         sens = schema_cache.get(ctype)
         if sens is None:
             sens = [(f["key"], f.get("label") or f["key"])
-                    for f in record.get("fields_schema", []) if f.get("sensitive")]
+                    for f in fields if f.get("sensitive")]
             schema_cache[ctype] = sens
         if not sens:
             continue
@@ -791,24 +809,36 @@ def find_duplicate_credentials(
         except Exception:  # noqa: BLE001 - 单条解不开就跳过，不影响整体扫描
             continue
         values = {}
+        field_map = {f.get("key"): f for f in fields if isinstance(f, dict)}
         for fkey, _flabel in sens:
             value = data.get(fkey)
-            if isinstance(value, str) and value.strip():
-                values[fkey] = value.strip()
+            if not isinstance(value, str) or not value.strip():
+                continue
+            field = field_map.get(fkey)
+            if field and not plugin_manager.field_visible(field, data):
+                continue
+            values[fkey] = value.strip()
         if not values:
             continue
         data_cache[idx] = data
-        grouped.setdefault((ctype, tuple(sorted(values.items()))), []).append(idx)
+        targets = tuple(plugin_manager.target_fields(ctype, data, fields))
+        grouped.setdefault(
+            (ctype, targets, tuple(sorted(values.items()))), []).append(idx)
 
     groups = []
-    for (ctype, values), members in grouped.items():
+    for (ctype, _targets, values), members in grouped.items():
         if len(members) < 2:
             continue
         record = plugins.get(ctype) or {}
-        label_map = dict(schema_cache.get(ctype) or [])
+        label_map = {f["key"]: f.get("label") or f["key"]
+                     for f in record.get("fields_schema", []) if f.get("key")}
         match = [
             {"key": fkey, "label": label_map.get(fkey, fkey), "masked": display_secret(value)}
             for fkey, value in values
+        ]
+        target_match = [
+            {"key": fkey, "label": label_map.get(fkey, fkey), "value": fvalue}
+            for fkey, fvalue in _targets
         ]
         items = []
         for idx in members:
@@ -831,6 +861,7 @@ def find_duplicate_credentials(
             "credential_type": ctype,
             "plugin_name": record.get("name") or ctype,
             "match": match,
+            "target": target_match,
             "items": items,
         })
 

@@ -238,6 +238,38 @@ export function createMockApi() {
   const pluginOf = (credentialType) =>
     state.plugins.find((p) => p.credential_type === credentialType)
 
+  // 与后端 plugin_manager.target_fields 同口径：同一把密钥指向不同目标不算重复。
+  const TARGET_FIELD_KEYS = new Set([
+    'host', 'port', 'username', 'base_url', 'url', 'endpoint', 'webhook_url',
+    'domain', 'project_id', 'region', 'region_id', 'account_id', 'app_id',
+    'appid', 'app_key', 'corpid', 'client_email', 'uid', 'enterprise_id',
+    'api_id', 'dp_id', 'vendor',
+  ])
+  const LOWER_TARGET_KEYS = new Set(['host', 'domain', 'client_email'])
+  const URL_TARGET_KEYS = new Set(['base_url', 'url', 'endpoint', 'webhook_url'])
+  const targetFieldsOf = (plugin, data = {}) => {
+    const fields = (plugin && plugin.fields_schema) || []
+    const explicit = fields.filter((f) => f.identity)
+    const chosen = explicit.length
+      ? explicit
+      : fields.filter((f) => !f.sensitive &&
+          TARGET_FIELD_KEYS.has(String(f.key || '').toLowerCase()))
+    const out = []
+    for (const f of chosen) {
+      const raw = data[f.key]
+      if (raw == null || typeof raw === 'object') continue
+      const key = String(f.key).toLowerCase()
+      let value = String(raw).trim()
+      if (!value) continue
+      if (LOWER_TARGET_KEYS.has(key)) value = value.toLowerCase()
+      if (URL_TARGET_KEYS.has(key)) value = value.replace(/\/+$/, '')
+      out.push({ key: f.key, label: f.label || f.key, value })
+    }
+    return out
+  }
+  const targetKeyOf = (plugin, data = {}) =>
+    JSON.stringify(targetFieldsOf(plugin, data).map((t) => [t.key, t.value]))
+
   // ── 默认设置 / TLS / 简易操作 的公共辅助 ─────────────────
   const RESERVED_KEYS = ['_proxy_mode', '_proxy_id', '_tls_version']
 
@@ -580,8 +612,11 @@ export function createMockApi() {
           .filter(Boolean),
       )
       if (!newValues.size) return []
+      const newTarget = targetKeyOf(plugin, data)
       return state.credentials
-        .filter((item) => item.secret && newValues.has(item.secret))
+        .filter((item) => item.credential_type === credentialType &&
+          newValues.has(item.secret) &&
+          targetKeyOf(plugin, item.data_plain || {}) === newTarget)
         .map((item) => ({ id: item.id, name: item.name, credential_type: item.credential_type }))
     },
 
@@ -606,7 +641,8 @@ export function createMockApi() {
       })
       const buckets = new Map()
       for (const c of rows) {
-        const k = `${c.credential_type}\u0000${c.secret}`
+        const plugin = pluginOf(c.credential_type)
+        const k = `${c.credential_type}\u0000${targetKeyOf(plugin, c.data_plain || {})}\u0000${c.secret}`
         if (!buckets.has(k)) buckets.set(k, [])
         buckets.get(k).push(c)
       }
@@ -619,6 +655,7 @@ export function createMockApi() {
           credential_type: ctype,
           plugin_name: plugin ? plugin.name : ctype,
           match: [{ key: 'api_key', label: 'API Key', masked: displaySecret(items[0].secret) }],
+          target: targetFieldsOf(plugin, items[0].data_plain || {}),
           items: items.map((c) => ({
             id: c.id, name: c.name, credential_type: c.credential_type,
             group_id: c.group_id, group_name: groupName(c.group_id),

@@ -829,6 +829,10 @@ def cmd_dedupe(args) -> int:
         return 0
     for index, group in enumerate(groups, 1):
         print(f"重复组 {index}（{group.get('plugin_name') or group.get('credential_type')}）：")
+        targets = group.get("target") or []
+        if targets:
+            print("  目标：" + "、".join(
+                f"{t.get('label')}={t.get('value')}" for t in targets))
         for item in group.get("items") or []:
             print(f"  {item.get('id'):>5}  {item.get('name')}  "
                   f"{_STATUS_CN.get(item.get('status'), item.get('status') or '')}")

@@ -642,8 +642,8 @@ def _apply_quota_probe(credential_type: str, module, data: dict, result: VerifyR
         result.message = str(extra["message"])
 
 
-def _validation_visible(field: dict, data: dict) -> bool:
-    """校验时套用 manifest 的 show_if（与前端 / 备份导入同一判据）。"""
+def field_visible(field: dict, data: dict) -> bool:
+    """套用 manifest 的 show_if（与前端 / 备份导入同一判据）。"""
     cond = field.get("show_if")
     if not isinstance(cond, dict) or not cond:
         return True
@@ -652,6 +652,91 @@ def _validation_visible(field: dict, data: dict) -> bool:
         if not any(str((data or {}).get(key, "") or "") == str(value) for value in allowed):
             return False
     return True
+
+
+# 去重 / 重复提示用的「目标」字段：同一条密钥指向不同主机、端点或项目时不是重复凭据。
+# 白名单按字段语义挑选（只看非敏感字段）；插件可在字段上写 `"identity": true` 显式声明，
+# 显式声明存在时优先使用。
+_TARGET_FIELD_KEYS = frozenset({
+    "host", "port", "username",
+    "base_url", "url", "endpoint", "webhook_url", "domain",
+    "project_id", "region", "region_id", "account_id",
+    "app_id", "appid", "app_key", "corpid", "client_email",
+    "uid", "enterprise_id", "api_id", "dp_id", "vendor",
+})
+# 主机 / 域名不区分大小写；URL 类去掉末尾斜杠，避免同一地址写法不同被判成两条。
+_TARGET_LOWER_KEYS = frozenset({"host", "domain", "client_email"})
+_TARGET_URL_KEYS = frozenset({"base_url", "url", "endpoint", "webhook_url"})
+
+
+def _target_schema(schema: list) -> list[dict]:
+    explicit = [f for f in schema if isinstance(f, dict) and f.get("identity")]
+    if explicit:
+        return explicit
+    return [
+        f for f in schema
+        if isinstance(f, dict)
+        and not f.get("sensitive")
+        and str(f.get("key") or "").lower() in _TARGET_FIELD_KEYS
+    ]
+
+
+def _normalize_target_value(key: str, value) -> str:
+    text = str(value).strip()
+    if key in _TARGET_LOWER_KEYS:
+        text = text.lower()
+    if key in _TARGET_URL_KEYS:
+        text = text.rstrip("/")
+    return text
+
+
+def target_fields(credential_type: str, data: dict, schema: Optional[list] = None) -> list[tuple[str, str]]:
+    """该凭据的目标标识（字段 key, 规范化后的值），按 manifest 顺序。"""
+    if schema is None:
+        record = db.get_plugin_by_type(credential_type) or {}
+        schema = record.get("fields_schema") or []
+    data = data if isinstance(data, dict) else {}
+    result: list[tuple[str, str]] = []
+    for field in _target_schema(schema):
+        key = field.get("key")
+        if not key or not field_visible(field, data):
+            continue
+        value = data.get(key)
+        if value is None or isinstance(value, (dict, list)):
+            continue
+        text = _normalize_target_value(str(key).lower(), value)
+        if text:
+            result.append((str(key), text))
+    return result
+
+
+def identity_key(credential_type: str, data: dict, schema: Optional[list] = None) -> tuple:
+    """去重身份：凭据类型 + 目标字段 + 全部非空敏感字段。
+
+    目标不同（例如同一密码用于不同主机）时不会判为重复；目标相同时仍按敏感值组合判断。
+    """
+    if schema is None:
+        record = db.get_plugin_by_type(credential_type) or {}
+        schema = record.get("fields_schema") or []
+    data = data if isinstance(data, dict) else {}
+    sensitive: list[tuple[str, str]] = []
+    for field in schema:
+        if not isinstance(field, dict) or not field.get("sensitive"):
+            continue
+        key = field.get("key")
+        if not key or not field_visible(field, data):
+            continue
+        value = data.get(key)
+        if value is None or isinstance(value, (dict, list)):
+            continue
+        text = str(value).strip()
+        if text:
+            sensitive.append((str(key), text))
+    return (
+        credential_type,
+        tuple(target_fields(credential_type, data, schema)),
+        tuple(sorted(sensitive)),
+    )
 
 
 def _select_option_values(field: dict):
@@ -694,7 +779,7 @@ def validate_field_values(credential_type: str, data: dict, *, check_unknown: bo
         if not isinstance(field, dict):
             continue
         key = field.get("key")
-        if not key or key not in data or not _validation_visible(field, data):
+        if not key or key not in data or not field_visible(field, data):
             continue
         raw = data.get(key)
         empty = raw is None or (isinstance(raw, str) and not raw.strip())

@@ -67,15 +67,15 @@ def _sensitive_keys(credential_type: str) -> set:
 def _dedupe_key(credential_type: str, data: dict) -> tuple:
     """一条凭据的「身份」，用于重复判定。
 
-    默认取**敏感字段的值**——敏感值相同基本就等同于同一把钥匙。但敏感值为空的情况很常见
-    （插件压根没有敏感字段，或这条凭据没填任何敏感字段），此时敏感身份是空集：要么所有条目
-    都算重复（会丢数据），要么都不算（导入两次就翻一倍）。所以**拿不到敏感身份就退化为整条
-    记录做身份**——完全相同才算重复，这正是「重复导入同一份备份不出双份」需要的语义。
+    默认取**敏感字段的值 + 目标字段**（主机 / 端点 / 项目等）——同一个密码用在不同主机上
+    是两条独立凭据，不能当成重复跳过。敏感值为空的情况很常见（插件压根没有敏感字段，或
+    这条凭据没填任何敏感字段），此时敏感身份是空集：要么所有条目都算重复（会丢数据），
+    要么都不算（导入两次就翻一倍）。所以**拿不到敏感身份就退化为整条记录做身份**——
+    完全相同才算重复，这正是「重复导入同一份备份不出双份」需要的语义。
     """
     sens = _sensitive_keys(credential_type)
-    key = tuple(sorted(f"{k}={data[k]}" for k in sens if data.get(k)))
-    if key:
-        return key
+    if any(data.get(k) for k in sens):
+        return plugin_manager.identity_key(credential_type, data)
     return tuple(sorted(f"{k}={data[k]}" for k in data if data.get(k)))
 
 

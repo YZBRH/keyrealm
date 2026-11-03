@@ -2570,9 +2570,12 @@ onMounted(async () => {
             <strong>{{ group.plugin_name }}</strong>
             <span class="dedupe-match text-muted">
               重复依据：
-              <template v-if="group.match && group.match.length">
-                <template v-for="(m, mi) in group.match" :key="m.key">
-                  <span v-if="mi">、</span>{{ m.label }} {{ m.masked }}
+              <template v-if="(group.target && group.target.length) || (group.match && group.match.length)">
+                <template v-for="(m, mi) in (group.target || [])" :key="`t-${m.key}`">
+                  <span v-if="mi">、</span>{{ m.label }} {{ m.value }}
+                </template>
+                <template v-for="(m, mi) in (group.match || [])" :key="`s-${m.key}`">
+                  <span v-if="mi || (group.target && group.target.length)">、</span>敏感值 {{ m.masked }}
                 </template>
               </template>
               <template v-else>敏感字段值重合</template>
