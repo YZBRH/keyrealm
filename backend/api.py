@@ -732,10 +732,11 @@ def check_duplicate_credential(credential_type: str, data: dict) -> list:
             and plugin_manager.field_visible(f, source)
         }
 
-    new_values = _values(data)
+    effective_new = plugin_manager.with_defaults(schema, data)
+    new_values = _values(effective_new)
     if not new_values:
         return []
-    new_target = tuple(plugin_manager.target_fields(credential_type, data, schema))
+    new_target = tuple(plugin_manager.target_fields(credential_type, effective_new, schema))
 
     matches = []
     for cred in db.list_credentials(credential_type=credential_type):
@@ -743,6 +744,7 @@ def check_duplicate_credential(credential_type: str, data: dict) -> list:
             existing = decrypt_dict(key, cred["data_encrypted"])
         except Exception:
             continue
+        existing = plugin_manager.with_defaults(schema, existing)
         if not (_values(existing) & new_values):
             continue
         # 目标不同 = 同一把钥匙开另一扇门，不能提示为重复。
@@ -808,6 +810,7 @@ def find_duplicate_credentials(
             data = decrypt_dict(key, cred["data_encrypted"])
         except Exception:  # noqa: BLE001 - 单条解不开就跳过，不影响整体扫描
             continue
+        data = plugin_manager.with_defaults(fields, data)
         values = {}
         field_map = {f.get("key"): f for f in fields if isinstance(f, dict)}
         for fkey, _flabel in sens:

@@ -654,6 +654,23 @@ def field_visible(field: dict, data: dict) -> bool:
     return True
 
 
+def with_defaults(schema: list, data: dict) -> dict:
+    """按字段表补上未提供的 manifest 默认值，仅用于判断显隐与去重身份。
+
+    API / CLI / MCP 创建凭据时不一定经过表单，像 ``auth_mode`` 这种控制 ``show_if`` 的
+    字段可能缺省；若直接判显隐，``api_key`` 会被误判为隐藏，导致重复检测失效。
+    这里只在内存里补默认值，**不**改变最终落库的数据。
+    """
+    effective = dict(data or {})
+    for field in schema:
+        if not isinstance(field, dict):
+            continue
+        key = field.get("key")
+        if key and effective.get(key) is None and field.get("default") is not None:
+            effective[key] = field["default"]
+    return effective
+
+
 # 去重 / 重复提示用的「目标」字段：同一条密钥指向不同主机、端点或项目时不是重复凭据。
 # 白名单按字段语义挑选（只看非敏感字段）；插件可在字段上写 `"identity": true` 显式声明，
 # 显式声明存在时优先使用。
@@ -695,7 +712,7 @@ def target_fields(credential_type: str, data: dict, schema: Optional[list] = Non
     if schema is None:
         record = db.get_plugin_by_type(credential_type) or {}
         schema = record.get("fields_schema") or []
-    data = data if isinstance(data, dict) else {}
+    data = with_defaults(schema, data)
     result: list[tuple[str, str]] = []
     for field in _target_schema(schema):
         key = field.get("key")
@@ -718,7 +735,7 @@ def identity_key(credential_type: str, data: dict, schema: Optional[list] = None
     if schema is None:
         record = db.get_plugin_by_type(credential_type) or {}
         schema = record.get("fields_schema") or []
-    data = data if isinstance(data, dict) else {}
+    data = with_defaults(schema, data)
     sensitive: list[tuple[str, str]] = []
     for field in schema:
         if not isinstance(field, dict) or not field.get("sensitive"):

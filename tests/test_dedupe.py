@@ -95,6 +95,17 @@ def test_url_normalization_and_different_base_url():
     assert first["id"]
 
 
+def test_missing_show_if_controller_uses_manifest_default():
+    # API / CLI 创建时可能不带 auth_mode；默认值 api_key 下 api_key 字段仍然可见，
+    # 不能因为 show_if 控制器缺省就跳过敏感值、导致重复检测失效。
+    data = {"base_url": "https://api.example.com/v1", "api_key": "sk-same-7"}
+    first = _create("showif-a", data, "llm_openai")
+    second = _create("showif-b", dict(data), "llm_openai")
+    groups = api.find_duplicate_credentials()["groups"]
+    ids = {item["id"] for group in groups for item in group["items"]}
+    assert {first["id"], second["id"]} <= ids
+
+
 def test_backup_dedupe_key_includes_target():
     a = _ssh("192.0.2.50", "same-secret-6")
     b = _ssh("192.0.2.51", "same-secret-6")
