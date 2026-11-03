@@ -4,7 +4,7 @@
   "credential_type": "exchange_guosen",
   "author": "Keyrealm",
   "description": "管理并验证国信证券 Skill 网关 API Key 与开放 API AK/SK",
-  "icon": "📈",
+  "icon": "logo.png",
   "fields": [
     {
       "key": "kind",
