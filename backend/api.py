@@ -521,6 +521,16 @@ def get_credential(credential_id: int) -> Optional[dict]:
     return cred
 
 
+def _validate_credential_name(name) -> list[str]:
+    """名称的通用约束（表单 / MCP / CLI 共用）；空名与超长名都不该落库。"""
+    text = str(name or "").strip()
+    if not text:
+        return ["凭据名称不能为空"]
+    if len(text) > 100:
+        return ["凭据名称不能超过 100 个字符"]
+    return []
+
+
 def create_credential(
     name: str,
     credential_type: str,
@@ -531,6 +541,11 @@ def create_credential(
     key = _get_key()
     if key is None:
         return {"error": "vault_locked", "message": "保险库已锁定"}
+
+    name = str(name or "").strip()
+    name_errors = _validate_credential_name(name)
+    if name_errors:
+        return {"error": "validation_failed", "details": name_errors}
 
     # 类别/插件级默认设置先补进来——默认值可能正好满足必填项，所以必须在校验之前
     data = preset_store.apply_defaults(credential_type, data)
@@ -578,6 +593,10 @@ def update_credential(
 
     kwargs: dict[str, Any] = {}
     if name is not None:
+        name = str(name).strip()
+        name_errors = _validate_credential_name(name)
+        if name_errors:
+            return {"error": "validation_failed", "details": name_errors}
         kwargs["name"] = name
     # 显式传 None = 取消分组；省略（_UNSET）= 不修改分组
     if group_id is not _UNSET:
@@ -604,6 +623,13 @@ def update_credential(
             for sk in sensitive_keys:
                 if not merged.get(sk) and existing_data.get(sk):
                     merged[sk] = existing_data[sk]
+
+        # 更新同样要校验：MCP / CLI / 备份导入之外的调用方不会经过表单，不能只信前端。
+        # 插件被禁用或加载失败时仍允许编辑，因此不强制要求模块存在（禁用≠删除）。
+        errors = plugin_manager.validate_credential(
+            cred["credential_type"], merged, require_module=False)
+        if errors:
+            return {"error": "validation_failed", "details": errors}
 
         kwargs["data_encrypted"] = encrypt_dict(key, merged)
         kwargs["data_plain"] = {k: v for k, v in merged.items() if k not in sensitive_keys}
@@ -881,11 +907,30 @@ def list_groups() -> list:
     return db.list_groups()
 
 
+def _validate_group_name(name) -> list[str]:
+    """分组名称约束与界面一致（非空、≤40 字）；CLI / MCP 不走表单，必须在这里兜住。"""
+    text = str(name or "").strip()
+    if not text:
+        return ["分组名称不能为空"]
+    if len(text) > 40:
+        return ["分组名称不能超过 40 个字符"]
+    return []
+
+
 def create_group(name: str, description: str = "", color: str = "#409EFF") -> dict:
+    name = str(name or "").strip()
+    errors = _validate_group_name(name)
+    if errors:
+        return {"error": "validation_failed", "details": errors}
     return db.create_group(name, description, color)
 
 
 def update_group(group_id: int, name: str = None, description: str = None, color: str = None) -> dict:
+    if name is not None:
+        name = str(name).strip()
+        errors = _validate_group_name(name)
+        if errors:
+            return {"error": "validation_failed", "details": errors}
     kwargs = {k: v for k, v in {"name": name, "description": description, "color": color}.items() if v is not None}
     return db.update_group(group_id, **kwargs) or {"error": "not_found"}
 
@@ -1116,6 +1161,16 @@ def _declared_fields(credential_type: str) -> set[str]:
     return {str(f.get("key")) for f in schema if isinstance(f, dict) and f.get("key")}
 
 
+def _sensitive_fields(credential_type: str) -> set[str]:
+    """该插件声明为敏感的字段 key（写回时用于同步 data_plain）。"""
+    record = db.get_plugin_by_type(credential_type) or {}
+    schema = record.get("fields_schema") or []
+    return {
+        str(f.get("key")) for f in schema
+        if isinstance(f, dict) and f.get("key") and f.get("sensitive")
+    }
+
+
 def run_credential_action(credential_id: int, action_id: str, params: Optional[dict] = None) -> dict:
     """执行某凭据的插件操作（输出/错误统一做密钥净化）。
 
@@ -1146,16 +1201,29 @@ def run_credential_action(credential_id: int, action_id: str, params: Optional[d
         patch = {k: v for k, v in updated.items() if k in declared}
         if patch:
             merged = {**data, **patch}
-            try:
-                db.update_credential(credential_id, data_encrypted=encrypt_dict(key, merged))
-                data = merged
-                result["data_updated"] = sorted(patch)
-                _log.info("操作 %s/%s 写回凭据 %s 字段：%s",
-                          cred["credential_type"], action_id, credential_id, sorted(patch))
-            except Exception as e:  # noqa: BLE001 - 写回失败不能吞掉操作本身的结论
-                _log.exception("操作写回凭据失败 %s", credential_id)
+            # 插件回传的值也要过一遍通用校验：写回是直接落库路径，没有表单兜底。
+            value_errors = plugin_manager.validate_field_values(cred["credential_type"], merged)
+            if value_errors:
+                _log.warning("操作 %s/%s 写回被拒绝：%s", cred["credential_type"], action_id,
+                             "；".join(value_errors))
                 result["data_updated"] = []
-                result["data_update_error"] = type(e).__name__
+                result["data_update_error"] = "写回数据未通过校验：" + "；".join(value_errors)
+            else:
+                try:
+                    sensitive = _sensitive_fields(cred["credential_type"])
+                    db.update_credential(
+                        credential_id,
+                        data_encrypted=encrypt_dict(key, merged),
+                        data_plain={k: v for k, v in merged.items() if k not in sensitive},
+                    )
+                    data = merged
+                    result["data_updated"] = sorted(patch)
+                    _log.info("操作 %s/%s 写回凭据 %s 字段：%s",
+                              cred["credential_type"], action_id, credential_id, sorted(patch))
+                except Exception as e:  # noqa: BLE001 - 写回失败不能吞掉操作本身的结论
+                    _log.exception("操作写回凭据失败 %s", credential_id)
+                    result["data_updated"] = []
+                    result["data_update_error"] = type(e).__name__
     secrets = _credential_secrets(cred["credential_type"], data)
     # 整份结果递归净化：列表类操作的 rows/columns 也在这里面
     result = redact.redact_deep(result, secrets)

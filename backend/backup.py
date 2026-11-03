@@ -464,6 +464,14 @@ def import_backup(key: bytes, doc: dict, dedupe: bool = True, source: str = "",
             failed += 1
             continue
 
+        # 字段表形状之外再做一遍取值校验（select 选项 / number 类型）。
+        # 未知字段已由 _prepare_entry 报过，这里不重复检查。
+        value_errors = plugin_manager.validate_field_values(ct, effective, check_unknown=False)
+        if value_errors:
+            rec["reasons"].extend(value_errors)
+            failed += 1
+            continue
+
         values = _dedupe_key(ct, effective)
         if dedupe and values and values in existing.get(ct, set()):
             rec["status"] = "duplicate"

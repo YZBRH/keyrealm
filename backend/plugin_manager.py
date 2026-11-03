@@ -642,12 +642,95 @@ def _apply_quota_probe(credential_type: str, module, data: dict, result: VerifyR
         result.message = str(extra["message"])
 
 
-def validate_credential(credential_type: str, data: dict) -> list[str]:
-    """调用插件校验字段"""
+def _validation_visible(field: dict, data: dict) -> bool:
+    """校验时套用 manifest 的 show_if（与前端 / 备份导入同一判据）。"""
+    cond = field.get("show_if")
+    if not isinstance(cond, dict) or not cond:
+        return True
+    for key, want in cond.items():
+        allowed = want if isinstance(want, list) else [want]
+        if not any(str((data or {}).get(key, "") or "") == str(value) for value in allowed):
+            return False
+    return True
+
+
+def _select_option_values(field: dict):
+    """select 字段的合法值（options 支持字符串数组或 {value,label} 数组）。"""
+    options = field.get("options")
+    if not isinstance(options, list):
+        return None
+    values = []
+    for option in options:
+        value = option.get("value") if isinstance(option, dict) else option
+        if value is None:
+            continue
+        values.append(str(value))
+    return values or None
+
+
+def validate_field_values(credential_type: str, data: dict, *, check_unknown: bool = True) -> list[str]:
+    """按 manifest 做**取值层面**的兜底校验（插件 validate 之外的通用约束）。
+
+    插件自己的 ``validate()`` 负责业务规则；这里拦的是所有写入路径（表单 / MCP / CLI /
+    备份导入）都可能遇到的形状错误：select 写了不存在的选项、number 不是数字、
+    标量字段塞了对象、以及（可选）未声明的字段键。保留键以 ``_`` 开头，一律放行。
+    """
+    record = db.get_plugin_by_type(credential_type) or {}
+    schema = record.get("fields_schema") or []
+    data = data if isinstance(data, dict) else {}
+    errors: list[str] = []
+
+    keys = {
+        field.get("key") for field in schema
+        if isinstance(field, dict) and field.get("key")
+    }
+    if check_unknown:
+        for key in data:
+            if key in keys or str(key).startswith("_"):
+                continue
+            errors.append(f"凭据数据包含未声明字段：{key}")
+
+    for field in schema:
+        if not isinstance(field, dict):
+            continue
+        key = field.get("key")
+        if not key or key not in data or not _validation_visible(field, data):
+            continue
+        raw = data.get(key)
+        empty = raw is None or (isinstance(raw, str) and not raw.strip())
+        field_type = str(field.get("type") or "").lower()
+        label = field.get("label") or key
+        if field_type == "select":
+            allowed = _select_option_values(field)
+            if allowed is not None and not empty and str(raw) not in allowed:
+                shown = " / ".join(allowed[:8]) + (" …" if len(allowed) > 8 else "")
+                errors.append(f"{label}的取值不合法：{raw}（可选：{shown}）")
+        elif field_type == "number":
+            if not empty and not isinstance(raw, bool):
+                try:
+                    float(raw)
+                except (TypeError, ValueError):
+                    errors.append(f"{label}必须是数字")
+        elif field_type in ("text", "url", "password", "textarea", "model"):
+            if raw is not None and isinstance(raw, (dict, list)):
+                errors.append(f"{label}的值类型不合法")
+    return errors
+
+
+def validate_credential(credential_type: str, data: dict, *, require_module: bool = True) -> list[str]:
+    """校验凭据字段：通用取值约束 + 插件自己的 ``validate()``。
+
+    ``require_module=False`` 用于**更新已有凭据**：插件被禁用 / 加载失败时仍允许编辑，
+    此时只跑通用约束，不因「模块不存在」拒绝保存（禁用≠删除，凭据照常可改）。
+    """
+    errors = validate_field_values(credential_type, data)
     module = get_module(credential_type)
     if module is None:
-        return [_module_missing_error(credential_type)]
-    return call_validate(module, data)
+        if require_module:
+            errors.append(_module_missing_error(credential_type))
+        return errors
+    errors.extend(call_validate(module, data))
+    return errors
 
 
 def get_display_summary(credential_type: str, data: dict) -> str:

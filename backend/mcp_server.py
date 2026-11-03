@@ -172,49 +172,26 @@ def _build_mcp_app() -> MCPServer:
         group_id: Optional[int] = None,
         data: Optional[dict] = None,
     ) -> dict:
-        """修改凭据"""
+        """修改凭据（与界面共用同一份实现，同样会做字段校验）"""
         denied = _perm_denied("vault_update_credential")
         if denied:
             return denied
-        from .crypto import encrypt_dict
-
-        key = _get_key()
-        if key is None:
-            return {"error": "vault_locked"}
-
+        # 不要在这里复制更新逻辑：MCP 直接写库会绕过 api.update_credential 的字段校验
+        # （曾出现 MCP 把 auth_type 写成 private_key 后落库、验证逻辑随后报错的问题）。
+        from . import api as _api
         kwargs: dict[str, Any] = {}
         if name is not None:
             kwargs["name"] = name
         if group_id is not None:
             kwargs["group_id"] = group_id
         if data is not None:
-            cred = db.get_credential(credential_id)
-            if not cred:
-                return {"error": "not_found"}
-            plugin_record = db.get_plugin_by_type(cred["credential_type"])
-            sensitive_keys = set()
-            if plugin_record:
-                for f in plugin_record.get("fields_schema", []):
-                    if f.get("sensitive"):
-                        sensitive_keys.add(f["key"])
-
-            # 防御：敏感字段缺失或为空时保留已存明文，避免部分更新覆盖密钥
-            merged = dict(data)
-            if sensitive_keys:
-                try:
-                    existing_data = decrypt_dict(key, cred["data_encrypted"])
-                except Exception:
-                    existing_data = {}
-                for sk in sensitive_keys:
-                    if not merged.get(sk) and existing_data.get(sk):
-                        merged[sk] = existing_data[sk]
-
-            kwargs["data_encrypted"] = encrypt_dict(key, merged)
-            kwargs["data_plain"] = {k: v for k, v in merged.items() if k not in sensitive_keys}
-
-        updated = db.update_credential(credential_id, **kwargs)
-        _push_event("vault:credentials_changed", {})
-        return {"ok": True, "credential": updated}
+            kwargs["data"] = data
+        if not kwargs:
+            return {"ok": False, "error": "没有要修改的内容"}
+        result = _api.update_credential(credential_id, **kwargs)
+        if isinstance(result, dict) and result.get("error"):
+            return result
+        return {"ok": True, "credential": result}
 
     # ── vault_delete_credential ───────────────────────────
     @mcp.tool()
@@ -286,7 +263,11 @@ def _build_mcp_app() -> MCPServer:
         denied = _perm_denied("vault_create_group")
         if denied:
             return denied
-        group = db.create_group(name, description, color)
+        # 与界面 / CLI 共用同一套名称校验，别在这里直接落库。
+        from . import api as _api
+        group = _api.create_group(name, description, color)
+        if isinstance(group, dict) and group.get("error"):
+            return group
         _push_event("vault:credentials_changed", {})
         return {"ok": True, "group": group}
 

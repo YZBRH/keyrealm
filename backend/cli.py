@@ -546,7 +546,13 @@ def cmd_groups(args) -> int:
 def cmd_group_add(args) -> int:
     _unlock(args)
     res = api.create_group(args.name, args.description, args.color)
-    payload = {"id": res.get("id"), "name": args.name}
+    if res.get("error"):
+        details = res.get("details")
+        msg = res.get("message") or res["error"]
+        if details:
+            msg += "：" + "；".join(str(d) for d in details)
+        raise CliError(msg)
+    payload = {"id": res.get("id"), "name": res.get("name")}
     _emit(args, payload, f"已创建分组 {payload['id']}（{args.name}）")
     return 0
 
@@ -559,7 +565,11 @@ def cmd_group_update(args) -> int:
     res = api.update_group(group_id, name=args.name, description=args.description,
                            color=args.color)
     if res.get("error"):
-        raise CliError(res.get("message") or res["error"])
+        details = res.get("details")
+        msg = res.get("message") or res["error"]
+        if details:
+            msg += "：" + "；".join(str(d) for d in details)
+        raise CliError(msg)
     _emit(args, {"ok": True, "id": group_id}, f"已更新分组 {group_id}。")
     return 0
 
