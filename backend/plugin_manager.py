@@ -614,16 +614,15 @@ def plugin_uses_proxy(credential_type: str) -> bool:
 
 
 def _apply_quota_probe(credential_type: str, module, data: dict, result: VerifyResult) -> None:
-    """余额拿不到时的「欠费探测」后置检查（原地修改 result）。
+    """验证通过后的「实测可用」后置检查（原地修改 result）。
 
-    只在**验证通过**且**没有余额/使用率**时才给插件机会——有余额就没必要再花一发请求。
-    开关与模型都在凭据自己的字段里（``probe_chat`` / ``probe_model``），未接入探测的
-    插件没有 ``quota_probe``，直接跳过。
+    只要插件接入了 ``quota_probe`` 就调用它；是否真的发请求由凭据字段
+    ``probe_chat`` 决定（未开启时 probe 直接返回 ``None``）。**不再要求余额未知**：
+    ``/models`` 与余额接口都正常、但对话渠道已失效的情况并不少见，只有实测才能发现。
+    probe 可以返回 ``status``（``invalid`` / ``error``）把「认证通过但实际不可用」升级为
+    相应状态；不返回则保持 ``valid``。
     """
     if result.status != "valid":
-        return
-    info = result.account_info or {}
-    if info.get("balance") is not None or info.get("usage_rate") is not None:
         return
     probe = getattr(module, "quota_probe", None)
     if not callable(probe):
@@ -635,11 +634,17 @@ def _apply_quota_probe(credential_type: str, module, data: dict, result: VerifyR
         return
     if not isinstance(extra, dict):
         return
+    info = result.account_info or {}
     extra_info = extra.get("account_info")
     if isinstance(extra_info, dict) and extra_info:
         result.account_info = {**info, **extra_info}
     if extra.get("message"):
         result.message = str(extra["message"])
+    probe_status = str(extra.get("status") or "").strip()
+    if probe_status in ("invalid", "error") and result.status == "valid":
+        result.status = probe_status
+        if not extra.get("message"):
+            result.message = "对话接口实测失败，未能确认凭据可用"
 
 
 def field_visible(field: dict, data: dict) -> bool:

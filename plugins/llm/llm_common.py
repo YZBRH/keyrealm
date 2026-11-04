@@ -118,6 +118,8 @@ def make_quota_probe(default_base_url, protocol="openai", token_param="max_token
         from llm_protocols import quota_chat_probe
         verdict = quota_chat_probe(base_url, api_key, proto, probe_model(data), token_param)
         if verdict:
+            # 可能是 ok / 欠费，也可能带 status=invalid/error（鉴权失败、接口不可用）；
+            # 后者由 plugin_manager._apply_quota_probe 升级凭据状态。
             return verdict
         # 试过但没得出确定结论 → 报「实测 异常」（见 quota_unknown 的说明）。
         # 「None == 无法判定」这个契约留给 `quota_chat_probe`（nvidia 那类自己遍历候选、

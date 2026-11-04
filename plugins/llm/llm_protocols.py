@@ -593,13 +593,16 @@ def quota_chat_probe(base_url: str, api_key: str, protocol: str = "openai",
                      force: bool = False) -> Optional[dict]:
     """发一次最小对话请求，判断账户是否真的可用（欠费探测）。
 
-    只在「凭据有效但拿不到余额」时才有意义：``/v1/models`` 对欠费账户同样返回 200，
-    分不清「可用」与「账户欠费」，这里用 ``max_tokens=1`` 的一发请求换一个确定结论。
+    验证通过后，如果凭据开启了 ``probe_chat``，用 ``max_tokens=1`` 的一发请求确认
+    账户**实际可用**：``/v1/models`` 与余额接口都正常、但对话渠道失效（上游 Key 失效、
+    无可用渠道）的情况并不少见，只有实测才能发现。
 
-    返回 ``None``（无法判定）或：
+    返回 ``None``（无法判定，例如超时/限流）或：
 
     - ``{"account_info": {"chat_probe": "可用"}}``：实测通过；
-    - ``{"account_info": {"chat_probe": "欠费"}, "message": "..."}``：实测发现账户欠费。
+    - ``{"account_info": {"chat_probe": "欠费"}, "message": "..."}``：实测发现账户欠费；
+    - ``{"status": "invalid", ...}``：实测对话接口返回 401/403 鉴权失败；
+    - ``{"status": "error", ...}``：实测对话接口明确不可用（如 503 无可用渠道）。
 
     **``None`` 的语义保持「无法判定」不变**——`nvidia` 这类自己遍历候选、靠真值判断
     「这个模型有没有结论」的调用方依赖它（若失败也返回 dict，它们会在第一个候选失败时
@@ -622,6 +625,8 @@ def quota_chat_probe(base_url: str, api_key: str, protocol: str = "openai",
         return None
 
     tried: list[str] = []
+    auth_errors: list[str] = []
+    unavailable_errors: list[str] = []
     for model in candidates:
         resp = chat_completion(
             base_url, api_key, model,
@@ -651,11 +656,34 @@ def quota_chat_probe(base_url: str, api_key: str, protocol: str = "openai",
             if streamed.get("ok") or streamed.get("reached_model"):
                 return {"account_info": {"chat_probe": "可用"}}
             error = f"{error}；改走流式后：{streamed.get('error')}"
-        # 其它错误（模型不存在 / 鉴权 / 限流）不构成欠费结论，换下一个候选
-        tried.append(f"{model}（{error[:80]}）")
+        # 其它错误（模型不存在 / 鉴权 / 限流）不构成欠费结论，换下一个候选；
+        # 同时记下明确的鉴权失败与「接口不可用」，全部候选失败后用于定性。
+        entry = f"{model}（{error[:80]}）"
+        tried.append(entry)
+        lowered = error.lower()
+        if "http 429" in lowered:
+            continue  # 限流只说明此刻繁忙，不能据此判凭据不可用
+        if ("http 401" in lowered or "http 403" in lowered
+                or "authentication" in lowered or "invalid api key" in lowered
+                or "unauthorized" in lowered):
+            auth_errors.append(entry)
+        elif "http " in lowered or "业务错误" in error:
+            unavailable_errors.append(entry)
 
     log("欠费探测：试了 %d 个模型都没能确认账户可用 —— %s"
         % (len(tried), "；".join(tried[:5]) + ("…" if len(tried) > 5 else "")))
+    if auth_errors:
+        return {
+            "status": "invalid",
+            "account_info": {"chat_probe": "鉴权失败"},
+            "message": f"对话接口实测鉴权失败（已试 {len(tried)} 个模型）：{auth_errors[0]}",
+        }
+    if unavailable_errors:
+        return {
+            "status": "error",
+            "account_info": {"chat_probe": "不可用"},
+            "message": f"验证通过但对话接口实测不可用（已试 {len(tried)} 个模型）：{unavailable_errors[0]}",
+        }
     return None
 
 
