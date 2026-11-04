@@ -228,8 +228,6 @@ onBeforeUnmount(() => {
   window.removeEventListener(EVENTS.tasksChanged, onTasksChanged)
 })
 
-const pageTitle = computed(() => route.meta.title || 'Keyrealm')
-
 /* ── 批量验证横幅 ───────────────────────────────────────
  * 刻意做成**非阻塞**的横幅而不是模态弹窗：批量验证可能跑很久，模态会把整个界面按在前台，
  * 用户既看不了别的凭据、也去不了「任务」页。横幅只提示，其余操作照常可用
@@ -317,10 +315,13 @@ async function handleMinimize() {
             <el-icon><component :is="collapsed ? Expand : Fold" /></el-icon>
           </el-button>
         </el-tooltip>
-        <el-tooltip v-if="isCustomOrder" content="恢复默认顺序" placement="bottom">
+        <el-tooltip v-if="isCustomOrder && !collapsed" content="恢复默认顺序" placement="bottom">
           <el-button text :icon="RefreshLeft" @click="resetNavOrder" />
         </el-tooltip>
         <span class="toolbar-spacer" />
+        <el-tooltip content="锁定" :placement="collapsed ? 'right' : 'bottom'">
+          <el-button text :icon="Lock" @click="handleLock" />
+        </el-tooltip>
       </div>
 
       <el-menu :default-active="activePath" :collapse="collapsed" :collapse-transition="false" router class="layout-menu">
@@ -349,37 +350,32 @@ async function handleMinimize() {
         </el-menu-item>
       </el-menu>
 
-      <div v-show="!collapsed" class="aside-foot">
-        <span class="aside-foot-dot" />
-        <span>本地保险库</span>
+      <div class="aside-bottom">
+        <el-tooltip v-if="!isWebMode" content="最小化到托盘" placement="right">
+          <el-button text :icon="Minus" class="aside-action-btn" @click="handleMinimize">
+            <span v-show="!collapsed">最小化到托盘</span>
+          </el-button>
+        </el-tooltip>
+
+        <el-tooltip
+          :content="appStore.tray.mcp_running ? 'MCP 服务运行中' : 'MCP 服务已停止'"
+          :placement="collapsed ? 'right' : 'top'"
+        >
+          <div
+            class="aside-foot"
+            :class="{ 'is-collapsed': collapsed, 'is-on': appStore.tray.mcp_running }"
+          >
+            <span
+              class="aside-foot-dot"
+              :class="{ 'is-off': !appStore.tray.mcp_running }"
+            />
+            <span v-show="!collapsed">MCP {{ appStore.tray.mcp_running ? '运行中' : '已停止' }}</span>
+          </div>
+        </el-tooltip>
       </div>
     </el-aside>
 
     <el-container>
-      <el-header class="layout-header">
-        <div class="header-title">
-          <span class="header-accent" />
-          {{ pageTitle }}
-        </div>
-        <div class="header-actions">
-          <el-tooltip :content="appStore.tray.mcp_running ? 'MCP 服务运行中' : 'MCP 服务已停止'" placement="bottom">
-            <span
-              class="mcp-indicator"
-              :class="[appStore.tray.mcp_running ? 'is-on' : 'is-off']"
-            >
-              <i class="dot" />
-              MCP {{ appStore.tray.mcp_running ? '运行中' : '已停止' }}
-            </span>
-          </el-tooltip>
-
-          <template v-if="!isWebMode">
-            <el-divider direction="vertical" />
-            <el-button text :icon="Minus" @click="handleMinimize">最小化到托盘</el-button>
-          </template>
-          <el-button type="primary" plain :icon="Lock" @click="handleLock">锁定</el-button>
-        </div>
-      </el-header>
-
       <!-- 批量验证横幅：不阻塞、不遮罩，用户仍可切页 / 翻凭据 / 去「任务」页 -->
       <el-alert
         v-if="batchBannerVisible"
@@ -432,7 +428,7 @@ async function handleMinimize() {
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--v-glass-bg);
+  background: var(--v-glass-bg-soft);
   -webkit-backdrop-filter: var(--v-glass-backdrop, none);
   backdrop-filter: var(--v-glass-backdrop, none);
   border-right: 1px solid var(--v-border);
@@ -674,110 +670,72 @@ async function handleMinimize() {
   display: none;
 }
 
-/* ── 侧栏底部的状态标签 ─────────────────────────────────────────── */
+/* ── 侧栏底部（最小化 / MCP 状态）────────────────────────────────── */
+
+.aside-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--v-border);
+  flex-shrink: 0;
+}
 
 .aside-foot {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--v-border);
-  font-size: 11.5px;
-  color: var(--v-text-3);
-  flex-shrink: 0;
+  padding: 7px 8px;
+  border-radius: var(--v-radius-sm);
+  font-size: 12.5px;
+  color: var(--v-text-2);
   white-space: nowrap;
 }
 
+.aside-foot.is-on {
+  color: var(--v-success);
+}
+
 .aside-foot-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--v-success);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--v-success) 20%, transparent);
   flex-shrink: 0;
 }
 
-/* ── 顶栏 ───────────────────────────────────────────────────────── */
-
-.layout-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  height: 62px;
-  border-bottom: 1px solid var(--v-border);
-  background: var(--v-glass-bg);
-  -webkit-backdrop-filter: var(--v-glass-backdrop, none);
-  backdrop-filter: var(--v-glass-backdrop, none);
-  position: relative;
-  z-index: 5;
+.aside-foot-dot.is-off {
+  background: var(--v-text-3);
+  box-shadow: none;
 }
 
-.header-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-family: var(--v-font-display);
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: var(--v-title-tracking);
+.aside-action-btn {
+  width: 100%;
+  margin: 0 !important;
+  padding: 7px 8px;
+  justify-content: flex-start;
+  font-size: 12.5px;
+  color: var(--v-text-2);
+}
+
+.aside-action-btn:hover {
+  background: var(--v-bg-hover);
   color: var(--v-text);
 }
 
-/* 标题左侧一小段渐变竖条 */
-.header-accent {
-  width: 3px;
-  height: 17px;
-  border-radius: 2px;
-  background: var(--v-grad-brand);
-  flex-shrink: 0;
+.layout-aside.is-collapsed .aside-bottom {
+  padding: 6px 2px;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.layout-aside.is-collapsed .aside-foot {
+  justify-content: center;
+  padding: 7px 0;
 }
 
-/* ── MCP 指示灯 ─────────────────────────────────────────────────── */
-
-.mcp-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--v-border);
-  background: color-mix(in srgb, var(--v-bg-sunken) 60%, transparent);
-  font-size: 12.5px;
-  color: var(--v-text-2);
-  transition: color var(--v-base) var(--v-ease), border-color var(--v-base) var(--v-ease);
-}
-
-.mcp-indicator .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--v-info);
-  flex-shrink: 0;
-}
-
-.mcp-indicator.is-on {
-  color: var(--v-success);
-  border-color: color-mix(in srgb, var(--v-success) 32%, transparent);
-  background: color-mix(in srgb, var(--v-success) 9%, transparent);
-}
-
-.mcp-indicator.is-on .dot {
-  background: var(--v-success);
-}
-
-.mcp-indicator.is-off .dot {
-  background: var(--v-danger);
-}
-
-.mcp-indicator.is-off {
-  color: var(--v-text-2);
+.layout-aside.is-collapsed .aside-action-btn {
+  justify-content: center;
+  padding: 7px 0;
 }
 
 /* ── 内容区：透明，好让背景极光透上来 ───────────────────────────── */

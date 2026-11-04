@@ -278,8 +278,14 @@ h4 {
  * 缺省回退写成 none：主题若漏配该令牌，结果是「没有毛玻璃」而非半截的无效声明。
  * ------------------------------------------------------------------- */
 
+/* 页面卡片与侧栏用比主题原始值更透明的一档：在主题色基础上再让出 22%，
+   这样黑曜这类实色主题也能透出背景极光，浅色主题则不会一下子变得太透。 */
+:root {
+  --v-glass-bg-soft: color-mix(in srgb, var(--v-glass-bg) 78%, transparent);
+}
+
 .v-glass {
-  background: var(--v-glass-bg);
+  background: var(--v-glass-bg-soft);
   border: 1px solid var(--v-glass-border);
   border-radius: var(--v-radius-lg);
   box-shadow: var(--v-shadow-md);
@@ -292,7 +298,7 @@ h4 {
   --el-card-border-radius: var(--v-radius-lg);
   --el-card-border-color: var(--v-glass-border);
   position: relative;
-  background: var(--v-glass-bg);
+  background: var(--v-glass-bg-soft);
   border: 1px solid var(--v-glass-border);
   border-radius: var(--v-radius-lg);
   box-shadow: var(--v-shadow-md);

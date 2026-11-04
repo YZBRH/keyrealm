@@ -166,31 +166,26 @@ const systemRows = computed(() => {
     {
       label: 'MCP 服务',
       value: mcp.running ? `${mcp.host}:${mcp.port}` : '未运行',
-      tone: mcp.running ? 'ok' : 'off',
       hint: mcp.running ? `${mcp.active_tokens || 0} 个令牌` : '可在「MCP 设置」启动',
     },
     {
       label: '代理出口',
       value: proxy.display || '直连',
-      tone: proxy.count ? 'ok' : 'off',
       hint: `已登记 ${proxy.count || 0} 个出口`,
     },
     {
       label: 'TLS 策略',
       value: String(system.tls_version || 'auto').toUpperCase(),
-      tone: 'info',
       hint: '全局默认',
     },
     {
       label: '匿名模式',
       value: system.anonymous ? '已开启' : '关闭',
-      tone: system.anonymous ? 'warn' : 'off',
       hint: system.anonymous ? '直连请求将被拒绝' : '不限制出口',
     },
     {
       label: '定时计划',
       value: `${schedules.enabled || 0} / ${schedules.total || 0} 启用`,
-      tone: schedules.enabled ? 'ok' : 'off',
       hint: schedules.next_run_at
         ? `下次 ${formatRelative(schedules.next_run_at)}`
         : '暂无下次运行',
@@ -198,7 +193,6 @@ const systemRows = computed(() => {
     {
       label: '后台任务',
       value: `${taskInfo.running || 0} 进行中`,
-      tone: taskInfo.running ? 'busy' : 'off',
       hint: `共 ${taskInfo.total || 0} 条记录`,
     },
   ]
@@ -445,7 +439,7 @@ onBeforeUnmount(() => {
           </header>
           <ul class="system-list">
             <li v-for="row in systemRows" :key="row.label" class="system-row">
-              <i class="system-dot" :class="`is-${row.tone}`" />
+              <i class="system-dot" />
               <div class="system-text">
                 <span>{{ row.label }}</span>
                 <small>{{ row.hint }}</small>
@@ -886,14 +880,8 @@ onBeforeUnmount(() => {
   height: 7px;
   border-radius: 50%;
   flex: none;
-  background: var(--v-text-3);
+  background: var(--v-success);
 }
-
-.system-dot.is-ok { background: var(--v-success); }
-.system-dot.is-warn { background: var(--v-warning); }
-.system-dot.is-busy { background: var(--v-accent-2); }
-.system-dot.is-info { background: var(--v-info); }
-.system-dot.is-off { background: var(--v-text-3); }
 
 .system-text {
   display: flex;
