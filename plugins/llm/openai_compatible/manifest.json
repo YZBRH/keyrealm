@@ -1,9 +1,9 @@
 {
   "name": "兼容接口",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "credential_type": "llm_openai_compatible",
   "author": "Keyrealm",
-  "description": "验证兼容接口的 API Key 有效性（OpenAI / Anthropic 两种接口格式）",
+  "description": "验证兼容接口的 API Key 有效性（OpenAI / Anthropic / OpenAI Responses 三种接口格式）",
   "icon": "logo.png",
   "fields": [
     {
@@ -12,8 +12,21 @@
       "type": "select",
       "required": false,
       "default": "openai",
-      "options": ["openai", "anthropic"],
-      "hint": "按该中转站实际提供的调用格式选：OpenAI 兼容走 /chat/completions + Bearer，Anthropic 兼容走 /v1/messages + x-api-key。"
+      "options": [
+        {
+          "value": "openai",
+          "label": "OpenAI 兼容（/chat/completions）"
+        },
+        {
+          "value": "anthropic",
+          "label": "Anthropic 兼容（/v1/messages）"
+        },
+        {
+          "value": "openai-responses",
+          "label": "OpenAI Responses（/responses）"
+        }
+      ],
+      "hint": "按该中转站实际提供的调用格式选。Anthropic / Responses 站点若没有 /models，会改用对话接口验证；Responses 必须填写「探测使用的模型」。"
     },
     {
       "key": "base_url",
@@ -32,6 +45,15 @@
       "placeholder": "sk-..."
     },
     {
+      "key": "extra_headers",
+      "label": "额外请求头（可选）",
+      "type": "textarea",
+      "required": false,
+      "sensitive": true,
+      "placeholder": "x-opencode-session: <uuid>",
+      "hint": "每行「Header: value」，会随验证与探测请求发送。用于需要额外路由/会话头的网关，例如 opencode 的 x-opencode-session。"
+    },
+    {
       "key": "probe_chat",
       "label": "验证通过后再发一次对话探测",
       "type": "checkbox",
@@ -44,7 +66,7 @@
       "type": "model",
       "required": false,
       "placeholder": "留空自动选择",
-      "hint": "留空 = 自动从该凭据的模型列表里挑一个便宜的（优先 flash / lite / mini 等）。"
+      "hint": "OpenAI / Anthropic 格式留空会从模型列表自动挑一个便宜的；Responses 格式必须手动填写（如 deepseek-v4-pro）。"
     },
     {
       "key": "notes",

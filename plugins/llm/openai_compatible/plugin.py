@@ -20,14 +20,16 @@ from llm_protocols import (
     chat_completion,
     chat_completion_stream,
     fetch_models,
+    probe_anthropic_messages,
     probe_anthropic_models,
     probe_openai_models,
+    probe_openai_responses,
     resolve_chat_model,
 )
 
 NAME = "兼容接口"
 DEFAULT_BASE_URL = ""
-STYLES = ("openai", "anthropic")
+STYLES = ("openai", "anthropic", "openai-responses")
 DEFAULT_STYLE = "openai"
 
 # OpenAI 协议分支使用 `max_completion_tokens`；`max_tokens` 已标记为 deprecated，前者兼容严格网关及 o 系列模型。
@@ -43,8 +45,30 @@ def style(data: dict) -> str:
     return raw if raw in STYLES else DEFAULT_STYLE
 
 
+def _extra_headers(data: dict) -> dict[str, str]:
+    """解析「额外请求头」：每行 ``Header: value``，忽略空行与以 # 开头的注释。"""
+    raw = str((data or {}).get("extra_headers") or "")
+    headers: dict[str, str] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key:
+            headers[key] = value.strip()
+    return headers
+
+
 # 欠费探测也走同一个 token 参数名（anthropic 风格下该参数被忽略，只对 openai 分支生效）。
-quota_probe = make_quota_probe(DEFAULT_BASE_URL, style, TOKEN_PARAM)
+_base_quota_probe = make_quota_probe(DEFAULT_BASE_URL, style, TOKEN_PARAM)
+
+
+def quota_probe(data: dict):
+    """Responses 格式没有通用的模型列表/查询接口，不再额外做欠费探测。"""
+    if style(data) == "openai-responses":
+        return None
+    return _base_quota_probe(data)
 
 
 def validate(data: dict) -> list[str]:
@@ -123,6 +147,33 @@ def _fetch_balance(base_url: str, api_key: str) -> Optional[dict]:
         return None
 
 
+def _anthropic_candidates(data: dict, base_url: str) -> list[str]:
+    """Anthropic 站点没有 /models 时的回退模型候选（最多试 3 个）。"""
+    preferred = str(data.get("probe_model") or "").strip()
+    if preferred:
+        return [preferred]
+    lowered = base_url.lower()
+    if "deepseek" in lowered:
+        return ["deepseek-chat", "deepseek-reasoner", "claude-3-5-haiku-latest"]
+    if "claude" in lowered or "anthropic" in lowered:
+        return ["claude-3-5-haiku-latest", "claude-sonnet-4-5", "claude-3-5-sonnet-20241022"]
+    return ["claude-3-5-haiku-latest", "deepseek-chat", "claude-sonnet-4-5"]
+
+
+def _verify_anthropic_fallback(data: dict, base_url: str, api_key: str,
+                               headers: dict) -> VerifyResult | None:
+    """`/models` 404/405 时改用 `/v1/messages` 验证；拿到明确结论就返回。"""
+    last: VerifyResult | None = None
+    for model in _anthropic_candidates(data, base_url)[:3]:
+        result = probe_anthropic_messages(base_url, api_key, model, headers)
+        last = result
+        if result.status in ("valid", "invalid"):
+            return result
+        # 模型不存在 / 该模型不可用：换下一个候选；鉴权/欠费/订阅问题已经由
+        # `_interpret_chat` 归类成 valid/invalid，不会走到这里。
+    return last
+
+
 def _verify(data: dict) -> VerifyResult:
     api_key = (data.get("api_key") or "").strip()
     if not api_key:
@@ -132,8 +183,17 @@ def _verify(data: dict) -> VerifyResult:
     if not base_url:
         return VerifyResult(status="error", message=f"厂商「{NAME}」需要填写 Base URL")
 
-    if style(data) == "anthropic":
-        result = probe_anthropic_models(base_url, api_key, "/models")
+    api_style = style(data)
+    headers = _extra_headers(data)
+    if api_style == "openai-responses":
+        result = probe_openai_responses(
+            base_url, api_key, str(data.get("probe_model") or "").strip(), headers)
+    elif api_style == "anthropic":
+        result = probe_anthropic_models(base_url, api_key, "/models", headers)
+        if result.status == "error" and ("HTTP 404" in result.message or "HTTP 405" in result.message):
+            fallback = _verify_anthropic_fallback(data, base_url, api_key, headers)
+            if fallback is not None:
+                result = fallback
         if result.status == "invalid":
             # anthropic 风格的 `/models` 实现并不统一，部分中转站仅支持 OpenAI 风格 Bearer；
             # 404/403 可能仅表示端点未实现，因此保留不确定性并提示改用 OpenAI 格式或直接对话验证。
@@ -142,10 +202,10 @@ def _verify(data: dict) -> VerifyResult:
                 "（可改用 openai 格式，或忽略此项、直接用「简单对话」验证）"
             )
     else:
-        result = probe_openai_models(base_url, api_key)
+        result = probe_openai_models(base_url, api_key, headers)
 
-    # 认证成功：查询余额，负余额标记欠费
-    if result.status == "valid":
+    # 认证成功：查询余额，负余额标记欠费（Responses 站点通常没有这套 billing 接口）
+    if result.status == "valid" and api_style != "openai-responses":
         balance = _fetch_balance(base_url, api_key)
         if balance:
             info = dict(result.account_info or {})
@@ -172,6 +232,8 @@ def verify(data: dict) -> VerifyResult:
 def list_models(data: dict, force: bool = False) -> list:
     """获取该站点可用模型列表（供「简单对话」选择模型）。"""
     data = data or {}
+    if style(data) == "openai-responses":
+        return []
     base_url = (data.get("base_url") or "").strip() or DEFAULT_BASE_URL
     return fetch_models(style(data), base_url, (data.get("api_key") or "").strip(), force)
 
@@ -183,6 +245,9 @@ def actions(data: dict) -> list[dict]:
     """声明可用操作（凭据含 API Key 时才提供简单对话）。"""
     if not (data or {}).get("api_key"):
         return []
+    if style(data) == "openai-responses":
+        # Responses 站点需要额外的会话头/模型名，暂不在这里提供交互式对话
+        return []
     return [{"id": "chat", "name": "简单对话", "kind": "chat", "model": ""}]
 
 
@@ -191,6 +256,8 @@ def run_action(action_id: str, params: dict, data: dict) -> dict:
     if action_id != "chat":
         return {"ok": False, "error": "未知操作"}
     data = data or {}
+    if style(data) == "openai-responses":
+        return {"ok": False, "error": "Responses 格式暂不支持简单对话"}
     base_url = (data.get("base_url") or "").strip() or DEFAULT_BASE_URL
     if not base_url:
         return {"ok": False, "error": "需要填写 Base URL"}
@@ -213,6 +280,8 @@ def stream_action(action_id: str, params: dict, data: dict, on_delta) -> dict:
     if action_id != "chat":
         return {"ok": False, "error": "未知操作"}
     data = data or {}
+    if style(data) == "openai-responses":
+        return {"ok": False, "error": "Responses 格式暂不支持简单对话"}
     params = params or {}
     base_url = (data.get("base_url") or "").strip() or DEFAULT_BASE_URL
     if not base_url:

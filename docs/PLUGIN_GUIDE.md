@@ -1021,7 +1021,8 @@ codebuddy（腾讯 CodeBuddy 客户端登录态）。
 >   路径（OpenAI 兼容端点），既不设开关、也不对旧地址做特判。普通平台用默认地址，Coding Plan
 >   在 Base URL 里填 `/api/coding/paas/v4`。
 > - **部署形态真的不同才设字段**——`openai_compatible`（兼容接口）保留 `api_style` 下拉：
->   中转站千差万别，有只暴露 `/v1/messages` 的 Claude 专属站，光靠 URL 猜不可靠。
+>   中转站千差万别，有只暴露 `/v1/messages` 的 Claude 专属站，也有只提供 `/responses`
+>   的 Responses 网关；后者还需要可选的「额外请求头」（如 opencode 的 `x-opencode-session`）。
 >
 > 格式字段一律**只认显式值**（manifest 给默认），不做 Base URL 嗅探，也不为旧凭据类型写数据迁移
 > ——**1.0 之前不考虑向下兼容（含旧版本数据库）**，旧的 `llm_glm_anthropic` /

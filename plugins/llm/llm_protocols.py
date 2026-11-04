@@ -59,6 +59,17 @@ _THROTTLING_KEYWORDS = (
     "too many requests",   # HTTP 429 的标准短语
 )
 
+# 「Key 有效、但该分组没有订阅/套餐」——不是密钥被拒。常见于中转站 403。
+_SUBSCRIPTION_KEYWORDS = (
+    "subscription_not_found",
+    "no active subscription",
+    "subscription not found",
+    "no subscription",
+    "无可用订阅",
+    "订阅不存在",
+    "无订阅",
+)
+
 
 def _anthropic_root(base_url: str) -> str:
     """Anthropic 协议的站点根：``/v1/messages`` 由本模块自己拼，Base URL 自带 ``/v1`` 要去掉。
@@ -644,6 +655,11 @@ def quota_chat_probe(base_url: str, api_key: str, protocol: str = "openai",
                 "account_info": {"chat_probe": "欠费"},
                 "message": "凭证有效，但账户欠费或无可用额度（已用最小对话实测）",
             }
+        if is_subscription_missing(error):
+            return {
+                "account_info": {"chat_probe": "无订阅"},
+                "message": "凭证有效，但无可用订阅/套餐（已用最小对话实测）",
+            }
         # **仅支持流式的模型**：百炼有一批开源思考模型用非流式调用会直接回
         # `parameter.enable_thinking only support stream call`。遇到它就用流式再试一次，
         # 否则这批模型的欠费探测永远是「异常」——而它们其实好得很。
@@ -707,16 +723,54 @@ def _request_with_retry(client: httpx.Client, method: str, url: str, **kwargs) -
     return resp
 
 
-def probe_openai_models(base_url: str, api_key: str) -> VerifyResult:
+def probe_openai_models(base_url: str, api_key: str,
+                        extra_headers: Optional[dict] = None) -> VerifyResult:
     """OpenAI 协议：GET {base}/models，Bearer 认证。"""
     url = base_url.rstrip("/") + "/models"
+    headers = {**(extra_headers or {}), "Authorization": f"Bearer {api_key}"}
     with make_client() as client:
-        resp = _request_with_retry(client, "GET", url,
-                                   headers={"Authorization": f"Bearer {api_key}"})
+        resp = _request_with_retry(client, "GET", url, headers=headers)
     return _interpret_simple(resp)
 
 
-def probe_anthropic_models(base_url: str, api_key: str, verify_path: str = "/models") -> VerifyResult:
+def probe_openai_responses(base_url: str, api_key: str, model: str,
+                           extra_headers: Optional[dict] = None) -> VerifyResult:
+    """OpenAI Responses 协议：POST {base}/responses 发一次最小请求。
+
+    部分网关（如 opencode）没有 ``/models``，且要求额外的会话头；这类站点只能
+    通过真实对话探测判断。模型名由凭据的「探测使用的模型」指定。
+    """
+    if not model:
+        return VerifyResult(status="error", message="Responses 接口需要填写「探测使用的模型」")
+    url = base_url.rstrip("/") + "/responses"
+    headers = {
+        **(extra_headers or {}),
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {"model": model, "input": "hi", "max_output_tokens": 1}
+    with make_client() as client:
+        resp = _request_with_retry(client, "POST", url, headers=headers, json=body)
+    status = resp.status_code
+    snippet = body_snippet(resp)
+    if status == 200:
+        return VerifyResult(status="valid", message="凭证有效")
+    if status == 402 or is_insufficient_balance(snippet):
+        return VerifyResult(status="valid", message="凭证有效，但账户欠费或无可用额度")
+    if is_subscription_missing(snippet):
+        return VerifyResult(status="valid", message="凭证有效，但无可用订阅/套餐")
+    if status in (401, 403):
+        return VerifyResult(status="invalid", message=f"凭证无效 (HTTP {status})")
+    if status == 400 and "model" in snippet.lower():
+        return VerifyResult(
+            status="error",
+            message=f"验证模型不可用，无法确认凭据（HTTP 400）：{snippet}",
+        )
+    return _unconfirmed(status, snippet)
+
+
+def probe_anthropic_models(base_url: str, api_key: str, verify_path: str = "/models",
+                           extra_headers: Optional[dict] = None) -> VerifyResult:
     """Anthropic 协议：GET {base}/v1{verify_path}，x-api-key 认证。
 
     ``base_url`` 先经 `_anthropic_root()` 归一化、再补 ``/v1``——与 chat 的 ``/v1/messages``
@@ -728,12 +782,37 @@ def probe_anthropic_models(base_url: str, api_key: str, verify_path: str = "/mod
     （默认 base 以 ``/v1`` 结尾）归一化后结果与旧实现完全一致，无回归。
     """
     url = _anthropic_root(base_url) + "/v1" + verify_path
+    headers = {
+        **(extra_headers or {}),
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
     with make_client() as client:
-        resp = _request_with_retry(
-            client, "GET", url,
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
-        )
+        resp = _request_with_retry(client, "GET", url, headers=headers)
     return _interpret_simple(resp)
+
+
+def probe_anthropic_messages(base_url: str, api_key: str, model: str,
+                             extra_headers: Optional[dict] = None) -> VerifyResult:
+    """Anthropic 协议：POST {base}/v1/messages 发一次最小对话。
+
+    很多 Anthropic 兼容中转站只实现 ``/v1/messages``、没有 ``/models``；当模型列表
+    探针 404/405 时，用它做回退验证。模型名由调用方给出。
+    """
+    if not model:
+        return VerifyResult(status="error", message="Anthropic 对话验证需要模型名")
+    url = _anthropic_root(base_url) + "/v1/messages"
+    headers = {
+        **(extra_headers or {}),
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    body = {"model": model, "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}]}
+    with make_client() as client:
+        resp = _request_with_retry(client, "POST", url, headers=headers, json=body)
+    return _interpret_chat(resp)
 
 
 def probe_openai_chat(base_url: str, api_key: str, model: str,
@@ -765,19 +844,28 @@ def _interpret_simple(resp: httpx.Response) -> VerifyResult:
     """简单 GET 探针（models 类）的通用判定。"""
     status = resp.status_code
     payload = safe_json(resp)
+    snippet = body_snippet(resp)
     if status == 200:
         return VerifyResult(status="valid", message="凭证有效", account_info=_extract_account_info(payload))
+    # 402 / 欠费 / 额度不足：Key 已被识别，只是账户不能继续用。
+    # 这一步必须放在 401/403 之前：部分中转站把欠费也包在 403 里。
+    if status == 402 or is_insufficient_balance(snippet):
+        return VerifyResult(
+            status="valid",
+            message=f"凭证有效，但账户欠费或无可用额度 (HTTP {status})",
+        )
+    # 有 Key、但该分组没有可用订阅/套餐：同样不是密钥无效。
+    if is_subscription_missing(snippet):
+        return VerifyResult(status="valid", message="凭证有效，但无可用订阅/套餐")
     if status in (401, 403):
         # **403 不一定是密钥的错**——一律判「凭证无效」是**假红**，比漏报更坑人。已核实的两个：
         #   方舟   ：403 `AccountOverdueError` / `OperationDenied.ServiceOverdue`（账户欠费）
         #   百炼   ：403 `AllocationQuota.FreeTierOnly`（免费额度用尽，需认证并充值）
         # 先读响应体，认得出欠费就报「有效 + 账户欠费」，认不出才当无效。
-        if is_insufficient_balance(body_snippet(resp)):
-            return VerifyResult(status="valid", message="凭证有效，但账户欠费或无可用额度")
         return VerifyResult(status="invalid", message=f"凭证无效 (HTTP {status})")
     if status == 429:
         return VerifyResult(status="valid", message="凭证有效，但触发速率限制 (HTTP 429)")
-    return _unconfirmed(status, body_snippet(resp))
+    return _unconfirmed(status, snippet)
 
 
 # 「密钥没问题、是**请求本身**被拒」的业务码：命中就报「有效 + 具体原因」，
@@ -812,6 +900,8 @@ def _interpret_chat(resp: httpx.Response) -> VerifyResult:
     code = _error_code(payload)
     if status == 400 and code in _REQUEST_LEVEL_CODES:
         return VerifyResult(status="valid", message=f"凭证有效，但请求被拒（{code}）：{snippet}")
+    if is_subscription_missing(snippet):
+        return VerifyResult(status="valid", message="凭证有效，但无可用订阅/套餐")
     if status in (401, 403):
         # **403 不一定是密钥的错**——一律判「凭证无效」是**假红**，比漏报更坑人。已核实的两个：
         #   方舟   ：403 `AccountOverdueError` / `OperationDenied.ServiceOverdue`（账户欠费）
@@ -858,6 +948,16 @@ def is_insufficient_balance(text: str) -> bool:
     if any(kw in lowered for kw in _THROTTLING_KEYWORDS):
         return False
     return any(kw in lowered for kw in _INSUFFICIENT_BALANCE_KEYWORDS)
+
+
+def is_subscription_missing(text: str) -> bool:
+    """文本是否表示「Key 被识别、但没有可用订阅/套餐」。
+
+    这类 403 与「密钥无效」必须分开：前者是账户/套餐问题，判成 invalid 会让人
+    去重发 Key，实际应该去开通或续费。
+    """
+    lowered = (text or "").lower()
+    return any(kw in lowered for kw in _SUBSCRIPTION_KEYWORDS)
 
 
 def _extract_account_info(payload: Any) -> Optional[dict]:
