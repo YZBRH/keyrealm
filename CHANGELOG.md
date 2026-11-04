@@ -41,6 +41,11 @@
 
 ### 修复
 
+- SMTP 验证在 QQ 等服务器返回 `535` 后立即断开连接时，只显示「Connection unexpectedly closed」，
+  看不到真实的认证失败原因。现在优先手工 `AUTH LOGIN` 读取服务端返回码，`535` 明确判为认证失败；
+  真正在认证阶段断连时给出「授权码错误 / 账号未开启 SMTP / 登录频率限制」的提示。
+- Gemini 对 `API_KEY_SERVICE_BLOCKED` 等被 API 限制的 Key 只提示「无法确认」。现在明确提示
+  「API Key 有效，但被 API 限制禁止调用 Gemini API」，并给出检查 API 限制 / 项目启用的方向。
 - 凭据写入缺少统一取值校验：MCP 更新、备份导入与插件操作回写等非表单路径可写入插件字段表之外的
   值（例如 SSH 的 `auth_type` 写成 `private_key`），导致后续校验按非法值运行。现在所有写入都走
   同一套字段校验（select 选项、number 类型、未知字段、名称长度），MCP 更新与分组创建不再绕过 API；

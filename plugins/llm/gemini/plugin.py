@@ -17,6 +17,15 @@ NAME = "Google Gemini"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 PROTOCOL = "gemini"
 
+# 这些 reason 表示 Key 本身被 Google 识别，只是被 API/来源限制挡住 —— 不是「密钥无效」。
+_RESTRICTED_KEY_REASONS = {
+    "API_KEY_SERVICE_BLOCKED",
+    "API_KEY_HTTP_REFERRER_BLOCKED",
+    "API_KEY_IP_ADDRESS_BLOCKED",
+    "API_KEY_ANDROID_APP_BLOCKED",
+    "API_KEY_IOS_APP_BLOCKED",
+}
+
 # 余额不可用时的可选校验（设置页开关，默认关闭）：发送最小对话请求判断账户状态
 quota_probe = make_quota_probe(DEFAULT_BASE_URL, "gemini")
 
@@ -82,6 +91,12 @@ def _probe(base_url: str, api_key: str) -> VerifyResult:
     lowered = snippet.lower()
     if reason == "API_KEY_INVALID" or "api key not valid" in lowered or status == 401:
         return VerifyResult(status="invalid", message=f"凭证无效 (HTTP {status})")
+    if reason in _RESTRICTED_KEY_REASONS:
+        return VerifyResult(
+            status="error",
+            message=f"API Key 有效，但被 API 限制禁止调用 Gemini API（{reason}）；"
+                    "请检查 Key 的 API 限制或项目是否已启用 Generative Language API",
+        )
     if err_status == "FAILED_PRECONDITION" or "location is not supported" in lowered:
         return VerifyResult(
             status="error",

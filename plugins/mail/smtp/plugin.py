@@ -35,6 +35,7 @@ STARTTLS 再回落 SSL。全程用 EXAMINE / ``BODY.PEEK``，不置「已读」�
 """
 from __future__ import annotations
 
+import base64
 import imaplib
 import re
 import smtplib
@@ -141,6 +142,29 @@ def _connect_smtp_ssl(host: str, port: int):
                             context=ssl_context(verify=False))
 
 
+def _auth_login(server: smtplib.SMTP, username: str, password: str):
+    """优先手工走 AUTH LOGIN，返回 ``(code, resp)``；服务器未提供 LOGIN 时返回 ``None``。
+
+    QQ 邮箱在返回 535 后会立刻断开连接，``smtplib.login()`` 只能看到
+    ``SMTPServerDisconnected``，把「授权码错误 / 账号异常」误报成网络断连。
+    手工发 AUTH LOGIN 可以在断连前拿到服务端真正的返回码与原因。
+    """
+    server.ehlo_or_helo_if_needed()
+    mechanisms = str(server.esmtp_features.get("auth") or "").upper().split()
+    if "LOGIN" not in mechanisms:
+        return None
+
+    code, resp = server.docmd("AUTH", "LOGIN")
+    if code != 334:
+        # 个别服务器虽然宣告 LOGIN，实际又拒绝该机制：交回 smtplib.login() 走 PLAIN 等。
+        return None if code in (500, 502, 504) else (code, resp)
+
+    code, resp = server.docmd(base64.b64encode(username.encode("utf-8")).decode("ascii"))
+    if code != 334:
+        return code, resp
+    return server.docmd(base64.b64encode(password.encode("utf-8")).decode("ascii"))
+
+
 def _verify_smtp(data: dict) -> VerifyResult:
     """通用 SMTP 邮箱验证：连接 → （可选 STARTTLS）→ login()。"""
     host = _as_text(data.get("host"))
@@ -188,9 +212,31 @@ def _verify_smtp(data: dict) -> VerifyResult:
 
         # 认证阶段：认证失败明确判 invalid，其余 SMTP 错误判 error
         try:
-            server.login(username, password)
-        except smtplib.SMTPAuthenticationError:
-            return VerifyResult(status="invalid", message="认证失败：账号或授权码错误")
+            auth = _auth_login(server, username, password)
+            if auth is None:
+                server.login(username, password)
+            else:
+                code, resp = auth
+                detail = _redact(_err_text(resp), password)
+                if code == 535:
+                    return VerifyResult(
+                        status="invalid",
+                        message=f"认证失败：{detail or '账号或授权码错误'}",
+                    )
+                if code != 235:
+                    return VerifyResult(
+                        status="error",
+                        message=f"SMTP 认证异常（{code}）：{detail or '服务器未返回原因'}",
+                    )
+        except smtplib.SMTPAuthenticationError as exc:
+            detail = _redact(_err_text(getattr(exc, "smtp_error", b"")), password)
+            return VerifyResult(status="invalid", message=f"认证失败：{detail or '账号或授权码错误'}")
+        except smtplib.SMTPServerDisconnected:
+            return VerifyResult(
+                status="error",
+                message="SMTP 认证阶段连接被服务器断开：常见于授权码错误、"
+                        "账号未开启 SMTP 服务或登录频率限制",
+            )
         except smtplib.SMTPException as exc:
             return VerifyResult(status="error", message=f"SMTP 认证异常: {exc}")
 
