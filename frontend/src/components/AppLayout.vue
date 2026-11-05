@@ -379,27 +379,26 @@ async function handleMinimize() {
       </el-menu>
 
       <div class="aside-bottom">
-        <el-tooltip v-if="!isWebMode" content="最小化到托盘" placement="right">
-          <el-button text :icon="Minus" class="aside-action-btn" @click="handleMinimize">
-            <span v-show="!collapsed">最小化到托盘</span>
-          </el-button>
-        </el-tooltip>
-
-        <el-tooltip
-          :content="appStore.tray.mcp_running ? 'MCP 服务运行中' : 'MCP 服务已停止'"
-          :placement="collapsed ? 'right' : 'top'"
+        <el-button
+          v-if="!isWebMode"
+          text
+          :icon="Minus"
+          class="aside-action-btn"
+          @click="handleMinimize"
         >
-          <div
-            class="aside-foot"
-            :class="{ 'is-collapsed': collapsed, 'is-on': appStore.tray.mcp_running }"
-          >
-            <span
-              class="aside-foot-dot"
-              :class="{ 'is-off': !appStore.tray.mcp_running }"
-            />
-            <span v-show="!collapsed">MCP {{ appStore.tray.mcp_running ? '运行中' : '已停止' }}</span>
-          </div>
-        </el-tooltip>
+          <span v-show="!collapsed">最小化到托盘</span>
+        </el-button>
+
+        <div
+          class="aside-foot"
+          :class="{ 'is-collapsed': collapsed, 'is-on': appStore.tray.mcp_running }"
+        >
+          <span
+            class="aside-foot-dot"
+            :class="{ 'is-off': !appStore.tray.mcp_running }"
+          />
+          <span v-show="!collapsed">MCP {{ appStore.tray.mcp_running ? '运行中' : '已停止' }}</span>
+        </div>
       </div>
     </el-aside>
 
