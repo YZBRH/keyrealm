@@ -46,6 +46,9 @@
 
 ### 修复
 
+- 仪表盘在窗口宽度不超过 1280px、`CATEGORY DISTRIBUTION / RISK QUEUE / RECENT ACTIVITY /
+  GROUP MATRIX` 改为竖排时，卡片被 `flex-basis: 0` 压成只有标题的高度、条目不可见；
+  竖排时改为按内容高度排布。
 - 兼容接口的账户级错误不再误判：`402`、余额不足与「无可用订阅」判为凭证有效但受限，
   不再显示 `invalid` / 无法确认；Anthropic 站点缺少 `/models` 时自动改用 `/v1/messages`
   发一次最小对话完成验证。

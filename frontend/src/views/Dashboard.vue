@@ -1194,6 +1194,12 @@ onBeforeUnmount(() => {
   .hud-bottom {
     flex-direction: column;
   }
+  /* 竖排后主轴向变成高度：flex-basis: 0 会把 overflow:hidden 的卡片压成 0 高，
+     只剩卡片外壳/标题、条目看不见。恢复按内容高度排布。 */
+  .hud-mid > *,
+  .hud-bottom > * {
+    flex: 0 0 auto;
+  }
 }
 
 @media (max-width: 860px) {
