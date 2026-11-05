@@ -49,10 +49,10 @@ const AUTO_REFRESH_KEY = 'vault.logs.autoRefresh'
 const REFRESH_INTERVAL_KEY = 'vault.logs.refreshInterval'
 const REFRESH_INTERVAL_DEFAULT = 10000
 const REFRESH_INTERVALS = [
-  { label: '5 秒', value: 5000 },
-  { label: '10 秒', value: 10000 },
-  { label: '30 秒', value: 30000 },
-  { label: '60 秒', value: 60000 },
+  { label: '每 5 秒', value: 5000 },
+  { label: '每 10 秒', value: 10000 },
+  { label: '每 30 秒', value: 30000 },
+  { label: '每 60 秒', value: 60000 },
 ]
 
 function readAutoRefresh() {
@@ -79,6 +79,8 @@ const refreshInterval = ref(readRefreshInterval())
 let refreshTimer = null
 // 请求序号：筛选条件变化时旧请求可能后返回，只采用最后一次的结果，避免覆盖新筛选。
 let loadSeq = 0
+let mcpLoadSeq = 0
+// 自动刷新一轮同时拉两个面板，进行中不叠加下一轮
 let autoInFlight = false
 
 /** 自动刷新只在本页挂载且窗口可见时运行；离开页面 / 切到后台都会停掉计时器。 */
@@ -89,12 +91,23 @@ function stopAutoRefresh() {
   }
 }
 
+/** 一轮自动刷新：同时更新「日志内容」与「MCP 操作日志」。 */
+async function runAutoRefresh() {
+  if (autoInFlight) return
+  autoInFlight = true
+  try {
+    await Promise.all([loadLogs({ silent: true }), loadMcpLogs({ silent: true })])
+  } finally {
+    autoInFlight = false
+  }
+}
+
 function startAutoRefresh() {
   stopAutoRefresh()
   if (!autoRefresh.value || document.hidden) return
   refreshTimer = setInterval(() => {
     // 手动请求进行中或上一轮自动请求未返回时不叠加
-    if (!logsLoading.value && !autoInFlight) loadLogs({ silent: true })
+    if (!logsLoading.value && !mcpLogsLoading.value) runAutoRefresh()
   }, refreshInterval.value)
 }
 
@@ -102,7 +115,7 @@ function handleVisibilityChange() {
   if (document.hidden) {
     stopAutoRefresh()
   } else if (autoRefresh.value) {
-    loadLogs({ silent: true })
+    runAutoRefresh()
     startAutoRefresh()
   }
 }
@@ -171,8 +184,7 @@ async function applyLogLevel() {
 
 async function loadLogs({ silent = false } = {}) {
   const seq = ++loadSeq
-  if (silent) autoInFlight = true
-  else logsLoading.value = true
+  if (!silent) logsLoading.value = true
   try {
     // 级别筛选与关键词搜索叠加：两者都作为过滤条件交给后端，命中结果取交集。
     // 后端按时间正序返回（旧 → 新），界面要求最新在上，故整体反转。
@@ -184,7 +196,6 @@ async function loadLogs({ silent = false } = {}) {
     // 自动刷新失败不弹提示，避免后台定时器刷屏
     if (!silent && seq === loadSeq) ElMessage.error(err.message || '加载日志失败')
   } finally {
-    if (silent) autoInFlight = false
     if (!silent && seq === loadSeq) logsLoading.value = false
   }
 }
@@ -233,15 +244,17 @@ const mcpLogsLoading = ref(false)
 const mcpLogSearch = ref('')
 const mcpLogLimit = ref(200)
 
-async function loadMcpLogs() {
-  mcpLogsLoading.value = true
+async function loadMcpLogs({ silent = false } = {}) {
+  const seq = ++mcpLoadSeq
+  if (!silent) mcpLogsLoading.value = true
   try {
     const result = await api.getMcpOperationLogs(mcpLogLimit.value, mcpLogSearch.value.trim())
+    if (seq !== mcpLoadSeq) return
     mcpLogs.value = Array.isArray(result.entries) ? result.entries : []
   } catch (err) {
-    ElMessage.error(err.message || '加载 MCP 操作日志失败')
+    if (!silent && seq === mcpLoadSeq) ElMessage.error(err.message || '加载 MCP 操作日志失败')
   } finally {
-    mcpLogsLoading.value = false
+    if (!silent && seq === mcpLoadSeq) mcpLogsLoading.value = false
   }
 }
 
@@ -341,6 +354,29 @@ onBeforeUnmount(() => {
 
       <el-divider />
 
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label">自动刷新</div>
+          <div class="setting-desc">
+            同时刷新「日志内容」与「MCP 操作日志」。仅在本页且窗口可见时生效；
+            离开页面或切到后台会自动暂停，避免无意义请求。
+          </div>
+        </div>
+        <div class="inline-row">
+          <el-switch v-model="autoRefresh" />
+          <el-select v-model="refreshInterval" class="interval-select">
+            <el-option
+              v-for="option in REFRESH_INTERVALS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </div>
+      </div>
+
+      <el-divider />
+
       <el-descriptions :column="2" border>
         <el-descriptions-item label="日志文件">
           <span class="log-path">{{ logConfig.log_file || '—' }}</span>
@@ -356,7 +392,10 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="card-header">
           <span>日志内容</span>
-          <el-button type="danger" plain :icon="Delete" @click="clearLogs">清空日志</el-button>
+          <div class="header-actions">
+            <el-button :icon="Refresh" :loading="logsLoading" @click="loadLogs()">刷新</el-button>
+            <el-button type="danger" plain :icon="Delete" @click="clearLogs">清空日志</el-button>
+          </div>
         </div>
       </template>
 
@@ -390,17 +429,6 @@ onBeforeUnmount(() => {
         </el-select>
 
         <div class="spacer" />
-        <span class="toolbar-label">自动刷新</span>
-        <el-switch v-model="autoRefresh" size="small" />
-        <el-select v-model="refreshInterval" class="interval-select">
-          <el-option
-            v-for="option in REFRESH_INTERVALS"
-            :key="option.value"
-            :label="option.label"
-            :value="option.value"
-          />
-        </el-select>
-        <el-button :icon="Refresh" :loading="logsLoading" @click="loadLogs()">刷新</el-button>
         <el-button :icon="CopyDocument" :disabled="!logs.length" @click="copyLogs">复制</el-button>
         <span class="log-count">共 {{ logCount }} 条</span>
       </div>
@@ -420,7 +448,10 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="card-header">
           <span>MCP 操作日志</span>
-          <el-button type="danger" plain :icon="Delete" @click="clearMcpLogs">清空</el-button>
+          <div class="header-actions">
+            <el-button :icon="Refresh" :loading="mcpLogsLoading" @click="loadMcpLogs()">刷新</el-button>
+            <el-button type="danger" plain :icon="Delete" @click="clearMcpLogs">清空</el-button>
+          </div>
         </div>
       </template>
 
@@ -431,11 +462,11 @@ onBeforeUnmount(() => {
           placeholder="搜索函数 / 操作 / 参数 / 结果"
           clearable
           :prefix-icon="Search"
-          @keyup.enter="loadMcpLogs"
-          @clear="loadMcpLogs"
+          @keyup.enter="loadMcpLogs()"
+          @clear="loadMcpLogs()"
         />
-        <el-button type="primary" :icon="Search" :loading="mcpLogsLoading" @click="loadMcpLogs">搜索</el-button>
-        <el-select v-model="mcpLogLimit" class="limit-select" @change="loadMcpLogs">
+        <el-button type="primary" :icon="Search" :loading="mcpLogsLoading" @click="loadMcpLogs()">搜索</el-button>
+        <el-select v-model="mcpLogLimit" class="limit-select" @change="loadMcpLogs()">
           <el-option
             v-for="option in MCP_LOG_LIMITS"
             :key="option.value"
@@ -511,6 +542,12 @@ onBeforeUnmount(() => {
   justify-content: space-between;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .setting-row {
   display: flex;
   align-items: center;
@@ -551,13 +588,7 @@ onBeforeUnmount(() => {
 }
 
 .interval-select {
-  width: 100px;
-}
-
-.toolbar-label {
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-  white-space: nowrap;
+  width: 110px;
 }
 
 .log-search {
