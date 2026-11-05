@@ -375,7 +375,7 @@ async function handleMinimize() {
       </div>
     </el-aside>
 
-    <el-container>
+    <el-container direction="vertical">
       <!-- 批量验证横幅：不阻塞、不遮罩，用户仍可切页 / 翻凭据 / 去「任务」页 -->
       <el-alert
         v-if="batchBannerVisible"

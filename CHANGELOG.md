@@ -46,6 +46,8 @@
 
 ### 修复
 
+- 批量验证横幅覆盖整个工作区：移除全局顶栏后 `el-container` 不再自动进入竖向排列，
+  改为显式 `direction="vertical"`，横幅恢复为内容区顶部的一行提示。
 - 仪表盘在窗口宽度不超过 1280px、`CATEGORY DISTRIBUTION / RISK QUEUE / RECENT ACTIVITY /
   GROUP MATRIX` 改为竖排时，卡片被 `flex-basis: 0` 压成只有标题的高度、条目不可见；
   竖排时改为按内容高度排布。
