@@ -3111,6 +3111,18 @@ def clear_logs() -> dict:
     return {"ok": True, "message": "日志已清空"}
 
 
+def get_mcp_operation_logs(limit: int = 200, search: str = "") -> dict:
+    """MCP 操作审计（参数已在写入时脱敏）。"""
+    entries = db.list_mcp_operation_logs(limit, search)
+    return {"ok": True, "entries": entries, "count": len(entries)}
+
+
+def clear_mcp_operation_logs() -> dict:
+    removed = db.clear_mcp_operation_logs()
+    _log.info("MCP 操作日志已清空（%d 条）", removed)
+    return {"ok": True, "removed": removed}
+
+
 # 「关于」页允许用**系统浏览器**打开的外部链接（白名单）。
 # 前端能传什么完全由我们决定；白名单挡掉被注入的任意 URL（避免变成「点一下打开任意地址」）。
 _EXTERNAL_URLS = frozenset({

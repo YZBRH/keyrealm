@@ -43,7 +43,7 @@ from backend.version import SCHEMA_VERSION  # noqa: E402
 # 漏改会在打包时直接 ✗ 缺表/多表被挡下（这是有意的护栏）。
 EXPECTED_TABLES = (
     "settings", "groups", "credentials", "plugins", "mcp_permissions",
-    "schedules", "proxies", "preset_defaults",
+    "schedules", "proxies", "preset_defaults", "mcp_operation_logs",
 )
 
 

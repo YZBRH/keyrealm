@@ -308,6 +308,26 @@ Agent 请求 Header: Authorization: Bearer kr_a3f2...
 
 ---
 
+### mcp_operation_logs — MCP 操作审计
+
+```sql
+CREATE TABLE mcp_operation_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    tool        TEXT NOT NULL,              -- MCP 工具名，如 vault_create_credential
+    operation   TEXT NOT NULL DEFAULT '',   -- 中文操作描述
+    params      TEXT NOT NULL DEFAULT '{}', -- 已脱敏的调用参数 JSON
+    status      TEXT NOT NULL DEFAULT 'ok',
+    message     TEXT NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0
+);
+```
+
+每条 MCP 工具调用由 `backend/mcp_audit.py` 的包装层写入；敏感键名与插件声明的敏感字段值
+在落库前替换为 `***`，只保留最近 5000 条。日志页的「MCP 操作日志」板块读取此表。
+
+---
+
 ### schedules — 定时验证计划
 
 ```sql
@@ -344,6 +364,8 @@ groups
 plugins (credential_type ←→ credentials.credential_type)
 
 mcp_permissions (tool_name)          ← 全局工具开关（MCP 的唯一权限层）
+
+mcp_operation_logs (id)              ← MCP 工具调用审计（参数脱敏）
 
 schedules (target_id → groups.id 或 NULL；credential_ids → 勾选的凭据 id 列表)
 ```

@@ -175,6 +175,10 @@ function createState() {
       { level: 'WARNING', text: logLine('WARNING', 'backend.api', '事件推送失败 vault:mcp_status: window not ready', minutesDate(14)) },
       { level: 'ERROR', text: logLine('ERROR', 'backend.scheduler', '加载计划失败 id=2: 触发器参数无效', minutesDate(6)) },
     ],
+    mcpOperationLogs: [
+      { id: 2, created_at: minutesAgo(3), tool: 'vault_list_credentials', operation: '查询凭据列表', params: '{"status": "invalid"}', status: 'ok', message: '', duration_ms: 18 },
+      { id: 1, created_at: minutesAgo(10), tool: 'vault_create_credential', operation: '创建凭据', params: '{"credential_type": "llm_openai", "name": "示例", "data": {"api_key": "***"}}', status: 'ok', message: '', duration_ms: 42 },
+    ],
     sequence: 1000,
   }
 }
@@ -1839,6 +1843,25 @@ export function createMockApi() {
       state.logs.length = 0
       mockLog('backend.api', 'INFO', '日志已清空')
       return { ok: true, message: '日志已清空' }
+    },
+
+    async get_mcp_operation_logs(limit = 200, search = '') {
+      await delay(50)
+      const q = String(search || '').trim().toLowerCase()
+      const rows = state.mcpOperationLogs.filter((row) => {
+        if (!q) return true
+        return [row.tool, row.operation, row.params, row.message]
+          .some((value) => String(value || '').toLowerCase().includes(q))
+      })
+      const entries = rows.slice(0, Math.max(1, Math.min(Number(limit) || 200, 1000)))
+      return { ok: true, entries: clone(entries), count: entries.length }
+    },
+
+    async clear_mcp_operation_logs() {
+      await delay(50)
+      const removed = state.mcpOperationLogs.length
+      state.mcpOperationLogs.length = 0
+      return { ok: true, removed }
     },
 
     // ── 程序内更新（dev 桩：不跑 git / 网络，返回假数据）────

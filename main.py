@@ -561,6 +561,12 @@ class VaultApi:
     def clear_logs(self):
         return api.clear_logs()
 
+    def get_mcp_operation_logs(self, limit: int = 200, search: str = ""):
+        return api.get_mcp_operation_logs(limit, search)
+
+    def clear_mcp_operation_logs(self):
+        return api.clear_mcp_operation_logs()
+
     def open_log_file(self, name: str):
         return api.open_log_file(name)
 

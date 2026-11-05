@@ -370,6 +370,9 @@ export const api = {
   // search 为空串时后端按"不过滤"处理，与传 null 等价。
   getLogs: (limit = 200, level = '', search = '') => call('get_logs', limit, level, search),
   clearLogs: () => call('clear_logs'),
+  getMcpOperationLogs: (limit = 200, search = '') =>
+    call('get_mcp_operation_logs', limit, search),
+  clearMcpOperationLogs: () => call('clear_mcp_operation_logs'),
   // 用系统默认程序打开 data/logs/ 下的日志文件（导入失败后的一键打开）。
   // 后端只认单个文件名，路径拼接由它自己完成。
   openLogFile: (name) => call('open_log_file', name),

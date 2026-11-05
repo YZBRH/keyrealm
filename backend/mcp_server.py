@@ -20,6 +20,7 @@ if TYPE_CHECKING:  # 仅供类型标注；本文件有 `from __future__ import a
 
 from . import backup
 from . import database as db
+from . import mcp_audit
 from . import plugin_manager
 from .crypto import decrypt_dict, hash_token
 
@@ -92,8 +93,12 @@ def _build_mcp_app() -> MCPServer:
         instructions="Keyrealm MCP Server — 管理、验证 LLM API Key 及其他凭据",
     )
 
+    def _tool(fn):
+        """注册工具并记录审计；审计失败不影响工具本身。"""
+        return mcp.tool()(mcp_audit.audited(fn))
+
     # ── vault_list_credentials ────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_list_credentials(
         group_id: Optional[int] = None,
         credential_type: Optional[str] = None,
@@ -120,7 +125,7 @@ def _build_mcp_app() -> MCPServer:
         ]
 
     # ── vault_get_credential ──────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_get_credential(credential_id: int) -> dict:
         """获取单条凭据详情（不含敏感字段明文）"""
         denied = _perm_denied("vault_get_credential")
@@ -144,7 +149,7 @@ def _build_mcp_app() -> MCPServer:
         }
 
     # ── vault_create_credential ───────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_create_credential(
         name: str,
         credential_type: str,
@@ -165,7 +170,7 @@ def _build_mcp_app() -> MCPServer:
         return {"ok": True, "credential": result}
 
     # ── vault_update_credential ───────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_update_credential(
         credential_id: int,
         name: Optional[str] = None,
@@ -194,7 +199,7 @@ def _build_mcp_app() -> MCPServer:
         return {"ok": True, "credential": result}
 
     # ── vault_delete_credential ───────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_delete_credential(credential_id: int) -> dict:
         """删除凭据"""
         denied = _perm_denied("vault_delete_credential")
@@ -205,7 +210,7 @@ def _build_mcp_app() -> MCPServer:
         return {"ok": True}
 
     # ── vault_verify_credential ───────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_verify_credential(credential_id: int) -> dict:
         """触发验证单条凭据"""
         denied = _perm_denied("vault_verify_credential")
@@ -218,7 +223,7 @@ def _build_mcp_app() -> MCPServer:
         return verify_single_credential(credential_id, trigger_type="mcp")
 
     # ── vault_batch_verify ────────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_batch_verify(
         scope: str = "all",
         group_id: Optional[int] = None,
@@ -248,7 +253,7 @@ def _build_mcp_app() -> MCPServer:
         return {"ok": True, "total": total, "message": f"批量验证已启动（{total} 条）"}
 
     # ── vault_list_groups ─────────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_list_groups() -> list[dict]:
         """列出分组"""
         denied = _perm_denied("vault_list_groups")
@@ -257,7 +262,7 @@ def _build_mcp_app() -> MCPServer:
         return db.list_groups()
 
     # ── vault_create_group ────────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_create_group(name: str, description: str = "", color: str = "#409EFF") -> dict:
         """创建分组"""
         denied = _perm_denied("vault_create_group")
@@ -272,7 +277,7 @@ def _build_mcp_app() -> MCPServer:
         return {"ok": True, "group": group}
 
     # ── vault_delete_group ────────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_delete_group(group_id: int) -> dict:
         """删除凭据分组
 
@@ -286,7 +291,7 @@ def _build_mcp_app() -> MCPServer:
         return {"ok": True}
 
     # ── vault_list_plugins ────────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_list_plugins() -> list[dict]:
         """列出全部插件（含 enabled 状态，被禁用的也在内）"""
         denied = _perm_denied("vault_list_plugins")
@@ -295,7 +300,7 @@ def _build_mcp_app() -> MCPServer:
         return plugin_manager.list_installed_plugins()
 
     # ── vault_get_secret ──────────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_get_secret(credential_id: int, field: Optional[str] = None) -> dict:
         """获取解密后的敏感字段（高危操作）"""
         denied = _perm_denied("vault_get_secret")
@@ -316,7 +321,7 @@ def _build_mcp_app() -> MCPServer:
         return {"data": data}
 
     # ── vault_export_backup ───────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_export_backup(
         scope: str = "all",
         encrypted: bool = True,
@@ -359,7 +364,7 @@ def _build_mcp_app() -> MCPServer:
         return result
 
     # ── vault_import_backup ───────────────────────────────
-    @mcp.tool()
+    @_tool
     def vault_import_backup(
         document: Optional[dict] = None,
         path: Optional[str] = None,
@@ -404,7 +409,7 @@ def _build_mcp_app() -> MCPServer:
     # api 那层负责写日志、改完重设全局代理的环境变量，并**回吐最新全量列表**——
     # 调用方拿到返回值就知道改完是什么状态，不必再 list 一次。
     # 代理 id 是 **UUID 字符串**（见 database.py 的 proxies 表注释），别当自增整数用。
-    @mcp.tool()
+    @_tool
     def vault_list_proxies() -> dict:
         """列出全部验证代理 + 当前全局默认代理"""
         denied = _perm_denied("vault_list_proxies")
@@ -413,7 +418,7 @@ def _build_mcp_app() -> MCPServer:
         from . import api as _api
         return _api.list_proxies()
 
-    @mcp.tool()
+    @_tool
     def vault_create_proxy(name: str, url: str) -> dict:
         """新增一个验证代理（地址需带 scheme，如 socks5://127.0.0.1:1080）"""
         denied = _perm_denied("vault_create_proxy")
@@ -422,7 +427,7 @@ def _build_mcp_app() -> MCPServer:
         from . import api as _api
         return _api.create_proxy(name, url)
 
-    @mcp.tool()
+    @_tool
     def vault_update_proxy(proxy_id: str, name: Optional[str] = None,
                            url: Optional[str] = None) -> dict:
         """修改代理的名称/地址（只传要改的那个）"""
@@ -432,7 +437,7 @@ def _build_mcp_app() -> MCPServer:
         from . import api as _api
         return _api.update_proxy(proxy_id, name, url)
 
-    @mcp.tool()
+    @_tool
     def vault_delete_proxy(proxy_id: str, reset_references: bool = False) -> dict:
         """删除代理；若它正被设为全局默认，会自动回落到直连。
 
@@ -445,7 +450,7 @@ def _build_mcp_app() -> MCPServer:
         from . import api as _api
         return _api.delete_proxy(proxy_id, bool(reset_references))
 
-    @mcp.tool()
+    @_tool
     def vault_set_global_proxy(proxy_id: Optional[str] = None) -> dict:
         """设置全局默认代理；不传（或传空）= 直连。
 
@@ -457,7 +462,7 @@ def _build_mcp_app() -> MCPServer:
         from . import api as _api
         return _api.set_global_proxy(proxy_id)
 
-    @mcp.tool()
+    @_tool
     def vault_test_proxy(proxy_id: Optional[str] = None) -> dict:
         """实测某个代理能否连通（会真的发一次外网请求）；不传 = 测当前全局生效的那个"""
         denied = _perm_denied("vault_test_proxy")

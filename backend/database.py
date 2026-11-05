@@ -103,6 +103,21 @@ def init_db():
             updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- MCP 操作审计：每次工具调用记一条（参数已脱敏）。只保留最近若干条，避免无限增长。
+        CREATE TABLE IF NOT EXISTS mcp_operation_logs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            tool        TEXT NOT NULL,
+            operation   TEXT NOT NULL DEFAULT '',
+            params      TEXT NOT NULL DEFAULT '{}',
+            status      TEXT NOT NULL DEFAULT 'ok',
+            message     TEXT NOT NULL DEFAULT '',
+            duration_ms INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_operation_logs_created
+            ON mcp_operation_logs(id DESC);
+
         CREATE TABLE IF NOT EXISTS schedules (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             name          TEXT NOT NULL,
@@ -584,6 +599,55 @@ def is_tool_enabled(tool_name: str) -> bool:
             "SELECT enabled FROM mcp_permissions WHERE tool_name=?", (tool_name,)
         ).fetchone()
     return bool(row and row["enabled"])
+
+
+# ── MCP 操作审计 ──────────────────────────────────────────
+# 记录工具名、操作描述、已脱敏参数、结果与耗时。只保留最近 _MCP_LOG_MAX 条。
+
+_MCP_LOG_MAX = 5000
+
+
+def add_mcp_operation_log(tool: str, operation: str, params: str,
+                          status: str = "ok", message: str = "",
+                          duration_ms: int = 0) -> None:
+    with _lock:
+        conn = get_conn()
+        conn.execute(
+            "INSERT INTO mcp_operation_logs "
+            "(tool, operation, params, status, message, duration_ms) VALUES (?,?,?,?,?,?)",
+            (tool, operation, params, status, message, int(duration_ms)),
+        )
+        # 只保留最近 N 条：删掉第 N 条之后的所有旧记录
+        conn.execute(
+            "DELETE FROM mcp_operation_logs WHERE id NOT IN "
+            "(SELECT id FROM mcp_operation_logs ORDER BY id DESC LIMIT ?)",
+            (_MCP_LOG_MAX,),
+        )
+        conn.commit()
+
+
+def list_mcp_operation_logs(limit: int = 200, search: str = "") -> list[dict]:
+    limit = max(1, min(int(limit or 200), 1000))
+    sql = "SELECT * FROM mcp_operation_logs"
+    params: list = []
+    keyword = str(search or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        sql += (" WHERE tool LIKE ? OR operation LIKE ? OR params LIKE ? OR message LIKE ?")
+        params += [like, like, like, like]
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    with _lock:
+        rows = get_conn().execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def clear_mcp_operation_logs() -> int:
+    with _lock:
+        conn = get_conn()
+        cur = conn.execute("DELETE FROM mcp_operation_logs")
+        conn.commit()
+    return int(cur.rowcount or 0)
 
 
 # ── MCP Token ─────────────────────────────────────────────

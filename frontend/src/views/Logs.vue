@@ -16,6 +16,7 @@ import { CopyDocument, Delete, Refresh, Search } from '@element-plus/icons-vue'
 
 import { api } from '@/api'
 import { copyText } from '@/utils/clipboard'
+import { formatDateTimeFull } from '@/utils/format'
 
 const LOG_LIMITS = [
   { label: '最近 100 条', value: 100 },
@@ -136,8 +137,62 @@ async function copyLogs() {
   else ElMessage.error('复制失败，请手动选中后复制')
 }
 
+/* ── MCP 操作日志 ─────────────────────────────────────── */
+
+const MCP_LOG_LIMITS = LOG_LIMITS
+const mcpLogs = ref([])
+const mcpLogsLoading = ref(false)
+const mcpLogSearch = ref('')
+const mcpLogLimit = ref(200)
+
+async function loadMcpLogs() {
+  mcpLogsLoading.value = true
+  try {
+    const result = await api.getMcpOperationLogs(mcpLogLimit.value, mcpLogSearch.value.trim())
+    mcpLogs.value = Array.isArray(result.entries) ? result.entries : []
+  } catch (err) {
+    ElMessage.error(err.message || '加载 MCP 操作日志失败')
+  } finally {
+    mcpLogsLoading.value = false
+  }
+}
+
+async function clearMcpLogs() {
+  try {
+    await ElMessageBox.confirm('确定清空全部 MCP 操作日志吗？此操作不可撤销。', '清空 MCP 操作日志', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+  try {
+    await api.clearMcpOperationLogs()
+    ElMessage.success('MCP 操作日志已清空')
+    await loadMcpLogs()
+  } catch (err) {
+    ElMessage.error(err.message || '清空失败')
+  }
+}
+
+function prettyParams(row) {
+  const raw = String(row.params || '')
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
+function paramPreview(row) {
+  const text = String(row.params || '').replace(/\s+/g, ' ')
+  return text.length > 90 ? `${text.slice(0, 89)}…` : text
+}
+
 onMounted(async () => {
-  await Promise.all([loadLogConfig(), loadLogs()])
+  await Promise.all([loadLogConfig(), loadLogs(), loadMcpLogs()])
 })
 </script>
 
@@ -239,6 +294,75 @@ onMounted(async () => {
         >{{ entry }}</span></pre>
         <el-empty v-else :description="hasQuery ? '没有匹配的日志' : '暂无日志'" :image-size="60" />
       </div>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-header">
+          <span>MCP 操作日志</span>
+          <el-button type="danger" plain :icon="Delete" @click="clearMcpLogs">清空</el-button>
+        </div>
+      </template>
+
+      <div class="log-toolbar">
+        <el-input
+          v-model="mcpLogSearch"
+          class="log-search"
+          placeholder="搜索函数 / 操作 / 参数 / 结果"
+          clearable
+          :prefix-icon="Search"
+          @keyup.enter="loadMcpLogs"
+          @clear="loadMcpLogs"
+        />
+        <el-button type="primary" :icon="Search" :loading="mcpLogsLoading" @click="loadMcpLogs">搜索</el-button>
+        <el-select v-model="mcpLogLimit" class="limit-select" @change="loadMcpLogs">
+          <el-option
+            v-for="option in MCP_LOG_LIMITS"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+        <div class="spacer" />
+        <span class="log-count">共 {{ mcpLogs.length }} 条</span>
+      </div>
+
+      <el-table
+        v-loading="mcpLogsLoading"
+        :data="mcpLogs"
+        row-key="id"
+        size="small"
+        empty-text="暂无 MCP 操作日志"
+      >
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="mcp-detail">
+              <pre class="mcp-params">{{ prettyParams(row) }}</pre>
+              <div v-if="row.message" class="mcp-message">结果：{{ row.message }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="时间" width="170">
+          <template #default="{ row }">{{ formatDateTimeFull(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="tool" label="函数" width="210" show-overflow-tooltip />
+        <el-table-column prop="operation" label="操作" min-width="140" show-overflow-tooltip />
+        <el-table-column label="参数（已脱敏）" min-width="260">
+          <template #default="{ row }">
+            <span class="mcp-param-preview">{{ paramPreview(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="结果" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'ok' ? 'success' : 'danger'" size="small">
+              {{ row.status === 'ok' ? '成功' : '失败' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="耗时" width="80">
+          <template #default="{ row }">{{ row.duration_ms }} ms</template>
+        </el-table-column>
+      </el-table>
     </el-card>
   </div>
 </template>
@@ -353,5 +477,40 @@ onMounted(async () => {
 .log-line.lvl-critical {
   color: var(--el-color-danger);
   font-weight: 600;
+}
+
+.mcp-detail {
+  padding: 4px 12px 10px 40px;
+}
+
+.mcp-params {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--el-fill-color-dark);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--el-text-color-primary);
+}
+
+.mcp-message {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.mcp-param-preview {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  vertical-align: bottom;
 }
 </style>
