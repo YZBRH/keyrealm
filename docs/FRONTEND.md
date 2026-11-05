@@ -374,6 +374,8 @@ App.vue
 
 > **路由懒加载**：`AppLayout` / `Setup` / `Unlock` / `Dashboard` 同步引入，其余页面全部
 > `component: () => import('@/views/Xxx.vue')`。首屏 JS 约 946 KB → 526 KB（gzip 316 → 181 KB）。
+> 为避免首次切换时临时解析 chunk 造成卡顿，侧栏项悬停/聚焦即预取对应页面，解锁后
+> 再利用空闲时间按使用频率逐个预取全部页面（`@/router/prefetch.js`）。
 > 插件管理页的「刷新」会传 `sync=true` 显式重扫 `plugins/` 目录，其余页面切换只读插件表。
 
 - **路由**：`/` 重定向到 `/dashboard`；解锁 / 已认证后访问 setup / unlock 也回落到仪表盘。

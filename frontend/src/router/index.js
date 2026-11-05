@@ -6,17 +6,7 @@ import Setup from '@/views/Setup.vue'
 import Unlock from '@/views/Unlock.vue'
 import Dashboard from '@/views/Dashboard.vue'
 
-// 非首屏页面一律懒加载：桌面端启动/托盘恢复只解析首屏所需的代码，
-// 其余页面在进入时按需拉取。构建用 base='./'，动态 chunk 与入口同目录解析。
-const Credentials = () => import('@/views/Credentials.vue')
-const PluginManager = () => import('@/views/PluginManager.vue')
-const Groups = () => import('@/views/Groups.vue')
-const McpSettings = () => import('@/views/McpSettings.vue')
-const Logs = () => import('@/views/Logs.vue')
-const Tasks = () => import('@/views/Tasks.vue')
-const Settings = () => import('@/views/Settings.vue')
-const Backup = () => import('@/views/Backup.vue')
-const About = () => import('@/views/About.vue')
+import { LAZY_VIEWS } from './prefetch'
 
 // pywebview 通过 file:// 加载，必须使用 hash 模式，否则刷新/跳转会 404。
 const router = createRouter({
@@ -28,15 +18,15 @@ const router = createRouter({
       redirect: '/dashboard',
       children: [
         { path: 'dashboard', name: 'dashboard', component: Dashboard, meta: { title: '仪表盘' } },
-        { path: 'credentials', name: 'credentials', component: Credentials, meta: { title: '凭据管理' } },
-        { path: 'plugins', name: 'plugins', component: PluginManager, meta: { title: '插件管理' } },
-        { path: 'groups', name: 'groups', component: Groups, meta: { title: '分组管理' } },
-        { path: 'mcp', name: 'mcp', component: McpSettings, meta: { title: 'MCP 设置' } },
-        { path: 'logs', name: 'logs', component: Logs, meta: { title: '日志' } },
-        { path: 'tasks', name: 'tasks', component: Tasks, meta: { title: '任务' } },
-        { path: 'settings', name: 'settings', component: Settings, meta: { title: '系统设置' } },
-        { path: 'backup', name: 'backup', component: Backup, meta: { title: '备份' } },
-        { path: 'about', name: 'about', component: About, meta: { title: '关于' } },
+        { path: 'credentials', name: 'credentials', component: LAZY_VIEWS['/credentials'], meta: { title: '凭据管理' } },
+        { path: 'plugins', name: 'plugins', component: LAZY_VIEWS['/plugins'], meta: { title: '插件管理' } },
+        { path: 'groups', name: 'groups', component: LAZY_VIEWS['/groups'], meta: { title: '分组管理' } },
+        { path: 'mcp', name: 'mcp', component: LAZY_VIEWS['/mcp'], meta: { title: 'MCP 设置' } },
+        { path: 'logs', name: 'logs', component: LAZY_VIEWS['/logs'], meta: { title: '日志' } },
+        { path: 'tasks', name: 'tasks', component: LAZY_VIEWS['/tasks'], meta: { title: '任务' } },
+        { path: 'settings', name: 'settings', component: LAZY_VIEWS['/settings'], meta: { title: '系统设置' } },
+        { path: 'backup', name: 'backup', component: LAZY_VIEWS['/backup'], meta: { title: '备份' } },
+        { path: 'about', name: 'about', component: LAZY_VIEWS['/about'], meta: { title: '关于' } },
       ],
     },
     { path: '/setup', name: 'setup', component: Setup },

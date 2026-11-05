@@ -14,6 +14,7 @@ import { useAppStore } from '@/stores/app'
 import { useVaultStore } from '@/stores/vault'
 import { useMcpStore } from '@/stores/mcp'
 import { useProxyStore } from '@/stores/proxy'
+import { prefetchAllRoutes } from '@/router/prefetch'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -387,6 +388,19 @@ onBeforeUnmount(() => {
   disposers.forEach((dispose) => dispose())
   disposers.length = 0
 })
+
+// 解锁后利用空闲时间预取其余页面，避免首次切换功能卡时解析 chunk 造成卡顿。
+let routesPrefetched = false
+watch(
+  () => appStore.unlocked,
+  (unlocked) => {
+    if (!unlocked || routesPrefetched) return
+    routesPrefetched = true
+    // 稍等开屏揭示动画结束，再在空闲时按页预取
+    setTimeout(() => prefetchAllRoutes(), 1200)
+  },
+  { immediate: true },
+)
 
 // 保险库被锁定（例如托盘菜单触发）时，强制回到解锁页。
 watch(

@@ -21,6 +21,7 @@ import {
 } from '@element-plus/icons-vue'
 
 import { api, EVENTS } from '@/api'
+import { prefetchRoute } from '@/router/prefetch'
 import { useAppStore } from '@/stores/app'
 import { useVaultStore } from '@/stores/vault'
 
@@ -367,6 +368,8 @@ async function handleMinimize() {
           @dragover="onDragOver(item, $event)"
           @drop="onDrop(item, $event)"
           @dragend="resetDrag"
+          @mouseenter="prefetchRoute(item.path)"
+          @focus="prefetchRoute(item.path)"
         >
           <el-icon><component :is="item.icon" /></el-icon>
           <template #title>{{ item.title }}</template>
