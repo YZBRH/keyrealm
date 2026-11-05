@@ -77,6 +77,23 @@ def read_never_lock() -> bool:
     return (db.get_setting(NEVER_LOCK_KEY, "0") or "").strip() == "1"
 
 
+def enabled() -> bool:
+    """空闲锁定是否实际生效（分钟数 > 0 且未开启「不锁定」）。"""
+    return read_minutes() > 0 and not read_never_lock()
+
+
+def apply_settings() -> None:
+    """按当前设置启停看门狗。
+
+    默认配置（自动锁定关闭）下不再常驻轮询：原先每 10 秒两次 SQLite 查询在
+    功能关闭时纯属空转。设置变更后由 api.set_auto_lock / set_never_lock 调用。
+    """
+    if enabled():
+        start()
+    else:
+        stop()
+
+
 def touch() -> None:
     """记一次用户活动，重置空闲计时。"""
     global _last_activity

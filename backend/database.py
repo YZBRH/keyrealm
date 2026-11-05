@@ -449,6 +449,15 @@ def get_credential(cred_id: int) -> Optional[dict]:
     return d
 
 
+def count_credentials_by_type() -> dict[str, int]:
+    """按插件类型统计凭据数量（避免为了取 len 把整表密文读进内存）。"""
+    with _lock:
+        rows = get_conn().execute(
+            "SELECT credential_type, COUNT(*) AS n FROM credentials GROUP BY credential_type"
+        ).fetchall()
+    return {str(r["credential_type"]): int(r["n"]) for r in rows}
+
+
 def create_credential(
     name: str,
     credential_type: str,
@@ -638,18 +647,26 @@ def add_mcp_operation_log(tool: str, operation: str, params: str,
             "VALUES (?,?,?,?,?,?,?,?)",
             (client_ip, tool, operation, params, result, status, message, int(duration_ms)),
         )
-        # 只保留最近 N 条：删掉第 N 条之后的所有旧记录
+        # 只保留最近 N 条：按 rowid 区间删除，避免每次 NOT IN 全表反连接
         conn.execute(
-            "DELETE FROM mcp_operation_logs WHERE id NOT IN "
-            "(SELECT id FROM mcp_operation_logs ORDER BY id DESC LIMIT ?)",
+            "DELETE FROM mcp_operation_logs WHERE id <= "
+            "(SELECT COALESCE(MAX(id), 0) FROM mcp_operation_logs) - ?",
             (_MCP_LOG_MAX,),
         )
         conn.commit()
 
 
 def list_mcp_operation_logs(limit: int = 200, search: str = "") -> list[dict]:
+    """列表只返回预览字段；完整参数/结果按需经 get_mcp_operation_log 读取。
+
+    单行 params/result 上限 6000/8000 字符，200 行全量返回可达数百 KB；
+    列表视图只用得到前几十个字符，展开行才需要完整内容。
+    """
     limit = max(1, min(int(limit or 200), 1000))
-    sql = "SELECT * FROM mcp_operation_logs"
+    sql = ("SELECT id, created_at, client_ip, tool, operation, status, message, duration_ms, "
+           "substr(params, 1, 200) AS params_preview, "
+           "substr(result, 1, 200) AS result_preview "
+           "FROM mcp_operation_logs")
     params: list = []
     keyword = str(search or "").strip()
     if keyword:
@@ -662,6 +679,15 @@ def list_mcp_operation_logs(limit: int = 200, search: str = "") -> list[dict]:
     with _lock:
         rows = get_conn().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_mcp_operation_log(log_id: int) -> Optional[dict]:
+    """读取单条 MCP 审计的完整参数与结果（供展开行按需加载）。"""
+    with _lock:
+        row = get_conn().execute(
+            "SELECT * FROM mcp_operation_logs WHERE id=?", (int(log_id),)
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def clear_mcp_operation_logs() -> int:

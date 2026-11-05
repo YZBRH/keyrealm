@@ -272,8 +272,8 @@ class VaultApi:
         return api.delete_group(group_id)
 
     # ── Plugins ───────────────────────────────────────────
-    def list_plugins(self):
-        return api.list_plugins()
+    def list_plugins(self, sync: bool = False):
+        return api.list_plugins(bool(sync))
 
     def set_plugin_enabled(self, credential_type: str, enabled: bool):
         return api.set_plugin_enabled(credential_type, enabled)
@@ -563,6 +563,9 @@ class VaultApi:
 
     def get_mcp_operation_logs(self, limit: int = 200, search: str = ""):
         return api.get_mcp_operation_logs(limit, search)
+
+    def get_mcp_operation_log(self, log_id: int):
+        return api.get_mcp_operation_log(log_id)
 
     def clear_mcp_operation_logs(self):
         return api.clear_mcp_operation_logs()

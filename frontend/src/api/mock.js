@@ -734,7 +734,7 @@ export function createMockApi() {
     },
 
     // ── 插件（放入 plugins/ 目录即自动加载）────────────────
-    async list_plugins() {
+    async list_plugins(_sync = false) {
       await delay()
       recomputeCounts()
       return clone(state.plugins)
@@ -1853,8 +1853,22 @@ export function createMockApi() {
         return [row.client_ip, row.tool, row.operation, row.params, row.result, row.message]
           .some((value) => String(value || '').toLowerCase().includes(q))
       })
-      const entries = rows.slice(0, Math.max(1, Math.min(Number(limit) || 200, 1000)))
+      const entries = rows.slice(0, Math.max(1, Math.min(Number(limit) || 200, 1000))).map((row) => {
+        const { params, result, ...rest } = row
+        return {
+          ...rest,
+          params_preview: String(params || '').slice(0, 200),
+          result_preview: String(result || '').slice(0, 200),
+        }
+      })
       return { ok: true, entries: clone(entries), count: entries.length }
+    },
+
+    async get_mcp_operation_log(id) {
+      await delay(30)
+      const row = state.mcpOperationLogs.find((item) => item.id === id)
+      if (!row) return { ok: false, message: '记录不存在' }
+      return { ok: true, entry: clone(row) }
     },
 
     async clear_mcp_operation_logs() {

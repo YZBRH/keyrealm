@@ -244,9 +244,16 @@ async function promptUpdateReady(detail) {
   }
 }
 
-/** 窗口重新获得焦点/可见时刷新数据（覆盖后台 MCP 操作后前台未实时更新的场景） */
+/** 窗口重新获得焦点/可见时刷新数据（覆盖后台 MCP 操作后前台未实时更新的场景）。
+ *  focus 与 visibilitychange(visible) 常成对触发，5 秒内只放行一次，避免全量凭据拉两遍。 */
+let lastActiveRefreshAt = 0
+const ACTIVE_REFRESH_MIN_MS = 5000
 function refreshOnActive() {
   if (!appStore.unlocked) return
+  if (document.visibilityState === 'hidden') return
+  const now = Date.now()
+  if (now - lastActiveRefreshAt < ACTIVE_REFRESH_MIN_MS) return
+  lastActiveRefreshAt = now
   guard(vaultStore.fetchCredentials())
   guard(vaultStore.fetchGroups())
 }

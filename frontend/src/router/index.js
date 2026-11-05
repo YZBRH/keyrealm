@@ -5,15 +5,18 @@ import AppLayout from '@/components/AppLayout.vue'
 import Setup from '@/views/Setup.vue'
 import Unlock from '@/views/Unlock.vue'
 import Dashboard from '@/views/Dashboard.vue'
-import Credentials from '@/views/Credentials.vue'
-import PluginManager from '@/views/PluginManager.vue'
-import Groups from '@/views/Groups.vue'
-import McpSettings from '@/views/McpSettings.vue'
-import Logs from '@/views/Logs.vue'
-import Tasks from '@/views/Tasks.vue'
-import Settings from '@/views/Settings.vue'
-import Backup from '@/views/Backup.vue'
-import About from '@/views/About.vue'
+
+// 非首屏页面一律懒加载：桌面端启动/托盘恢复只解析首屏所需的代码，
+// 其余页面在进入时按需拉取。构建用 base='./'，动态 chunk 与入口同目录解析。
+const Credentials = () => import('@/views/Credentials.vue')
+const PluginManager = () => import('@/views/PluginManager.vue')
+const Groups = () => import('@/views/Groups.vue')
+const McpSettings = () => import('@/views/McpSettings.vue')
+const Logs = () => import('@/views/Logs.vue')
+const Tasks = () => import('@/views/Tasks.vue')
+const Settings = () => import('@/views/Settings.vue')
+const Backup = () => import('@/views/Backup.vue')
+const About = () => import('@/views/About.vue')
 
 // pywebview 通过 file:// 加载，必须使用 hash 模式，否则刷新/跳转会 404。
 const router = createRouter({

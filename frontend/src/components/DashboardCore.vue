@@ -56,6 +56,8 @@ const ticks = Array.from({ length: 72 }, (_, index) => {
 
 // ── 健康度数字动画 ────────────────────────────────────────
 let rateRaf = 0
+// 提前声明：animateRate 的 immediate watch 在 setup 阶段就会调用 prefersReduced()
+let reducedMedia = null
 
 function animateRate(target) {
   cancelAnimationFrame(rateRaf)
@@ -91,6 +93,8 @@ const percent = computed(() => {
 })
 
 function prefersReduced() {
+  // 用已缓存的 MediaQueryList，避免 draw() 每帧新建对象并求值
+  if (reducedMedia) return reducedMedia.matches
   return typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -108,7 +112,6 @@ let startedAt = 0
 let running = false
 let resizeObserver = null
 let themeObserver = null
-let reducedMedia = null
 
 function readColors() {
   const el = rootRef.value

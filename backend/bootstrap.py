@@ -50,7 +50,7 @@ def init_core(mode: str = "desktop", *, full: bool = True, gpu_reason: str = "")
         if mode != "cli":
             api.restore_persisted_session()
         scheduler.start_scheduler()
-        idle_lock.start()
+        idle_lock.apply_settings()
         api.autostart_mcp()
         api.start_auto_update_check()
     return log

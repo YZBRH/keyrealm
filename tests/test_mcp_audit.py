@@ -46,10 +46,10 @@ def test_record_redacts_sensitive_values():
     assert row["tool"] == "vault_create_credential"
     assert row["operation"] == "创建凭据"
     assert row["client_ip"] == "10.0.0.5"
-    assert "sk-super-secret-value" not in row["params"]
-    assert "sk-super-secret-value" not in row["result"]
-    assert '"***"' in row["params"]
-    assert '"***"' in row["result"]
+    assert "sk-super-secret-value" not in row["params_preview"]
+    assert "sk-super-secret-value" not in row["result_preview"]
+    assert '"***"' in row["params_preview"]
+    assert '"***"' in row["result_preview"]
     assert row["status"] == "ok"
     assert row["duration_ms"] == 12
 
@@ -64,16 +64,16 @@ def test_get_secret_result_is_redacted():
         client_ip="127.0.0.1",
     )
     row = db.list_mcp_operation_logs()[0]
-    assert "sk-direct-secret" not in row["result"]
-    assert '"***"' in row["result"]
+    assert "sk-direct-secret" not in row["result_preview"]
+    assert '"***"' in row["result_preview"]
 
     # 短密文同样要打码（MIN_SECRET_LEN 不适用于 get_secret 的返回值）
     db.clear_mcp_operation_logs()
     mcp_audit.record("vault_get_secret", {"credential_id": 1},
                      result={"data": {"pin": "1234", "hint": "x"}}, client_ip="127.0.0.1")
     row = db.list_mcp_operation_logs()[0]
-    assert "1234" not in row["result"]
-    assert '"pin": "***"' in row["result"]
+    assert "1234" not in row["result_preview"]
+    assert '"pin": "***"' in row["result_preview"]
 
 
 def test_url_userinfo_is_redacted():
@@ -85,9 +85,9 @@ def test_url_userinfo_is_redacted():
         client_ip="127.0.0.1",
     )
     row = db.list_mcp_operation_logs()[0]
-    assert "pa55word" not in row["params"] and "alice" not in row["params"]
-    assert "pa55word" not in row["result"] and "alice" not in row["result"]
-    assert "socks5://***@127.0.0.1:1080" in row["params"]
+    assert "pa55word" not in row["params_preview"] and "alice" not in row["params_preview"]
+    assert "pa55word" not in row["result_preview"] and "alice" not in row["result_preview"]
+    assert "socks5://***@127.0.0.1:1080" in row["params_preview"]
 
 
 def test_error_message_is_redacted():
@@ -101,7 +101,7 @@ def test_error_message_is_redacted():
     row = db.list_mcp_operation_logs()[0]
     assert row["status"] == "error"
     assert "sk-another-secret" not in row["message"]
-    assert "sk-another-secret" not in row["params"]
+    assert "sk-another-secret" not in row["params_preview"]
 
 
 def test_tool_wrapper_writes_audit_row():
@@ -124,7 +124,7 @@ def test_tool_wrapper_writes_audit_row():
     assert any(row["tool"] == "vault_list_credentials"
                and row["operation"] == "查询凭据列表"
                and row["client_ip"] == "192.0.2.10"
-               and row["result"]
+               and row["result_preview"]
                for row in rows), rows
 
 
@@ -136,6 +136,36 @@ def test_client_ip_extraction():
     assert (mcp_server._client_ip(scope, Headers({"x-forwarded-for": "8.8.8.8, 10.0.0.1"}))
             == "10.1.2.3 (xff: 8.8.8.8)")
     assert mcp_server._client_ip({"client": None}, Headers({})) == ""
+
+
+def test_list_returns_previews_and_detail_returns_full():
+    db.clear_mcp_operation_logs()
+    long_text = "x" * 400
+    mcp_audit.record("vault_list_credentials", {"search": long_text},
+                     result={"note": long_text}, duration_ms=1)
+    row = db.list_mcp_operation_logs()[0]
+    assert len(row["params_preview"]) <= 200
+    assert len(row["result_preview"]) <= 200
+    full = db.get_mcp_operation_log(row["id"])
+    assert full and long_text in full["params"] and long_text in full["result"]
+    assert db.get_mcp_operation_log(999999) is None
+
+
+def test_retention_keeps_latest_rows():
+    db.clear_mcp_operation_logs()
+    old_max = db._MCP_LOG_MAX
+    db._MCP_LOG_MAX = 3
+    try:
+        for i in range(5):
+            mcp_audit.record("vault_list_groups", {"i": i}, result=[], duration_ms=1)
+        rows = db.list_mcp_operation_logs(limit=10)
+        assert len(rows) == 3
+        assert [row["params_preview"] for row in rows] == [
+            '{"i": 4}', '{"i": 3}', '{"i": 2}',
+        ]
+    finally:
+        db._MCP_LOG_MAX = old_max
+        db.clear_mcp_operation_logs()
 
 
 def test_search_and_clear():

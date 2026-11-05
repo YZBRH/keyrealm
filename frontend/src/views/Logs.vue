@@ -243,6 +243,8 @@ const mcpLogs = ref([])
 const mcpLogsLoading = ref(false)
 const mcpLogSearch = ref('')
 const mcpLogLimit = ref(200)
+// 展开行按 id 懒取完整参数/结果；列表接口只返回 200 字符预览
+const mcpDetails = new Map()
 
 async function loadMcpLogs({ silent = false } = {}) {
   const seq = ++mcpLoadSeq
@@ -250,11 +252,36 @@ async function loadMcpLogs({ silent = false } = {}) {
   try {
     const result = await api.getMcpOperationLogs(mcpLogLimit.value, mcpLogSearch.value.trim())
     if (seq !== mcpLoadSeq) return
-    mcpLogs.value = Array.isArray(result.entries) ? result.entries : []
+    const items = Array.isArray(result.entries) ? result.entries : []
+    items.forEach((row) => {
+      if (mcpDetails.has(row.id)) row.detail = mcpDetails.get(row.id)
+    })
+    mcpLogs.value = items
   } catch (err) {
     if (!silent && seq === mcpLoadSeq) ElMessage.error(err.message || '加载 MCP 操作日志失败')
   } finally {
     if (!silent && seq === mcpLoadSeq) mcpLogsLoading.value = false
+  }
+}
+
+async function onMcpExpandChange(row, expandedRows) {
+  if (!Array.isArray(expandedRows) || !expandedRows.includes(row)) return
+  if (row.detail || row.detailLoading) return
+  row.detailLoading = true
+  try {
+    const result = await api.getMcpOperationLog(row.id)
+    if (result.ok === false) throw new Error(result.message || '加载日志明细失败')
+    mcpDetails.set(row.id, result.entry)
+    row.detail = result.entry
+    // 自动刷新可能已把列表换成新行对象，同步补上明细
+    const current = mcpLogs.value.find((item) => item.id === row.id)
+    if (current) current.detail = result.entry
+  } catch (err) {
+    ElMessage.error(err.message || '加载日志明细失败')
+  } finally {
+    row.detailLoading = false
+    const current = mcpLogs.value.find((item) => item.id === row.id)
+    if (current) current.detailLoading = false
   }
 }
 
@@ -271,6 +298,7 @@ async function clearMcpLogs() {
   }
   try {
     await api.clearMcpOperationLogs()
+    mcpDetails.clear()
     ElMessage.success('MCP 操作日志已清空')
     await loadMcpLogs()
   } catch (err) {
@@ -292,26 +320,38 @@ function textPreview(raw, max = 90) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
+function rowParams(row) {
+  return row.detail ? row.detail.params : row.params_preview
+}
+
+function rowResult(row) {
+  return row.detail ? row.detail.result : row.result_preview
+}
+
 function prettyParams(row) {
-  return prettyJson(row.params)
+  return prettyJson(rowParams(row))
 }
 
 function paramPreview(row) {
-  return textPreview(row.params)
+  return textPreview(rowParams(row))
 }
 
 function prettyResult(row) {
-  return prettyJson(row.result)
+  return prettyJson(rowResult(row))
 }
 
 function resultPreview(row) {
-  return textPreview(row.result)
+  return textPreview(rowResult(row))
 }
 
-onMounted(async () => {
-  await Promise.all([loadLogConfig(), loadLogs(), loadMcpLogs()])
-  startAutoRefresh()
+onMounted(() => {
+  // 先注册监听/计时器再发首批请求：若用户在这些 IPC 返回前离开本页，
+  // 卸载时也能把已注册的资源全部清掉（async onMounted 会造成注册晚于卸载的竞态）。
   document.addEventListener('visibilitychange', handleVisibilityChange)
+  startAutoRefresh()
+  loadLogConfig()
+  loadLogs()
+  loadMcpLogs()
 })
 
 onBeforeUnmount(() => {
@@ -484,10 +524,12 @@ onBeforeUnmount(() => {
         row-key="id"
         size="small"
         empty-text="暂无 MCP 操作日志"
+        @expand-change="onMcpExpandChange"
       >
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="mcp-detail">
+              <div v-if="row.detailLoading" class="mcp-message">正在加载完整内容…</div>
               <div class="mcp-section-title">参数（已脱敏）</div>
               <pre class="mcp-params">{{ prettyParams(row) }}</pre>
               <div class="mcp-section-title">返回结果（已脱敏）</div>

@@ -113,6 +113,7 @@ def main() -> int:
                                     data_encrypted="BLOB", data_plain={"notes": "n"},
                                     group_id=group["id"])
         assert db.get_credential(cred["id"])["group_id"] == group["id"]
+        assert db.count_credentials_by_type().get("llm_demo") == 1
         print("✓ 分组 / 凭据通过")
 
         # 7) 幂等：打包后每次启动都会跑 init_db

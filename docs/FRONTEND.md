@@ -372,6 +372,10 @@ App.vue
 
 ### 仪表盘（Dashboard，默认首页）
 
+> **路由懒加载**：`AppLayout` / `Setup` / `Unlock` / `Dashboard` 同步引入，其余页面全部
+> `component: () => import('@/views/Xxx.vue')`。首屏 JS 约 946 KB → 526 KB（gzip 316 → 181 KB）。
+> 插件管理页的「刷新」会传 `sync=true` 显式重扫 `plugins/` 目录，其余页面切换只读插件表。
+
 - **路由**：`/` 重定向到 `/dashboard`；解锁 / 已认证后访问 setup / unlock 也回落到仪表盘。
   侧栏新增项排在第一位；旧版保存的 `vault.layout.navOrder` 里没有它时，`applyOrder()`
   会把它补到最前（已经手动拖过顺序的则保留用户位置）。
@@ -1124,9 +1128,11 @@ id 混入同一个 `proxyStore.items`，因此全局默认、凭据的「使用�
 降级实现，pywebview 下 `navigator.clipboard` 不可用时回退 `execCommand`），方便整段贴出去反馈。
 
 **MCP 操作日志**：页面底部独立卡片，读取 `api.getMcpOperationLogs(limit, search)` →
-`{ entries, count }`，标题栏「刷新」只重拉本卡片，「清空」清空审计表。每条记录来源 IP、MCP 工具名、
-中文操作描述、**已脱敏**的调用参数与返回结果、成功 / 失败、耗时与错误摘要；展开行查看完整参数
-与结果 JSON。写入在 MCP 工具包装层完成（`backend/mcp_audit.py`），来源 IP 由 SSE 鉴权中间件注入；
+`{ entries, count }`，标题栏「刷新」只重拉本卡片，「清空」清空审计表。列表接口只返回
+200 字符的 `params_preview` / `result_preview`（默认 200 行响应约 124 KB，而非完整内容约 2.3 MB）；
+展开行时按 id 调 `api.getMcpOperationLog(id)` 懒取完整参数与结果，并在会话内按 id 缓存。
+每条记录来源 IP、MCP 工具名、中文操作描述、**已脱敏**的调用参数与返回结果、成功 / 失败、
+耗时与错误摘要。写入在 MCP 工具包装层完成（`backend/mcp_audit.py`），来源 IP 由 SSE 鉴权中间件注入；
 敏感键名、插件声明的敏感字段值，以及 `vault_get_secret` 返回的密文都会在落库前替换成 `***`。
 保留最近 5000 条，支持搜索与清空。
 

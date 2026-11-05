@@ -297,7 +297,7 @@ def _build_mcp_app() -> MCPServer:
         denied = _perm_denied("vault_list_plugins")
         if denied:
             return [denied]
-        return plugin_manager.list_installed_plugins()
+        return plugin_manager.list_installed_plugins(sync=False)
 
     # ── vault_get_secret ──────────────────────────────────
     @_tool

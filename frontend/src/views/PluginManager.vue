@@ -83,10 +83,10 @@ const noInstalledMatch = computed(
   () => searchTerms.value.length > 0 && vaultStore.plugins.length > 0 && !filteredInstalledGroups.value.length,
 )
 
-async function load() {
+async function load(sync = false) {
   loading.value = true
   try {
-    await vaultStore.fetchPlugins()
+    await vaultStore.fetchPlugins(sync)
   } catch (err) {
     ElMessage.error(err.message || '加载插件失败')
   } finally {
@@ -143,7 +143,7 @@ function openDefaults(scope, scopeKey, credentialType, name) {
         clearable
         :prefix-icon="Search"
       />
-      <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+      <el-button :icon="Refresh" :loading="loading" @click="load(true)">刷新</el-button>
     </div>
 
     <el-card v-loading="loading" shadow="never">

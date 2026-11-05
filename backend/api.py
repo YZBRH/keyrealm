@@ -976,8 +976,12 @@ def delete_group(group_id: int) -> dict:
 
 # ── Plugins ───────────────────────────────────────────────
 
-def list_plugins() -> list:
-    plugins = plugin_manager.list_installed_plugins()
+def list_plugins(sync: bool = False) -> list:
+    """列出插件。默认不重扫磁盘——启动时已同步过，页面切换不必再跑一遍。
+
+    ``sync=True`` 仅供插件管理页的「刷新」显式重新扫描插件目录。
+    """
+    plugins = plugin_manager.list_installed_plugins(sync=bool(sync))
     for record in plugins:
         record["icon_image"] = plugin_manager.get_icon_image(record)
         # 深色主题下这个 logo 要不要垫浅色底（判据见 plugin_manager.icon_needs_lift）。
@@ -2075,6 +2079,7 @@ def set_auto_lock(minutes) -> dict:
         return {"ok": False, "message": f"不支持的档位：{value} 分钟"}
     db.set_setting(idle_lock.SETTING_KEY, str(value))
     idle_lock.touch()  # 改设置时重置计时，免得刚设完就被锁
+    idle_lock.apply_settings()  # 关闭时停掉看门狗，开启时按需拉起
     _log.info("空闲自动锁定已设置为 %s 分钟", value)
     return {"ok": True, "minutes": value}
 
@@ -2108,6 +2113,7 @@ def set_never_lock(enabled) -> dict:
     else:
         _clear_session_key()
     idle_lock.touch()
+    idle_lock.apply_settings()  # 「不锁定」会整体停掉空闲锁定看门狗
     _log.info("「不锁定」已%s", "开启" if value else "关闭")
     result = get_never_lock()
     result["ok"] = True
@@ -3112,9 +3118,17 @@ def clear_logs() -> dict:
 
 
 def get_mcp_operation_logs(limit: int = 200, search: str = "") -> dict:
-    """MCP 操作审计（参数已在写入时脱敏）。"""
+    """MCP 操作审计列表（只含脱敏预览字段）。"""
     entries = db.list_mcp_operation_logs(limit, search)
     return {"ok": True, "entries": entries, "count": len(entries)}
+
+
+def get_mcp_operation_log(log_id: int) -> dict:
+    """单条 MCP 操作审计的完整参数与结果（脱敏后），供展开行按需加载。"""
+    row = db.get_mcp_operation_log(log_id)
+    if not row:
+        return {"ok": False, "message": "记录不存在"}
+    return {"ok": True, "entry": row}
 
 
 def clear_mcp_operation_logs() -> dict:

@@ -267,9 +267,9 @@ export const useVaultStore = defineStore('vault', {
       return result
     },
 
-    // ── 插件（放入 plugins/ 目录即自动加载，仅拉取列表）────
-    async fetchPlugins() {
-      const items = await api.listPlugins()
+    // ── 插件（放入 plugins/ 目录后重启或手动刷新加载）────
+    async fetchPlugins(sync = false) {
+      const items = await api.listPlugins(sync)
       this.plugins = (Array.isArray(items) ? items : []).map((plugin) => ({
         ...plugin,
         enabled: !!plugin.enabled,

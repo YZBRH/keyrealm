@@ -228,7 +228,7 @@ plugins/
   与 `_icon_image_cache` 同生命周期（只在 `sync_plugins()` 清空）。前端只给 `icon_lift` 为真的
   `<img>` 加 `.icon-lift`，`base.css` 的白板规则据此限定——避免给彩色标套上白框（见 docs/FRONTEND.md）。
   **服务专属逻辑在各子插件内自带，新增插件无需改动共享模块。**
-- **同步流程**：启动时 `sync_plugins()` 扫描两层结构 → upsert plugins 表（含 category / category_name / batch_verify）→ 清理已消失插件的记录与模块缓存。
+- **同步流程**：启动时 `sync_plugins()` 扫描两层结构 → upsert plugins 表（含 category / category_name / batch_verify）→ 清理已消失插件的记录与模块缓存。**运行期不再每次 `list_plugins()` 都重扫**：页面切换只读插件表；插件管理页「刷新」传 `sync=True` 显式重扫，插件启用/禁用也已自动同步。凭据数量由一条 `GROUP BY credential_type` 聚合填充。
 - **批量验证开关**：manifest 的 `batch_verify`（默认 true）落库到 plugins.batch_verify；调度器与前端批量时跳过为 false 的类型——**有写副作用或无法自动化**的（如 duckdns / wechat_ilink），以及**判定常为「未验证」、批量会刷掉人工结论**的（telegram_apihash / mail/gateway）。前端在批量勾选弹窗中禁用其勾选，但单条手动验证仍可用。
 
 **插件模块约定**：必须暴露 `verify(data)`；可选 `validate(data)`、`get_display_summary(data)`。
@@ -585,8 +585,10 @@ Web SSE 广播器。Web 模式下 `frontend/public/web-bridge.js` 把 `window.py
 2. 应用常驻托盘运行（`close_action=background`）时窗口隐藏，WebView 会节流 JS 定时器，
    前端计时不可靠；后端守护线程不受影响。
 
-**实现**：与调度器同款的常驻守护线程（`threading.Thread` + `threading.Event` 停止位），
-每 `WATCH_INTERVAL`（10s）醒来一次，**现读现判** `db.get_setting("auto_lock_minutes")`：
+**实现**：`idle_lock.apply_settings()` 按当前设置决定是否启动守护线程
+（`threading.Thread` + `threading.Event` 停止位）。**自动锁定关闭（默认）或「不锁定」开启时不启动**，
+避免空转；设置变更时由 `api.set_auto_lock` / `set_never_lock` 重新调用 `apply_settings()`
+即时启停。线程每 `WATCH_INTERVAL`（10s）醒来一次，**现读现判** `db.get_setting("auto_lock_minutes")`：
 
 - 纯函数 `should_lock(now, last_activity, minutes, running_count)` 承载判定逻辑，便于离线测试；
 - 时间基准用 `time.monotonic()`（不受系统时钟调整影响）；
@@ -611,8 +613,8 @@ Web SSE 广播器。Web 模式下 `frontend/public/web-bridge.js` 把 `window.py
 Windows DPAPI / macOS 钥匙串 / Linux Secret Service，Linux 无 Secret Service 时退化为
 machine-id + 用户 + 数据目录派生的本机绑定加密文件（仅防跨机拷贝，不能防同一用户读取）。
 
-**生命周期**：`main.py` 在 `scheduler.start_scheduler()` 之后 `idle_lock.start()`；
-`_shutdown_services()` 里 `idle_lock.stop()`（置停止位并 join，超时 2s）。
+**生命周期**：`bootstrap.init_core()` 在 `scheduler.start_scheduler()` 之后调用
+`idle_lock.apply_settings()`（仅已启用时启动）；`_shutdown_services()` 里 `idle_lock.stop()`（置停止位并 join，超时 2s）。
 
 ---
 
@@ -628,6 +630,8 @@ machine-id + 用户 + 数据目录派生的本机绑定加密文件（仅防跨�
 
 **检索**：`read_logs(limit, level, search)` 支持最低级别过滤 + 关键词搜索。搜索按「整条记录」
 匹配（含 traceback 续行），大小写不敏感，多个空白分隔的关键词需**全部命中**（AND）。
+解析结果按 `(路径, mtime_ns, size)` 做进程内缓存：文件未变化时直接复用（自动刷新场景下
+1.4 MB 日志由约 24 ms/次降到约 0.2 ms/次）；轮转、追加与清空都会使缓存失效。
 
 **采集范围**：插件不再用 `print(..., file=sys.stderr)` 输出——打包为 windowed 模式时
 `sys.stdout`/`sys.stderr` 为 `None`，打印会静默丢失。改为 `backend/plugin_sdk.py` 暴露的

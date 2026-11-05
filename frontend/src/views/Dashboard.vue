@@ -296,9 +296,28 @@ function updateClock() {
   clock.value = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
 }
 
-onMounted(() => {
+function startClock() {
+  stopClock()
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
+}
+
+function stopClock() {
+  if (clockTimer) {
+    clearInterval(clockTimer)
+    clockTimer = null
+  }
+}
+
+/** 窗口隐藏（最小化到托盘 / 切后台）时停表，避免每秒一次的无效重渲染。 */
+function onClockVisibility() {
+  if (document.hidden) stopClock()
+  else startClock()
+}
+
+onMounted(() => {
+  startClock()
+  document.addEventListener('visibilitychange', onClockVisibility)
   load()
   unsubs = [
     EVENTS.credentialsChanged,
@@ -312,7 +331,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  clearInterval(clockTimer)
+  stopClock()
+  document.removeEventListener('visibilitychange', onClockVisibility)
   clearTimeout(reloadTimer)
   unsubs.forEach((off) => { if (typeof off === 'function') off() })
   unsubs = []

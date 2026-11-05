@@ -327,7 +327,8 @@ CREATE TABLE mcp_operation_logs (
 
 每条 MCP 工具调用由 `backend/mcp_audit.py` 的包装层写入；来源 IP 由 SSE 鉴权中间件注入，
 敏感键名与插件声明的敏感字段值（以及 `vault_get_secret` 返回的密文）在落库前替换为 `***`，
-只保留最近 5000 条。日志页的「MCP 操作日志」板块读取此表。
+只保留最近 5000 条。日志页的「MCP 操作日志」板块读取此表：列表接口只取 `substr(params,1,200)`
+与 `substr(result,1,200)` 预览，展开行时按 id 读取完整内容；保留清理按 rowid 区间删除。
 
 ---
 

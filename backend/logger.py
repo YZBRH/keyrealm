@@ -28,6 +28,10 @@ DEFAULT_LEVEL = "INFO"
 _MAX_BYTES = 1_000_000   # 单个日志文件上限 ~1MB
 _BACKUP_COUNT = 5        # 保留 5 个轮转备份（.log.1 ~ .log.5）
 
+# read_logs 的解析缓存：key=(mtime_ns, size)，value=[(原始行列表, 小写整条文本)]
+_records_cache_key = None
+_records_cache: list[tuple[list[str], str]] = []
+
 _FMT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DATEFMT = "%Y-%m-%d %H:%M:%S"
 # 匹配一条日志记录的起始行（用于把 traceback 等多行归并到同一条）
@@ -98,6 +102,40 @@ def log_file_path() -> str:
     return str(LOG_FILE)
 
 
+def _load_records() -> list[tuple[list[str], str]]:
+    """读取并缓存日志记录：文件未变化（mtime/size 相同）时直接复用解析结果。
+
+    自动刷新每 5–60 秒就会读一次；日志文件通常几秒才变一次，缓存能省掉重复的
+    整文件读取、splitlines 与逐条正则解析。轮转后文件路径/大小变化会自然失效。
+    """
+    global _records_cache_key, _records_cache
+    try:
+        stat = LOG_FILE.stat()
+        key = (str(LOG_FILE), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        _records_cache_key = None
+        _records_cache = []
+        return []
+    if key == _records_cache_key:
+        return _records_cache
+    try:
+        text = LOG_FILE.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return _records_cache if _records_cache else []
+
+    records: list[list[str]] = []
+    for ln in text.splitlines():
+        if _LINE_RE.match(ln) or not records:
+            records.append([ln])
+        else:
+            records[-1].append(ln)
+    # 预先把整条记录拼成小写文本，搜索时不必每次重新 join
+    cached = [(rec, "\n".join(rec).lower()) for rec in records]
+    _records_cache_key = key
+    _records_cache = cached
+    return cached
+
+
 def read_logs(limit: int = 200, level: str | None = None,
               search: str | None = None) -> list[str]:
     """读取当前日志文件末尾若干条记录。
@@ -108,42 +146,27 @@ def read_logs(limit: int = 200, level: str | None = None,
       大小写不敏感；多个空白分隔的关键词需全部命中（AND）。
     - 返回字符串列表，每项是一条完整记录（可能含换行）。
     """
-    if not LOG_FILE.exists():
+    records = _load_records()
+    if not records:
         return []
-    try:
-        text = LOG_FILE.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
-    records: list[list[str]] = []
-    for ln in text.splitlines():
-        if _LINE_RE.match(ln) or not records:
-            records.append([ln])
-        else:
-            records[-1].append(ln)
 
     if level:
         threshold = _norm(level)
-        kept = []
-        for rec in records:
-            m = _LINE_RE.match(rec[0])
-            if m and getattr(logging, m.group(1).upper(), 0) >= threshold:
-                kept.append(rec)
-        records = kept
+        records = [item for item in records
+                   if (m := _LINE_RE.match(item[0][0]))
+                   and getattr(logging, m.group(1).upper(), 0) >= threshold]
 
     terms = [t for t in (search or "").lower().split() if t]
     if terms:
-        records = [
-            rec for rec in records
-            if all(t in "\n".join(rec).lower() for t in terms)
-        ]
+        records = [item for item in records if all(t in item[1] for t in terms)]
 
     limit = max(1, min(int(limit or 200), 2000))
-    return ["\n".join(rec) for rec in records[-limit:]]
+    return ["\n".join(rec) for rec, _ in records[-limit:]]
 
 
 def clear_logs() -> None:
     """清空当前日志文件与全部轮转备份（显式枚举，不用通配符）。"""
+    global _records_cache_key, _records_cache
     root = logging.getLogger()
     # 先摘掉并关闭文件 handler，避免 Windows 下句柄占用导致清空后写入错位
     file_handlers = [
@@ -162,6 +185,9 @@ def clear_logs() -> None:
             if backup.exists():
                 backup.unlink()
     finally:
+        # 无论清空是否完全成功，都让解析缓存失效，避免继续展示旧内容
+        _records_cache_key = None
+        _records_cache = []
         # 重新挂回文件 handler，保持后续日志继续写入
         if file_handlers or _configured:
             fmt = logging.Formatter(_FMT, _DATEFMT)

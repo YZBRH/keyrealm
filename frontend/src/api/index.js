@@ -233,7 +233,7 @@ export const api = {
   deleteGroup: (id) => call('delete_group', id),
 
   // ── 插件（放入 plugins/ 目录即自动加载，无需手动管理）────
-  listPlugins: () => call('list_plugins'),
+  listPlugins: (sync = false) => call('list_plugins', sync),
   // 启用/禁用插件（credential_type, enabled）
   setPluginEnabled: (credentialType, enabled) => call('set_plugin_enabled', credentialType, enabled),
 
@@ -372,6 +372,7 @@ export const api = {
   clearLogs: () => call('clear_logs'),
   getMcpOperationLogs: (limit = 200, search = '') =>
     call('get_mcp_operation_logs', limit, search),
+  getMcpOperationLog: (id) => call('get_mcp_operation_log', id),
   clearMcpOperationLogs: () => call('clear_mcp_operation_logs'),
   // 用系统默认程序打开 data/logs/ 下的日志文件（导入失败后的一键打开）。
   // 后端只认单个文件名，路径拼接由它自己完成。

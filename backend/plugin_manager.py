@@ -938,9 +938,9 @@ def list_installed_plugins(*, sync: bool = True) -> list[dict]:
     if sync:
         sync_plugins()
     plugins = db.list_plugins()
+    counts = db.count_credentials_by_type()
     for p in plugins:
-        creds = db.list_credentials(credential_type=p["credential_type"])
-        p["credential_count"] = len(creds)
+        p["credential_count"] = counts.get(p["credential_type"], 0)
         p["category_icon"] = get_category_icon(p.get("category") or "")
         p["rel_path"] = _plugin_rel_path(p.get("plugin_path") or "")
     return plugins
