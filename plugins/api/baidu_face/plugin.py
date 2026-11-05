@@ -4,7 +4,8 @@
 
 - **API Key + Secret Key**：走百度 AI 开放平台 OAuth client_credentials 换取
   ``access_token``（约 30 天），只验证换取是否成功，不要求应用开通具体产品；
-- **直填 access_token**：跳过换 token，用一个只读探针接口确认 token 是否被接受。
+- **直填 access_token**：跳过换 token，用内置只读探针接口确认 token 是否被接受
+  （与 AK/SK 模式一样不需要用户额外填写探针配置）。
 
 人脸库分组 / 成员作为「百度人脸」操作提供；「权限枚举」逐个只读探测常见产品，
 区分可用、无权限、额度受限与未知，供前端按 ``capabilities`` 隐藏用不了的菜单。
@@ -15,7 +16,6 @@
 """
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
 
 import httpx
@@ -100,25 +100,8 @@ def _has_credentials(data: dict) -> bool:
     return bool(_field(data, "api_key")) and bool(_field(data, "secret_key"))
 
 
-def _probe_config(data: dict) -> tuple[str, dict]:
-    """直填 token 模式的只读探针；非法值一律回落默认人脸分组接口。"""
-    path = _field(data, "probe_path") or _DEFAULT_PROBE_PATH
-    if not path.startswith("/") or "://" in path:
-        path = _DEFAULT_PROBE_PATH
-    raw = _field(data, "probe_body")
-    if not raw:
-        return path, dict(_DEFAULT_PROBE_BODY)
-    try:
-        body = json.loads(raw)
-    except Exception:
-        body = None
-    if not isinstance(body, dict):
-        body = dict(_DEFAULT_PROBE_BODY)
-    return path, body
-
-
 def validate(data: dict) -> list[str]:
-    """按当前认证方式校验必填字段。只校验当前模式，另一种模式的残留字段不报错。"""
+    """按当前密钥种类校验必填字段。另一种模式的残留字段不报错。"""
     data = data or {}
     errors: list[str] = []
     base = _field(data, "base_url")
@@ -132,19 +115,7 @@ def validate(data: dict) -> list[str]:
 
     if _mode(data) == MODE_TOKEN:
         if not _field(data, "access_token"):
-            errors.append("认证方式为 access_token 时必须填写 access_token")
-        path = _field(data, "probe_path") or _DEFAULT_PROBE_PATH
-        if not path.startswith("/") or "://" in path:
-            errors.append("验证探测路径必须以 / 开头，且不能是完整 URL")
-        raw_body = _field(data, "probe_body")
-        if raw_body:
-            try:
-                body = json.loads(raw_body)
-            except Exception:
-                errors.append("验证探测请求体不是合法 JSON")
-            else:
-                if not isinstance(body, dict):
-                    errors.append("验证探测请求体必须是 JSON 对象")
+            errors.append("密钥种类为 access_token 时必须填写 access_token")
     else:
         if not _field(data, "api_key"):
             errors.append("API Key 不能为空")
@@ -256,17 +227,9 @@ def _token_for(data: dict) -> tuple[Optional[str], str, bool, int]:
     return _get_access_token(_base(data), _field(data, "api_key"), _field(data, "secret_key"))
 
 
-def _probe_targets(data: dict) -> list[tuple[str, str, str, str, dict]]:
-    """权限枚举目标；直填 token 模式额外加入用户自定义探针（不与内置重复时）。"""
-    targets = list(_PROBE_TARGETS)
-    if _mode(data) == MODE_TOKEN:
-        path, body = _probe_config(data)
-        known = {(p, json.dumps(b, sort_keys=True, ensure_ascii=False))
-                 for _, _, _, p, b in targets}
-        key = (path, json.dumps(body, sort_keys=True, ensure_ascii=False))
-        if key not in known:
-            targets.append(("custom", "自定义探针", "-", path, body))
-    return targets
+def _probe_targets() -> list[tuple[str, str, str, str, dict]]:
+    """权限枚举目标：全部使用内置只读接口，不接受用户自定义探针。"""
+    return list(_PROBE_TARGETS)
 
 
 def _status_text(state: str, payload: Optional[dict]) -> str:
@@ -324,8 +287,9 @@ def _verify_token(data: dict) -> VerifyResult:
     if not token:
         return VerifyResult(status="invalid", message="access_token 为空")
 
-    path, body = _probe_config(data)
-    payload, status_code, err = _call_api(_base(data), token, path, body)
+    path = _DEFAULT_PROBE_PATH
+    payload, status_code, err = _call_api(
+        _base(data), token, path, _DEFAULT_PROBE_BODY)
     if err:
         return VerifyResult(status="error", message=err)
 
@@ -437,9 +401,9 @@ def actions(data: dict) -> list[dict]:
     return items
 
 
-def _run_probe_permissions(token: str, base: str, data: dict) -> dict:
+def _run_probe_permissions(token: str, base: str) -> dict:
     rows = []
-    for _key, label, action_id, path, body in _probe_targets(data):
+    for _key, label, action_id, path, body in _probe_targets():
         payload, status_code, err = _call_api(base, token, path, body)
         state = _PROBE_UNKNOWN if err else _classify(payload, status_code)
         rows.append({
@@ -511,7 +475,7 @@ def run_action(action_id: str, params: dict, data: dict) -> dict:
         base = _base(data)
 
         if action_id == "probe_permissions":
-            return _run_probe_permissions(token, base, data)
+            return _run_probe_permissions(token, base)
         if action_id == "list_face_groups":
             return _run_list_face_groups(token, base, params)
         if action_id == "list_face_users":

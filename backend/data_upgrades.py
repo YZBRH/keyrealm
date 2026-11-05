@@ -57,10 +57,15 @@ def _wenxin_split_key(data: dict) -> dict:
 
 @_rule("api_baidu_ai")
 def _baidu_ai_default_auth_mode(data: dict) -> dict:
-    """百度 AI 平台 v1.1.0 起显式记录 ``auth_mode``；旧数据没有该字段时按 AK/SK 处理。"""
-    if str(data.get("auth_mode") or "").strip():
-        return data
-    return {**data, "auth_mode": "ak_sk"}
+    """百度 AI 平台 v1.1.0 起显式记录 ``auth_mode``；旧数据没有该字段时按 AK/SK 处理。
+
+    ``probe_path`` / ``probe_body`` 曾短暂作为用户可填探针存在，现在验证固定使用内置只读接口，
+    这两个键一并清掉（旧备份导入也会经过本规则）。
+    """
+    out = {k: v for k, v in data.items() if k not in ("probe_path", "probe_body")}
+    if not str(out.get("auth_mode") or "").strip():
+        out["auth_mode"] = "ak_sk"
+    return out if out != data else data
 
 
 @_rule("mail_smtp")

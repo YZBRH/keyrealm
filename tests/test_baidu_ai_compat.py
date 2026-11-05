@@ -18,6 +18,11 @@ def test_canonical_type_and_default_auth_mode():
     assert data_upgrades.canonical_type(NEW) == NEW
     assert data_upgrades.canonical_type("api_fofa") == "api_fofa"
     assert data_upgrades.upgrade_credential(NEW, {"api_key": "a"})["auth_mode"] == "ak_sk"
+    cleaned = data_upgrades.upgrade_credential(NEW, {
+        "auth_mode": "access_token", "access_token": "t",
+        "probe_path": "/old", "probe_body": "{}",
+    })
+    assert cleaned == {"auth_mode": "access_token", "access_token": "t"}
     same = {"auth_mode": "access_token", "access_token": "t"}
     assert data_upgrades.upgrade_credential(NEW, same) == same
 

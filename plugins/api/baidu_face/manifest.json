@@ -71,29 +71,7 @@
         "auth_mode": "access_token"
       },
       "placeholder": "24.xxxxxxxxxxxxxxxx",
-      "hint": "百度 AI 开放平台的 access_token（约 30 天有效）。直填模式需要再配置一个只读探测接口来确认 token 有效性。"
-    },
-    {
-      "key": "probe_path",
-      "label": "验证探测路径",
-      "type": "text",
-      "required": false,
-      "default": "/rest/2.0/face/v3/faceset/group/getlist",
-      "show_if": {
-        "auth_mode": "access_token"
-      },
-      "hint": "仅直填 access_token 模式使用；填该应用已开通产品的只读接口路径，必须以 / 开头。默认人脸库分组列表。"
-    },
-    {
-      "key": "probe_body",
-      "label": "验证探测请求体（JSON）",
-      "type": "textarea",
-      "required": false,
-      "default": "{\"start\":0,\"length\":1}",
-      "show_if": {
-        "auth_mode": "access_token"
-      },
-      "hint": "仅直填 access_token 模式使用；必须是 JSON 对象。人脸分组用 {\"start\":0,\"length\":1}，词法分析用 {\"text\":\"ping\"}。"
+      "hint": "百度 AI 开放平台的 access_token（约 30 天有效）。验证时自动用内置只读接口探测，无需额外配置。"
     },
     {
       "key": "notes",

@@ -54,6 +54,8 @@ def test_manifest_identity_and_fields():
     shown = {f["key"]: f.get("show_if") for f in manifest["fields"]}
     assert shown["api_key"] == {"auth_mode": "ak_sk"}
     assert shown["access_token"] == {"auth_mode": "access_token"}
+    # 直填 token 模式不暴露任何探针配置字段
+    assert "probe_path" not in shown and "probe_body" not in shown
 
 
 def test_mode_defaults_to_ak_sk():
@@ -65,18 +67,13 @@ def test_mode_defaults_to_ak_sk():
 def test_validate_branches():
     assert plugin.validate({}) == ["API Key 不能为空", "Secret Key 不能为空"]
     assert plugin.validate({"auth_mode": "access_token"}) == [
-        "认证方式为 access_token 时必须填写 access_token"]
+        "密钥种类为 access_token 时必须填写 access_token"]
     assert plugin.validate({"auth_mode": "access_token", "access_token": TOKEN}) == []
+    # 旧的探针字段不再要求填写；插件校验忽略它们（数据升级会清理）
     assert plugin.validate({
         "auth_mode": "access_token", "access_token": TOKEN,
-        "probe_path": "https://evil.example/x",
-    }) == ["验证探测路径必须以 / 开头，且不能是完整 URL"]
-    assert plugin.validate({
-        "auth_mode": "access_token", "access_token": TOKEN, "probe_body": "[]",
-    }) == ["验证探测请求体必须是 JSON 对象"]
-    assert plugin.validate({
-        "auth_mode": "access_token", "access_token": TOKEN, "probe_body": "not-json",
-    }) == ["验证探测请求体不是合法 JSON"]
+        "probe_path": "https://old.example/x", "probe_body": "not-json",
+    }) == []
     assert plugin.validate({"api_key": "ak", "secret_key": "sk", "base_url": "ftp://x"}) == [
         "Base URL 必须是 http(s) 地址"]
 
