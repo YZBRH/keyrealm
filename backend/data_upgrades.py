@@ -23,6 +23,18 @@ from typing import Callable, Optional
 _Rule = Callable[[dict], dict]
 _RULES: list[tuple[str, _Rule]] = []
 
+# 旧凭据类型 → 当前类型。用于**导入旧备份**与读取旧的插件状态文件；
+# DB 里存量凭据的类型由 scripts/migrations/ 的 SQL 迁移完成。
+_TYPE_ALIASES: dict[str, str] = {
+    "api_baidu_face": "api_baidu_ai",
+}
+
+
+def canonical_type(credential_type: str) -> str:
+    """把旧 credential_type 归一为当前 id（幂等；未知类型原样返回）。"""
+    ct = str(credential_type or "")
+    return _TYPE_ALIASES.get(ct, ct)
+
 
 def _rule(credential_type: str):
     """注册一条数据升级规则（模块加载时执行）。"""
@@ -41,6 +53,14 @@ def _wenxin_split_key(data: dict) -> dict:
         return data                                  # 已是新格式（或本就没有 |），原样返回
     client_id, _, secret = api.partition("|")
     return {**data, "api_key": client_id.strip(), "secret_key": secret.strip()}
+
+
+@_rule("api_baidu_ai")
+def _baidu_ai_default_auth_mode(data: dict) -> dict:
+    """百度 AI 平台 v1.1.0 起显式记录 ``auth_mode``；旧数据没有该字段时按 AK/SK 处理。"""
+    if str(data.get("auth_mode") or "").strip():
+        return data
+    return {**data, "auth_mode": "ak_sk"}
 
 
 @_rule("mail_smtp")

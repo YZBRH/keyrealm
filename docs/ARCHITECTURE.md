@@ -186,7 +186,7 @@ plugins/
 │   │   └── plugin.py
 │   ├── deepseek/
 │   └── …                     # 共 18 个 LLM 子插件
-├── api/                      # API 服务类别：firecrawl / tavily / metaso / fofa / coze / dify / google_api_credentials / baidu_face（共 8 个）
+├── api/                      # API 服务类别：firecrawl / tavily / metaso / fofa / coze / dify / google_api_credentials / baidu_face（百度 AI 开放平台，共 8 个）
 ├── dns/                      # 域名解析：dnspod / duckdns / godaddy
 ├── dev/                      # 开发者平台：github / huggingface / wandb / npm
 ├── im/                       # 即时通讯：feishu / dingtalk / wecom / telegram / telegram_apihash / discord / qq_bot / wechat_ilink / wechat_mp / wechat_miniprogram（dingtalk、wecom 为「应用 / Webhook 双形态」）

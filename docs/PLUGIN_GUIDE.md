@@ -1030,7 +1030,7 @@ codebuddy（腾讯 CodeBuddy 客户端登录态）。
 > `llm_anthropic_compatible` 类型不再有对应插件，那类凭据直接在界面上删掉、按新插件重建即可。
 
 **api/ 类别（8 个）**：firecrawl（网页抓取）、tavily（搜索）、metaso（秘塔 AI 搜索）、fofa（FOFA 网络空间测绘）、
-coze（字节扣子）、dify（Dify 应用 / 工作流）、google_api_credentials（Google API，一对 key/secret）、baidu_face（百度人脸，人脸识别）。
+coze（字节扣子）、dify（Dify 应用 / 工作流）、google_api_credentials（Google API，一对 key/secret）、baidu_face（百度 AI 开放平台，credential_type=`api_baidu_ai`；支持 AK/SK 与直填 access_token；插件目录沿用 `api/baidu_face`）。
 
 **dns/ 类别（3 个）**：dnspod、duckdns、godaddy。
 
@@ -1231,7 +1231,7 @@ SMTP 与 IMAP 两条路径共用同一策略。
 - **exchange**：okx（账户余额）· binance（账户信息、交易所时间）· guosen（Skill 网关 / 开放 API 两类密钥校验，无操作）
 - **api**：coze（工作区列表）· tavily（执行搜索）· firecrawl（抓取网页）·
   metaso（搜索（`list`，行内「阅读」下钻）· 网页解析）·
-  baidu_face（人脸库分组列表（`list`，只读））·
+  baidu_face（百度 AI 开放平台：权限枚举 · 人脸库分组 / 成员（`list`，只读）· 用 AK/SK 换取 access_token（`form`，写回本凭据））·
   dify（应用信息 · 应用参数 · 对话（`chat`，流式）· 运行工作流（`write`）——key 是**应用级**的，
   能看到什么由该应用的 `mode` 决定：`capabilities()` 按 `/info` 的 mode 显隐，
   workflow 应用不出现「对话」、普通对话应用不出现「运行工作流」）

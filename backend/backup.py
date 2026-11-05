@@ -384,6 +384,8 @@ def import_backup(key: bytes, doc: dict, dedupe: bool = True, source: str = "",
     for item in doc.get("preset_defaults") or []:
         scope = item.get("scope")
         scope_key = item.get("scope_key")
+        if scope == "plugin" and scope_key:
+            scope_key = data_upgrades.canonical_type(str(scope_key))
         if scope in ("category", "plugin") and scope_key:
             try:
                 values = json.loads(item.get("values") or "{}")
@@ -410,7 +412,7 @@ def import_backup(key: bytes, doc: dict, dedupe: bool = True, source: str = "",
     for idx, row in enumerate(entries, start=1):
         if not isinstance(row, dict):
             continue
-        ct = str(row.get("credential_type") or "")
+        ct = data_upgrades.canonical_type(str(row.get("credential_type") or ""))
         rec: dict[str, Any] = {
             "index": idx,
             "name": str(row.get("name") or ""),
@@ -574,13 +576,17 @@ def _import_schedules(doc: dict) -> int:
         name = str(s.get("name") or "").strip()
         if not name or name in existing:
             continue
+        target_scope = str(s.get("target_scope") or "all")
+        target_id = s.get("target_id")
+        if target_scope == "type" and target_id not in (None, ""):
+            target_id = data_upgrades.canonical_type(str(target_id))
         try:
             created = db.create_schedule(
                 name=name,
                 trigger_type=str(s.get("trigger_type") or "cron"),
                 trigger_args=s.get("trigger_args") or {},
-                target_scope=str(s.get("target_scope") or "all"),
-                target_id=s.get("target_id"),
+                target_scope=target_scope,
+                target_id=target_id,
                 credential_ids=s.get("credential_ids") or [],
             )
             if not s.get("enabled", True):
@@ -611,6 +617,7 @@ def _import_plugins_disabled(doc: dict) -> int:
     types = doc.get("plugins_disabled")
     if not isinstance(types, list):
         return 0
+    types = [data_upgrades.canonical_type(str(t)) for t in types]
     try:
         plugin_manager.set_disabled(types)
     except Exception:  # noqa: BLE001

@@ -73,6 +73,20 @@ def test_same_target_same_secret_is_duplicate():
     ]
 
 
+def test_baidu_token_mode_duplicate():
+    data = {"auth_mode": "access_token", "access_token": "baidu-token-123456"}
+    first = _create("baidu-a", data, "api_baidu_ai")
+    matches = api.check_duplicate_credential("api_baidu_ai", dict(data))
+    assert [item["id"] for item in matches] == [first["id"]]
+
+
+def test_baidu_old_data_without_auth_mode_still_dedupes():
+    data = {"api_key": "ak-123456", "secret_key": "sk-123456"}
+    first = _create("baidu-old-a", data, "api_baidu_ai")
+    matches = api.check_duplicate_credential("api_baidu_ai", dict(data))
+    assert [item["id"] for item in matches] == [first["id"]]
+
+
 def test_scan_does_not_group_by_secret_alone():
     a = _create("scan-a", _ssh("192.0.2.40", "same-secret-4"))
     b = _create("scan-b", _ssh("192.0.2.41", "same-secret-4"))

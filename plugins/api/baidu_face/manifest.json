@@ -1,11 +1,29 @@
 {
-  "name": "百度人脸",
-  "version": "1.0.1",
-  "credential_type": "api_baidu_face",
+  "name": "百度 AI 开放平台",
+  "version": "1.1.0",
+  "credential_type": "api_baidu_ai",
   "author": "Keyrealm",
-  "description": "验证 百度人脸（人脸识别）API Key / Secret Key 有效性，并可浏览人脸库分组",
+  "description": "验证百度 AI 开放平台 API Key / Secret Key（或直填 access_token），可浏览人脸库并枚举已开通的产品权限",
   "icon": "logo.png",
   "fields": [
+    {
+      "key": "auth_mode",
+      "label": "密钥种类",
+      "type": "select",
+      "required": true,
+      "default": "ak_sk",
+      "options": [
+        {
+          "value": "ak_sk",
+          "label": "API Key + Secret Key"
+        },
+        {
+          "value": "access_token",
+          "label": "直填 access_token"
+        }
+      ],
+      "hint": "AK/SK 走 OAuth client_credentials 换取 access_token（约 30 天）；已有 token 可直接粘贴，跳过换 token。"
+    },
     {
       "key": "base_url",
       "label": "Base URL",
@@ -15,7 +33,7 @@
       "default": "https://aip.baidubce.com",
       "presets": [
         {
-          "label": "百度智能云 AIP",
+          "label": "百度 AI 开放平台",
           "value": "https://aip.baidubce.com"
         }
       ]
@@ -26,6 +44,9 @@
       "type": "password",
       "required": true,
       "sensitive": true,
+      "show_if": {
+        "auth_mode": "ak_sk"
+      },
       "placeholder": "百度智能云「应用」里的 API Key"
     },
     {
@@ -34,8 +55,45 @@
       "type": "password",
       "required": true,
       "sensitive": true,
+      "show_if": {
+        "auth_mode": "ak_sk"
+      },
       "placeholder": "与 API Key 成对的 Secret Key",
-      "hint": "在百度智能云「应用」里与 API Key 成对出现，两个都要填齐。所校验的接口需该应用已开通「人脸识别」。"
+      "hint": "与 API Key 成对出现；二者只用于换取 access_token，不要求应用已开通人脸识别。"
+    },
+    {
+      "key": "access_token",
+      "label": "access_token",
+      "type": "password",
+      "required": true,
+      "sensitive": true,
+      "show_if": {
+        "auth_mode": "access_token"
+      },
+      "placeholder": "24.xxxxxxxxxxxxxxxx",
+      "hint": "百度 AI 开放平台的 access_token（约 30 天有效）。直填模式需要再配置一个只读探测接口来确认 token 有效性。"
+    },
+    {
+      "key": "probe_path",
+      "label": "验证探测路径",
+      "type": "text",
+      "required": false,
+      "default": "/rest/2.0/face/v3/faceset/group/getlist",
+      "show_if": {
+        "auth_mode": "access_token"
+      },
+      "hint": "仅直填 access_token 模式使用；填该应用已开通产品的只读接口路径，必须以 / 开头。默认人脸库分组列表。"
+    },
+    {
+      "key": "probe_body",
+      "label": "验证探测请求体（JSON）",
+      "type": "textarea",
+      "required": false,
+      "default": "{\"start\":0,\"length\":1}",
+      "show_if": {
+        "auth_mode": "access_token"
+      },
+      "hint": "仅直填 access_token 模式使用；必须是 JSON 对象。人脸分组用 {\"start\":0,\"length\":1}，词法分析用 {\"text\":\"ping\"}。"
     },
     {
       "key": "notes",

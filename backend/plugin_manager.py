@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 from . import anonymous
 from . import database as db
+from . import data_upgrades
 from . import icon_ink
 from . import logger
 from . import proxy_store
@@ -112,7 +113,9 @@ def _read_disabled() -> set[str]:
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         raw = data.get("disabled") if isinstance(data, dict) else None
-        disabled = {x for x in raw if isinstance(x, str)} if isinstance(raw, list) else set()
+        # 旧 credential_type 归一：插件改名后旧状态键仍能生效（迁移脚本也会改写文件）
+        disabled = ({data_upgrades.canonical_type(x) for x in raw
+                     if isinstance(x, str)} if isinstance(raw, list) else set())
         if raw is not None and not isinstance(raw, list):
             _log.warning("插件状态文件的 disabled 不是数组（%s），按全部启用处理", type(raw).__name__)
     except Exception as e:  # noqa: BLE001 - 坏 JSON / 非对象 / 编码错，一律回落全启用
