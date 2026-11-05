@@ -476,6 +476,18 @@ def _build_mcp_app() -> MCPServer:
 
 # ── SSE 服务启动 ──────────────────────────────────────────
 
+def _client_ip(scope, headers) -> str:
+    """请求来源 IP：优先取 TCP 对端；若带 X-Forwarded-For 且与对端不同，附在括号里。"""
+    peer = ""
+    client = scope.get("client") or ()
+    if client:
+        peer = str(client[0])
+    forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded and forwarded != peer:
+        peer = f"{peer} (xff: {forwarded})" if peer else forwarded
+    return peer[:120]
+
+
 def _make_asgi_app(mcp: MCPServer):
     """将 MCPServer 的 SSE app 包装上 Bearer 鉴权中间件"""
     from starlette.applications import Starlette
@@ -515,10 +527,11 @@ def _make_asgi_app(mcp: MCPServer):
                 return await response(scope, receive, send)
 
             _authenticated_var.set(True)
+            # 记下来源 IP 供审计；XFF 只在确实存在且与对端不同时附加展示。
+            mcp_audit.client_ip_var.set(_client_ip(scope, headers))
             return await self.app(scope, receive, send)
 
     sse_app = mcp.sse_app()
-    # 在 sse_app 外包一层中间件
     wrapped = Starlette(
         routes=[Mount("/", app=sse_app)],
         middleware=[MW(BearerAuthMiddleware)],

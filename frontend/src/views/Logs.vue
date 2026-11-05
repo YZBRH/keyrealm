@@ -177,18 +177,34 @@ async function clearMcpLogs() {
   }
 }
 
-function prettyParams(row) {
-  const raw = String(row.params || '')
+function prettyJson(raw) {
+  const text = String(raw || '')
   try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
+    return JSON.stringify(JSON.parse(text), null, 2)
   } catch {
-    return raw
+    return text || '—'
   }
 }
 
+function textPreview(raw, max = 90) {
+  const text = String(raw || '').replace(/\s+/g, ' ')
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+function prettyParams(row) {
+  return prettyJson(row.params)
+}
+
 function paramPreview(row) {
-  const text = String(row.params || '').replace(/\s+/g, ' ')
-  return text.length > 90 ? `${text.slice(0, 89)}…` : text
+  return textPreview(row.params)
+}
+
+function prettyResult(row) {
+  return prettyJson(row.result)
+}
+
+function resultPreview(row) {
+  return textPreview(row.result)
 }
 
 onMounted(async () => {
@@ -337,22 +353,33 @@ onMounted(async () => {
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="mcp-detail">
+              <div class="mcp-section-title">参数（已脱敏）</div>
               <pre class="mcp-params">{{ prettyParams(row) }}</pre>
-              <div v-if="row.message" class="mcp-message">结果：{{ row.message }}</div>
+              <div class="mcp-section-title">返回结果（已脱敏）</div>
+              <pre class="mcp-params">{{ prettyResult(row) }}</pre>
+              <div v-if="row.message" class="mcp-message">错误：{{ row.message }}</div>
             </div>
           </template>
         </el-table-column>
         <el-table-column label="时间" width="170">
           <template #default="{ row }">{{ formatDateTimeFull(row.created_at) }}</template>
         </el-table-column>
+        <el-table-column prop="client_ip" label="来源 IP" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.client_ip || '—' }}</template>
+        </el-table-column>
         <el-table-column prop="tool" label="函数" width="210" show-overflow-tooltip />
         <el-table-column prop="operation" label="操作" min-width="140" show-overflow-tooltip />
-        <el-table-column label="参数（已脱敏）" min-width="260">
+        <el-table-column label="参数（已脱敏）" min-width="230">
           <template #default="{ row }">
             <span class="mcp-param-preview">{{ paramPreview(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="结果" width="80">
+        <el-table-column label="返回结果（已脱敏）" min-width="230">
+          <template #default="{ row }">
+            <span class="mcp-param-preview">{{ resultPreview(row) || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="row.status === 'ok' ? 'success' : 'danger'" size="small">
               {{ row.status === 'ok' ? '成功' : '失败' }}
@@ -499,6 +526,13 @@ onMounted(async () => {
 .mcp-message {
   margin-top: 8px;
   font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.mcp-section-title {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--el-text-color-secondary);
 }
 

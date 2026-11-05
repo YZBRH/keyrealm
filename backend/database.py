@@ -12,9 +12,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Union
 
+from . import logger
 from .paths import data_dir
 # 版本号唯一事实来源见 backend/version.py（不再在这里写常量）
 from .version import LEGACY_SCHEMA_MAX, SCHEMA_VERSION  # noqa: F401  （再导出）
+
+_log = logger.get_logger(__name__)
 
 # 数据目录（默认入口目录/data；启动早期由 paths.configure_data_dir 决定）
 BASE_DIR = data_dir()
@@ -103,13 +106,15 @@ def init_db():
             updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- MCP 操作审计：每次工具调用记一条（参数已脱敏）。只保留最近若干条，避免无限增长。
+        -- MCP 操作审计：每次工具调用记一条（参数与结果均已脱敏）。只保留最近若干条，避免无限增长。
         CREATE TABLE IF NOT EXISTS mcp_operation_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            client_ip   TEXT NOT NULL DEFAULT '',
             tool        TEXT NOT NULL,
             operation   TEXT NOT NULL DEFAULT '',
             params      TEXT NOT NULL DEFAULT '{}',
+            result      TEXT NOT NULL DEFAULT '',
             status      TEXT NOT NULL DEFAULT 'ok',
             message     TEXT NOT NULL DEFAULT '',
             duration_ms INTEGER NOT NULL DEFAULT 0
@@ -290,9 +295,24 @@ def _seed_mcp_permissions(conn: sqlite3.Connection):
 
 
 def _set_schema_version(conn: sqlite3.Connection):
+    """只在「新库」或「1.0 前的整数版本」时写入当前版本。
+
+    已有语义化版本的旧库**绝不在这里推进**——推进是迁移运行器（`scripts/db_update.py` /
+    更新交棒）的职责。否则直接跑源码时，`init_db()` 会把 1.2.3 的库标成 1.2.4，
+    迁移运行器随后认为「已是最新」，新列永远不会补上（审计写入会静默失败）。
+    """
+    row = conn.execute("SELECT value FROM settings WHERE key='schema_version'").fetchone()
+    disk = str(row["value"]).strip() if row and row["value"] else ""
+    current = str(SCHEMA_VERSION)
+    if disk and not disk.isdigit() and disk != current:
+        _log.warning("数据库结构版本 %s 与源码版本 %s 不一致，请先运行数据库迁移"
+                     "（或使用匹配的程序版本）；本次不覆盖版本号", disk, current)
+        return
+    if disk == current:
+        return
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('schema_version', ?, ?)",
-        (str(SCHEMA_VERSION), _now()),
+        (current, _now()),
     )
     conn.commit()
 
@@ -608,14 +628,15 @@ _MCP_LOG_MAX = 5000
 
 
 def add_mcp_operation_log(tool: str, operation: str, params: str,
-                          status: str = "ok", message: str = "",
-                          duration_ms: int = 0) -> None:
+                          result: str = "", status: str = "ok", message: str = "",
+                          duration_ms: int = 0, client_ip: str = "") -> None:
     with _lock:
         conn = get_conn()
         conn.execute(
             "INSERT INTO mcp_operation_logs "
-            "(tool, operation, params, status, message, duration_ms) VALUES (?,?,?,?,?,?)",
-            (tool, operation, params, status, message, int(duration_ms)),
+            "(client_ip, tool, operation, params, result, status, message, duration_ms) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (client_ip, tool, operation, params, result, status, message, int(duration_ms)),
         )
         # 只保留最近 N 条：删掉第 N 条之后的所有旧记录
         conn.execute(
@@ -633,8 +654,9 @@ def list_mcp_operation_logs(limit: int = 200, search: str = "") -> list[dict]:
     keyword = str(search or "").strip()
     if keyword:
         like = f"%{keyword}%"
-        sql += (" WHERE tool LIKE ? OR operation LIKE ? OR params LIKE ? OR message LIKE ?")
-        params += [like, like, like, like]
+        sql += (" WHERE client_ip LIKE ? OR tool LIKE ? OR operation LIKE ? "
+                "OR params LIKE ? OR result LIKE ? OR message LIKE ?")
+        params += [like, like, like, like, like, like]
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
     with _lock:

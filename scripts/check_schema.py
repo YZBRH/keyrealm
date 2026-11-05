@@ -63,6 +63,14 @@ def main() -> int:
             return 1
         print(f"✓ 建表通过（{len(tables)} 张表）")
 
+        # 1.1) MCP 审计表的关键列（来源 IP / 返回结果）必须存在
+        audit_cols = {r["name"] for r in conn.execute(
+            "PRAGMA table_info(mcp_operation_logs)")}
+        missing_cols = {"client_ip", "result"} - audit_cols
+        if missing_cols:
+            print(f"✗ mcp_operation_logs 缺列：{sorted(missing_cols)}", file=sys.stderr)
+            return 1
+
         # 2) 设置表
         db.set_setting("verify_proxy", "socks5://x:1")
         assert db.get_setting("verify_proxy") == "socks5://x:1"

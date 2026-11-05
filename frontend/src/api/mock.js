@@ -176,8 +176,8 @@ function createState() {
       { level: 'ERROR', text: logLine('ERROR', 'backend.scheduler', '加载计划失败 id=2: 触发器参数无效', minutesDate(6)) },
     ],
     mcpOperationLogs: [
-      { id: 2, created_at: minutesAgo(3), tool: 'vault_list_credentials', operation: '查询凭据列表', params: '{"status": "invalid"}', status: 'ok', message: '', duration_ms: 18 },
-      { id: 1, created_at: minutesAgo(10), tool: 'vault_create_credential', operation: '创建凭据', params: '{"credential_type": "llm_openai", "name": "示例", "data": {"api_key": "***"}}', status: 'ok', message: '', duration_ms: 42 },
+      { id: 2, created_at: minutesAgo(3), client_ip: '127.0.0.1', tool: 'vault_list_credentials', operation: '查询凭据列表', params: '{"status": "invalid"}', result: '[]', status: 'ok', message: '', duration_ms: 18 },
+      { id: 1, created_at: minutesAgo(10), client_ip: '127.0.0.1', tool: 'vault_create_credential', operation: '创建凭据', params: '{"credential_type": "llm_openai", "name": "示例", "data": {"api_key": "***"}}', result: '{"ok": true, "credential": {"id": 42, "name": "示例"}}', status: 'ok', message: '', duration_ms: 42 },
     ],
     sequence: 1000,
   }
@@ -1850,7 +1850,7 @@ export function createMockApi() {
       const q = String(search || '').trim().toLowerCase()
       const rows = state.mcpOperationLogs.filter((row) => {
         if (!q) return true
-        return [row.tool, row.operation, row.params, row.message]
+        return [row.client_ip, row.tool, row.operation, row.params, row.result, row.message]
           .some((value) => String(value || '').toLowerCase().includes(q))
       })
       const entries = rows.slice(0, Math.max(1, Math.min(Number(limit) || 200, 1000)))

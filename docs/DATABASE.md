@@ -314,17 +314,20 @@ Agent 请求 Header: Authorization: Bearer kr_a3f2...
 CREATE TABLE mcp_operation_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    client_ip   TEXT NOT NULL DEFAULT '',   -- 调用来源 IP（带 XFF 时附注）
     tool        TEXT NOT NULL,              -- MCP 工具名，如 vault_create_credential
     operation   TEXT NOT NULL DEFAULT '',   -- 中文操作描述
     params      TEXT NOT NULL DEFAULT '{}', -- 已脱敏的调用参数 JSON
+    result      TEXT NOT NULL DEFAULT '',   -- 已脱敏的返回结果 JSON
     status      TEXT NOT NULL DEFAULT 'ok',
     message     TEXT NOT NULL DEFAULT '',
     duration_ms INTEGER NOT NULL DEFAULT 0
 );
 ```
 
-每条 MCP 工具调用由 `backend/mcp_audit.py` 的包装层写入；敏感键名与插件声明的敏感字段值
-在落库前替换为 `***`，只保留最近 5000 条。日志页的「MCP 操作日志」板块读取此表。
+每条 MCP 工具调用由 `backend/mcp_audit.py` 的包装层写入；来源 IP 由 SSE 鉴权中间件注入，
+敏感键名与插件声明的敏感字段值（以及 `vault_get_secret` 返回的密文）在落库前替换为 `***`，
+只保留最近 5000 条。日志页的「MCP 操作日志」板块读取此表。
 
 ---
 
@@ -374,7 +377,7 @@ schedules (target_id → groups.id 或 NULL；credential_ids → 勾选的凭据
 
 ## 迁移策略
 
-`settings.schema_version` 记录当前版本（当前为 **1.0.0**）。1.0 之前该值是整数（0–6），1.0 起
+`settings.schema_version` 记录当前版本（当前为 **1.2.4**）。1.0 之前该值是整数（0–6），1.0 起
 改为语义化版本字符串（读到非整数即说明是 1.0+）。下列几段只服务 1.0 之前的旧库，已冻结，
 应用内不再新增自动迁移：
 

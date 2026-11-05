@@ -1109,10 +1109,10 @@ id 混入同一个 `proxyStore.items`，因此全局默认、凭据的「使用�
 降级实现，pywebview 下 `navigator.clipboard` 不可用时回退 `execCommand`），方便整段贴出去反馈。
 
 **MCP 操作日志**：页面底部独立卡片，读取 `api.getMcpOperationLogs(limit, search)` →
-`{ entries, count }`。每条记录 MCP 工具名、中文操作描述、**已脱敏**的调用参数、成功 / 失败、
-耗时与错误摘要；展开行查看完整参数 JSON。写入在 MCP 工具包装层完成（`backend/mcp_audit.py`），
-敏感键名与插件声明的敏感字段值都会被替换成 `***`，读取结果类返回值（如 `vault_get_secret`）
-不落审计。保留最近 5000 条，支持搜索与清空。
+`{ entries, count }`。每条记录来源 IP、MCP 工具名、中文操作描述、**已脱敏**的调用参数与返回结果、
+成功 / 失败、耗时与错误摘要；展开行查看完整参数与结果 JSON。写入在 MCP 工具包装层完成
+（`backend/mcp_audit.py`），来源 IP 由 SSE 鉴权中间件注入；敏感键名、插件声明的敏感字段值，
+以及 `vault_get_secret` 返回的密文都会在落库前替换成 `***`。保留最近 5000 条，支持搜索与清空。
 
 > **导入日志不在这里**：备份导入写出的 `import_*.log` / `import_*_failed.log` 是**独立的条目化
 > 审计文件**（与运行日志同在 `data/logs/`，但**不进**滚动日志、也不出现在本页的日志流里）。
