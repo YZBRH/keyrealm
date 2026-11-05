@@ -10,7 +10,7 @@
  * 由后端 read_logs 对整条记录（含 traceback 续行）做大小写不敏感匹配，
  * 多个空白分隔关键词需全部命中（AND）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Delete, Refresh, Search } from '@element-plus/icons-vue'
 
@@ -43,6 +43,88 @@ const logFilterLevel = ref('')
 const logLimit = ref(200)
 // 搜索关键词：由用户手动触发（回车/按钮）才请求，避免边打字边打后端。
 const logSearch = ref('')
+
+// 自动刷新是纯界面偏好，存 localStorage；默认关闭，避免无谓请求。
+const AUTO_REFRESH_KEY = 'vault.logs.autoRefresh'
+const REFRESH_INTERVAL_KEY = 'vault.logs.refreshInterval'
+const REFRESH_INTERVAL_DEFAULT = 10000
+const REFRESH_INTERVALS = [
+  { label: '5 秒', value: 5000 },
+  { label: '10 秒', value: 10000 },
+  { label: '30 秒', value: 30000 },
+  { label: '60 秒', value: 60000 },
+]
+
+function readAutoRefresh() {
+  try {
+    return localStorage.getItem(AUTO_REFRESH_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function readRefreshInterval() {
+  try {
+    const saved = Number(localStorage.getItem(REFRESH_INTERVAL_KEY))
+    return REFRESH_INTERVALS.some((option) => option.value === saved)
+      ? saved
+      : REFRESH_INTERVAL_DEFAULT
+  } catch {
+    return REFRESH_INTERVAL_DEFAULT
+  }
+}
+
+const autoRefresh = ref(readAutoRefresh())
+const refreshInterval = ref(readRefreshInterval())
+let refreshTimer = null
+// 请求序号：筛选条件变化时旧请求可能后返回，只采用最后一次的结果，避免覆盖新筛选。
+let loadSeq = 0
+let autoInFlight = false
+
+/** 自动刷新只在本页挂载且窗口可见时运行；离开页面 / 切到后台都会停掉计时器。 */
+function stopAutoRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  if (!autoRefresh.value || document.hidden) return
+  refreshTimer = setInterval(() => {
+    // 手动请求进行中或上一轮自动请求未返回时不叠加
+    if (!logsLoading.value && !autoInFlight) loadLogs({ silent: true })
+  }, refreshInterval.value)
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    stopAutoRefresh()
+  } else if (autoRefresh.value) {
+    loadLogs({ silent: true })
+    startAutoRefresh()
+  }
+}
+
+watch(autoRefresh, (value) => {
+  try {
+    localStorage.setItem(AUTO_REFRESH_KEY, value ? '1' : '0')
+  } catch {
+    /* 隐私模式下存不了，仅本次会话生效 */
+  }
+  if (value) startAutoRefresh()
+  else stopAutoRefresh()
+})
+
+watch(refreshInterval, (value) => {
+  try {
+    localStorage.setItem(REFRESH_INTERVAL_KEY, String(value))
+  } catch {
+    /* 同上 */
+  }
+  if (autoRefresh.value) startAutoRefresh()
+})
 
 const logFilterOptions = computed(() => [
   { label: '全部级别', value: '' },
@@ -87,17 +169,23 @@ async function applyLogLevel() {
   }
 }
 
-async function loadLogs() {
-  logsLoading.value = true
+async function loadLogs({ silent = false } = {}) {
+  const seq = ++loadSeq
+  if (silent) autoInFlight = true
+  else logsLoading.value = true
   try {
     // 级别筛选与关键词搜索叠加：两者都作为过滤条件交给后端，命中结果取交集。
+    // 后端按时间正序返回（旧 → 新），界面要求最新在上，故整体反转。
     const result = await api.getLogs(logLimit.value, logFilterLevel.value, logSearch.value.trim())
-    logs.value = Array.isArray(result.entries) ? result.entries : []
+    if (seq !== loadSeq) return // 已有更新的请求，丢弃本次结果
+    logs.value = (Array.isArray(result.entries) ? result.entries : []).slice().reverse()
     if (result.log_file) logConfig.value.log_file = result.log_file
   } catch (err) {
-    ElMessage.error(err.message || '加载日志失败')
+    // 自动刷新失败不弹提示，避免后台定时器刷屏
+    if (!silent && seq === loadSeq) ElMessage.error(err.message || '加载日志失败')
   } finally {
-    logsLoading.value = false
+    if (silent) autoInFlight = false
+    if (!silent && seq === loadSeq) logsLoading.value = false
   }
 }
 
@@ -209,6 +297,13 @@ function resultPreview(row) {
 
 onMounted(async () => {
   await Promise.all([loadLogConfig(), loadLogs(), loadMcpLogs()])
+  startAutoRefresh()
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onBeforeUnmount(() => {
+  stopAutoRefresh()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
 
@@ -216,8 +311,6 @@ onMounted(async () => {
   <div class="page">
     <div class="page-toolbar">
       <h2 class="section-title">日志</h2>
-      <div class="spacer" />
-      <el-button :icon="Refresh" :loading="logsLoading" @click="loadLogs">刷新</el-button>
     </div>
 
     <el-card shadow="never">
@@ -274,12 +367,12 @@ onMounted(async () => {
           placeholder="搜索日志（空格分隔多个关键词，需全部命中）"
           clearable
           :prefix-icon="Search"
-          @keyup.enter="loadLogs"
+          @keyup.enter="loadLogs()"
           @clear="resetSearch"
         />
-        <el-button type="primary" :icon="Search" :loading="logsLoading" @click="loadLogs">搜索</el-button>
+        <el-button type="primary" :icon="Search" :loading="logsLoading" @click="loadLogs()">搜索</el-button>
 
-        <el-select v-model="logFilterLevel" class="level-select" @change="loadLogs">
+        <el-select v-model="logFilterLevel" class="level-select" @change="loadLogs()">
           <el-option
             v-for="option in logFilterOptions"
             :key="option.value"
@@ -287,7 +380,7 @@ onMounted(async () => {
             :value="option.value"
           />
         </el-select>
-        <el-select v-model="logLimit" class="limit-select" @change="loadLogs">
+        <el-select v-model="logLimit" class="limit-select" @change="loadLogs()">
           <el-option
             v-for="option in LOG_LIMITS"
             :key="option.value"
@@ -297,6 +390,17 @@ onMounted(async () => {
         </el-select>
 
         <div class="spacer" />
+        <span class="toolbar-label">自动刷新</span>
+        <el-switch v-model="autoRefresh" size="small" />
+        <el-select v-model="refreshInterval" class="interval-select">
+          <el-option
+            v-for="option in REFRESH_INTERVALS"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+        <el-button :icon="Refresh" :loading="logsLoading" @click="loadLogs()">刷新</el-button>
         <el-button :icon="CopyDocument" :disabled="!logs.length" @click="copyLogs">复制</el-button>
         <span class="log-count">共 {{ logCount }} 条</span>
       </div>
@@ -444,6 +548,16 @@ onMounted(async () => {
 
 .limit-select {
   width: 150px;
+}
+
+.interval-select {
+  width: 100px;
+}
+
+.toolbar-label {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  white-space: nowrap;
 }
 
 .log-search {
