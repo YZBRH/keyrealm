@@ -378,12 +378,14 @@ schedules (target_id → groups.id 或 NULL；credential_ids → 勾选的凭据
 
 ## 迁移策略
 
-`settings.schema_version` 记录当前版本（当前为 **1.2.5**）。1.0 之前该值是整数（0–6），1.0 起
+`settings.schema_version` 记录当前版本（当前为 **1.2.6**）。1.0 之前该值是整数（0–6），1.0 起
 改为语义化版本字符串（读到非整数即说明是 1.0+）。
 
-> 1.0 起的结构/数据变化由 `scripts/migrations/` 逐级处理（应用不再自动迁移）。最近一跳
+> 1.0 起的结构/数据变化由 `scripts/migrations/` 逐级处理（应用不再自动迁移）。最近两跳：
 > `1.2.4 → 1.2.5` 是百度人脸插件类型改名：同步更新 `credentials.credential_type`、
-> 定时计划、插件级默认设置与 `.state.json`；旧备份导入由 `backend/data_upgrades.py` 的类型别名归一。
+> 定时计划、插件级默认设置与 `.state.json`；`1.2.5 → 1.2.6` 把插件目录从
+> `api/baidu_face` 迁到 `api/baidu_ai`，确认新目录就位后删除旧目录并更新 `plugin_path`。
+> 旧备份导入由 `backend/data_upgrades.py` 的类型别名归一。
 
 下列几段只服务 1.0 之前的旧库，已冻结，
 应用内不再新增自动迁移：

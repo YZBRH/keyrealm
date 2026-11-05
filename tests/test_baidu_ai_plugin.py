@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-PLUGIN_PATH = ROOT / "plugins" / "api" / "baidu_face" / "plugin.py"
+PLUGIN_PATH = ROOT / "plugins" / "api" / "baidu_ai" / "plugin.py"
 _spec = importlib.util.spec_from_file_location("baidu_ai_plugin_test", PLUGIN_PATH)
 plugin = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(plugin)

@@ -124,6 +124,8 @@
 - 插件类型 `api_baidu_face` 改名为 `api_baidu_ai`（`SCHEMA_VERSION` 1.2.4 → 1.2.5）：
   迁移脚本同步凭据、定时计划、插件默认设置与 `.state.json` 禁用状态；
   旧备份导入时类型自动归一，旧凭据数据自动补 `auth_mode=ak_sk`。
+- 百度 AI 插件目录由 `api/baidu_face` 迁到 `api/baidu_ai`（`SCHEMA_VERSION` 1.2.5 → 1.2.6）：
+  确认新目录就位后删除退役旧目录并更新 `plugins.plugin_path`。
 
 ## [1.5.2] - 2026-11-01
 

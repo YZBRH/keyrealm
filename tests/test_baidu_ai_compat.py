@@ -78,7 +78,7 @@ def test_backup_schedule_type_is_canonicalized():
 
 def test_old_backup_entry_gets_auth_mode_default():
     manifest = json.loads(
-        (ROOT / "plugins" / "api" / "baidu_face" / "manifest.json").read_text())
+        (ROOT / "plugins" / "api" / "baidu_ai" / "manifest.json").read_text())
     effective, errors = backup._prepare_entry(
         manifest["fields"],
         {"api_key": "a", "secret_key": "b", "base_url": "https://aip.baidubce.com"},
