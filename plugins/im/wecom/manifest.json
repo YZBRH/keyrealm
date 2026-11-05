@@ -1,6 +1,6 @@
 {
   "name": "企业微信",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "im_wecom",
   "author": "Keyrealm",
   "description": "验证企业微信：自建应用（CorpID / CorpSecret）或群机器人 Webhook 密钥",

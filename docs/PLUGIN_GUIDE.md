@@ -1220,6 +1220,8 @@ SMTP 与 IMAP 两条路径共用同一策略。
 - **dev**：github —— 账号信息（含 `X-OAuth-Scopes` 权限）· **仓库列表 → 行内「打包下载」（`save_to`，弹另存为）**
   与行内「详情」下钻；huggingface / wandb —— 查看账号信息
 - **im**：feishu —— 应用信息与权限 · 机器人信息 · 用户详情（按 `open_id` 或邮箱）· 群组 · 知识库 · 云文档；
+  wecom（应用：获取调用凭据 · 部门列表 · 成员列表 · 客户联系成员 · 成员外部联系人；
+  Webhook：发送文本消息（写））；
   wechat_mp（公众号）—— 获取调用凭据 · 关注者列表 · 接口调用配额；
   wechat_miniprogram（小程序）—— 获取调用凭据 · 小程序基础信息 · 接口调用配额；
   telegram（机器人信息、发送消息（写））· discord（Webhook 信息）·
