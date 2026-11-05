@@ -1385,11 +1385,63 @@ export function createMockApi() {
       return proxySnapshot()
     },
 
-    async delete_proxy(proxy_id) {
+    async get_proxy_usage(proxy_id) {
+      await delay(40)
+      const credentials = state.credentials
+        .filter((c) => {
+          const d = c.data_plain || {}
+          return d._proxy_mode === 'proxy' && d._proxy_id === proxy_id
+        })
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          credential_type: c.credential_type,
+          plugin_name: pluginOf(c.credential_type)?.name || c.credential_type,
+        }))
+      return {
+        ok: true,
+        proxy_id,
+        credentials,
+        presets: [],
+        total: credentials.length,
+        global_default: state.globalProxyId === proxy_id,
+      }
+    },
+
+    async delete_proxy(proxy_id, resetReferences = false) {
       await delay(60)
       const users = state.proxyChains.filter((c) => (c.members || []).includes(proxy_id))
       if (users.length) {
         return { ok: false, message: `该代理被代理链「${users.map((c) => c.name).join('、')}」引用，请先修改或删除代理链` }
+      }
+      const usageCredentials = state.credentials
+        .filter((c) => {
+          const d = c.data_plain || {}
+          return d._proxy_mode === 'proxy' && d._proxy_id === proxy_id
+        })
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          credential_type: c.credential_type,
+          plugin_name: pluginOf(c.credential_type)?.name || c.credential_type,
+        }))
+      const usage = {
+        credentials: usageCredentials,
+        presets: [],
+        total: usageCredentials.length,
+        global_default: state.globalProxyId === proxy_id,
+      }
+      if (usage.total && !resetReferences) {
+        return { ok: false, error: 'proxy_in_use', message: '该代理仍被凭据或默认设置使用，请确认后再删除', usage }
+      }
+      if (usage.total) {
+        for (const cred of usage.credentials) {
+          const item = state.credentials.find((c) => c.id === cred.id)
+          if (item && item.data_plain) {
+            delete item.data_plain._proxy_mode
+            delete item.data_plain._proxy_id
+          }
+        }
       }
       const idx = state.proxies.findIndex((p) => p.id === proxy_id)
       if (idx < 0) return { ok: false, message: '代理不存在' }

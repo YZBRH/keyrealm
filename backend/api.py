@@ -2245,14 +2245,170 @@ def update_proxy(proxy_id: int, name=None, url=None) -> dict:
     return {"ok": True, **list_proxies()}
 
 
-def delete_proxy(proxy_id: int) -> dict:
-    result = proxy_store.delete_proxy(proxy_id)
+def _proxy_ref_usage(proxy_id: str) -> dict:
+    """扫描正在引用某代理的凭据与类别 / 插件默认设置。
+
+    代理引用是凭据 ``data_plain`` 里的保留键（``_proxy_mode`` / ``_proxy_id``），
+    锁定时也能用明文列扫描；解锁时优先读解密后的完整数据，避免旧数据的明文列不同步。
+    """
+    pid = str(proxy_id or "").strip()
+    plugins = {p["credential_type"]: p for p in db.list_plugins()}
+    category_names: dict[str, str] = {}
+    for plugin in plugins.values():
+        category = str(plugin.get("category") or "")
+        if category and category not in category_names:
+            category_names[category] = plugin.get("category_name") or category
+
+    key = _get_key()
+    credentials = []
+    for cred in db.list_credentials():
+        data = None
+        if key is not None:
+            try:
+                data = decrypt_dict(key, cred["data_encrypted"])
+            except Exception:  # noqa: BLE001 - 单条解不开就退回明文列
+                data = None
+        if data is None:
+            data = cred.get("data_plain") or {}
+        if (str(data.get("_proxy_mode") or "").strip().lower() == "proxy"
+                and str(data.get("_proxy_id") or "").strip() == pid):
+            plugin = plugins.get(cred["credential_type"]) or {}
+            credentials.append({
+                "id": cred["id"],
+                "name": cred["name"],
+                "credential_type": cred["credential_type"],
+                "plugin_name": plugin.get("name") or cred["credential_type"],
+            })
+
+    presets = []
+    for row in db.list_preset_defaults():
+        try:
+            values = json.loads(row.get("payload") or "{}")
+        except Exception:  # noqa: BLE001 - 坏数据跳过
+            continue
+        if not isinstance(values, dict):
+            continue
+        if not (str(values.get("_proxy_mode") or "").strip().lower() == "proxy"
+                and str(values.get("_proxy_id") or "").strip() == pid):
+            continue
+        scope = str(row.get("scope") or "")
+        scope_key = str(row.get("scope_key") or "")
+        if scope == preset_store.SCOPE_PLUGIN:
+            plugin = plugins.get(scope_key) or {}
+            name = plugin.get("name") or scope_key
+            kind = "plugin"
+        else:
+            name = category_names.get(scope_key, scope_key)
+            kind = "category"
+        presets.append({
+            "scope": scope,
+            "scope_key": scope_key,
+            "name": name,
+            "kind": kind,
+        })
+
+    return {"credentials": credentials, "presets": presets,
+            "total": len(credentials) + len(presets)}
+
+
+def get_proxy_usage(proxy_id) -> dict:
+    """删除代理前的引用预览：哪些凭据 / 默认设置会因此恢复初始设置。"""
+    pid = str(proxy_id or "").strip()
+    if not pid:
+        return {"ok": False, "message": "代理不存在"}
+    usage = _proxy_ref_usage(pid)
+    usage["global_default"] = str(proxy_store.global_proxy_id() or "") == pid
+    return {"ok": True, "proxy_id": pid, **usage}
+
+
+def _reset_proxy_refs(proxy_id: str) -> dict:
+    """把引用该代理的凭据与默认设置恢复为“未配置代理”状态。"""
+    pid = str(proxy_id or "").strip()
+    key = _get_key()
+    usage = _proxy_ref_usage(pid)
+    if usage["credentials"] and key is None:
+        return {"ok": False, "message": "保险库已锁定，无法重置凭据中的代理引用"}
+
+    reset_credentials = 0
+    if key is not None:
+        for cred in db.list_credentials():
+            try:
+                data = decrypt_dict(key, cred["data_encrypted"])
+            except Exception:  # noqa: BLE001 - 解不开的条目不会引用到可改状态
+                continue
+            if not (str(data.get("_proxy_mode") or "").strip().lower() == "proxy"
+                    and str(data.get("_proxy_id") or "").strip() == pid):
+                continue
+            data.pop("_proxy_mode", None)
+            data.pop("_proxy_id", None)
+            sensitive = _sensitive_fields(cred["credential_type"])
+            db.update_credential(
+                cred["id"],
+                data_encrypted=encrypt_dict(key, data),
+                data_plain={k: v for k, v in data.items() if k not in sensitive},
+            )
+            reset_credentials += 1
+
+    reset_presets = 0
+    for row in db.list_preset_defaults():
+        try:
+            values = json.loads(row.get("payload") or "{}")
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(values, dict):
+            continue
+        if not (str(values.get("_proxy_mode") or "").strip().lower() == "proxy"
+                and str(values.get("_proxy_id") or "").strip() == pid):
+            continue
+        values.pop("_proxy_mode", None)
+        values.pop("_proxy_id", None)
+        scope = str(row.get("scope") or "")
+        scope_key = str(row.get("scope_key") or "")
+        if values:
+            db.set_preset_defaults(scope, scope_key, values)
+        else:
+            db.delete_preset_defaults(scope, scope_key)
+        reset_presets += 1
+
+    return {"ok": True, "credentials": reset_credentials, "presets": reset_presets}
+
+
+def delete_proxy(proxy_id: int, reset_references: bool = False) -> dict:
+    pid = str(proxy_id or "").strip()
+    users = proxy_chain.chains_using(pid)
+    if users:
+        names = "、".join(f"「{name}」" for name in users)
+        return {"ok": False, "message": f"该代理被代理链{names}引用，请先修改或删除代理链"}
+
+    usage = _proxy_ref_usage(pid)
+    usage["global_default"] = str(proxy_store.global_proxy_id() or "") == pid
+    if usage["total"] and not reset_references:
+        return {
+            "ok": False,
+            "error": "proxy_in_use",
+            "message": "该代理仍被凭据或默认设置使用，请确认后再删除",
+            "usage": usage,
+        }
+
+    reset = {"credentials": 0, "presets": 0}
+    if usage["total"]:
+        reset_result = _reset_proxy_refs(pid)
+        if not reset_result.get("ok"):
+            return {"ok": False, "message": reset_result.get("message") or "重置代理引用失败"}
+        reset = {"credentials": reset_result.get("credentials", 0),
+                 "presets": reset_result.get("presets", 0)}
+
+    result = proxy_store.delete_proxy(pid)
     if not result.get("ok"):
         return {"ok": False, "message": result.get("message") or "代理不存在"}
     _apply_global_after_change()
-    _log.info("已删除代理 #%s", proxy_id)
+    _log.info("已删除代理 #%s（重置凭据 %d 条、默认设置 %d 项）",
+              pid, reset["credentials"], reset["presets"])
+    if reset["credentials"] or reset["presets"]:
+        push_event("vault:credentials_changed")
     push_event("vault:proxies_changed")
-    return {"ok": True, **list_proxies()}
+    return {"ok": True, **list_proxies(), "reset": reset, "usage": usage}
+
 
 
 def set_global_proxy(proxy_id=None) -> dict:

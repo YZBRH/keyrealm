@@ -44,8 +44,8 @@ export const useProxyStore = defineStore('proxy', {
       return res
     },
 
-    async remove(id) {
-      const res = await api.deleteProxy(id)
+    async remove(id, resetReferences = false) {
+      const res = await api.deleteProxy(id, resetReferences)
       if (res && res.ok === false) throw new Error(res.message || '删除失败')
       await this.fetch()
       return res

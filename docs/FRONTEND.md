@@ -1051,6 +1051,10 @@ Linux `$XDG_CONFIG_HOME/autostart/keyrealm.desktop`、macOS
 结果区展示两列探测卡片（不挂代理 / 挂代理），每列三行（出口 IP / 国内站点 / 国外站点），
 上方用 `el-alert` 给出 `ok / warn / fail` 三档结论。探测最多约 10 秒（直连国外站点要等超时）。
 
+**删除代理前会先扫描引用**：`api.getProxyUsage(id)` 返回使用该代理的凭据、类别 / 插件默认设置；
+弹窗逐项列出，确认后后端先把这些引用恢复初始设置（删除 `_proxy_mode` / `_proxy_id`），再删除代理。
+被代理链引用的成员仍直接拒绝删除（链本身另有引用关系，不能悄悄拆掉）。
+
 **代理链**：「新增代理链」选择 ≥2 个已保存代理并排序（上移 / 下移）。链以 `chain_<uuid>` 作为
 id 混入同一个 `proxyStore.items`，因此全局默认、凭据的「使用代理」、更新代理三处都能直接选；
 后端 `backend/proxy_chain.py` 在本机起 SOCKS5 转发器逐跳建连，对插件仍是一个普通

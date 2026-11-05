@@ -499,8 +499,11 @@ class VaultApi:
     def update_proxy(self, proxy_id: int, name=None, url=None):
         return api.update_proxy(proxy_id, name, url)
 
-    def delete_proxy(self, proxy_id: int):
-        return api.delete_proxy(proxy_id)
+    def delete_proxy(self, proxy_id: int, reset_references: bool = False):
+        return api.delete_proxy(proxy_id, reset_references)
+
+    def get_proxy_usage(self, proxy_id):
+        return api.get_proxy_usage(proxy_id)
 
     def set_global_proxy(self, proxy_id=None):
         return api.set_global_proxy(proxy_id)

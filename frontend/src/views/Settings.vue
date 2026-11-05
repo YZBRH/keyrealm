@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, h, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, Delete, Edit, Key, Lock, Plus, Refresh } from '@element-plus/icons-vue'
 
@@ -139,19 +139,72 @@ async function saveProxy() {
   }
 }
 
+function proxyUsageMessage(item, usage) {
+  const credentials = Array.isArray(usage.credentials) ? usage.credentials : []
+  const presets = Array.isArray(usage.presets) ? usage.presets : []
+  const parts = [
+    h('div', { style: 'margin-bottom: 8px' },
+      `代理「${item.name}」正在被以下凭据 / 默认设置使用，删除后将恢复为初始设置：`),
+  ]
+  if (credentials.length) {
+    parts.push(h('div', { style: 'margin: 8px 0 4px; font-weight: 600' },
+      `凭据（${credentials.length}）`))
+    parts.push(h('ul', {
+      style: 'margin: 0; padding-left: 18px; max-height: 180px; overflow-y: auto',
+    }, credentials.map((cred) => h('li', null,
+      `${cred.name}（${cred.plugin_name || cred.credential_type}）`))))
+  }
+  if (presets.length) {
+    parts.push(h('div', { style: 'margin: 8px 0 4px; font-weight: 600' },
+      `默认设置（${presets.length}）`))
+    parts.push(h('ul', {
+      style: 'margin: 0; padding-left: 18px; max-height: 160px; overflow-y: auto',
+    }, presets.map((preset) => h('li', null,
+      `${preset.kind === 'category' ? '类别' : '插件'}：${preset.name}`))))
+  }
+  if (usage.global_default) {
+    parts.push(h('div', { style: 'margin-top: 8px; color: #e6a23c' },
+      '该代理同时是全局默认代理，删除后全局出口会恢复为直连。'))
+  }
+  return h('div', { style: 'line-height: 1.55' }, parts)
+}
+
 async function removeProxy(item) {
+  let usage
   try {
-    await ElMessageBox.confirm(
-      `确定删除代理「${item.name}」吗？引用它的凭据会自动回退到全局代理。`,
-      '删除代理',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' },
-    )
+    usage = await api.getProxyUsage(item.id)
+  } catch (err) {
+    ElMessage.error(err.message || '读取代理引用失败，未删除')
+    return
+  }
+  if (!usage || usage.ok === false) {
+    ElMessage.error((usage && usage.message) || '读取代理引用失败，未删除')
+    return
+  }
+
+  const hasRefs = Number(usage.total) > 0
+  const message = hasRefs
+    ? proxyUsageMessage(item, usage)
+    : `确定删除代理「${item.name}」吗？${usage.global_default ? '该代理同时是全局默认，删除后全局出口会恢复为直连。' : ''}`
+  try {
+    await ElMessageBox.confirm(message, '删除代理', {
+      type: 'warning',
+      confirmButtonText: hasRefs ? '删除并重置' : '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    })
   } catch {
     return
   }
+
   try {
-    await proxyStore.remove(item.id)
-    ElMessage.success('代理已删除')
+    await proxyStore.remove(item.id, hasRefs)
+    const resetCount = hasRefs
+      ? ((usage.credentials?.length || 0) + (usage.presets?.length || 0))
+      : 0
+    ElMessage.success(hasRefs
+      ? `代理已删除，${resetCount} 项代理引用已恢复初始设置`
+      : '代理已删除')
   } catch (err) {
     ElMessage.error(err.message || '删除失败')
   }

@@ -647,8 +647,26 @@ def cmd_proxy_update(args) -> int:
 
 def cmd_proxy_rm(args) -> int:
     record = _resolve_proxy(args.proxy)
-    _confirm(f"确认删除代理「{record.get('name')}」？（引用它的凭据会回退到全局）", args)
-    res = api.delete_proxy(record["id"])
+    usage = api.get_proxy_usage(record["id"])
+    if usage.get("ok") is False:
+        raise CliError(usage.get("message") or "读取代理引用失败")
+    has_refs = int(usage.get("total") or 0) > 0
+    if has_refs and not getattr(args, "json", False):
+        print("以下凭据 / 默认设置正在使用该代理，删除后将恢复为初始设置：")
+        for item in usage.get("credentials") or []:
+            print(f"  凭据  {item.get('id')}  {item.get('name')}"
+                  f"（{item.get('plugin_name') or item.get('credential_type')}）")
+        for item in usage.get("presets") or []:
+            kind = "类别" if item.get("kind") == "category" else "插件"
+            print(f"  {kind}  {item.get('name')}")
+    if usage.get("global_default"):
+        question = f"确认删除代理「{record.get('name')}」？它同时是全局默认，删除后全局恢复直连"
+    elif has_refs:
+        question = f"确认删除代理「{record.get('name')}」并重置上述 {usage.get('total')} 项引用？"
+    else:
+        question = f"确认删除代理「{record.get('name')}」？"
+    _confirm(question, args)
+    res = api.delete_proxy(record["id"], has_refs)
     if res.get("ok") is False:
         raise CliError(res.get("message") or "删除代理失败")
     _emit(args, res, f"已删除代理 {record['id']}。")

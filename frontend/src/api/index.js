@@ -329,7 +329,9 @@ export const api = {
   listProxies: () => call('list_proxies'),
   createProxy: (name, url) => call('create_proxy', name, url),
   updateProxy: (proxyId, name = null, url = null) => call('update_proxy', proxyId, name, url),
-  deleteProxy: (proxyId) => call('delete_proxy', proxyId),
+  deleteProxy: (proxyId, resetReferences = false) =>
+    call('delete_proxy', proxyId, resetReferences),
+  getProxyUsage: (proxyId) => call('get_proxy_usage', proxyId),
   // 代理链：成员按顺序串联；对其它调用方仍是普通代理条目
   createProxyChain: (name, memberIds) => call('create_proxy_chain', name, memberIds),
   updateProxyChain: (chainId, name, memberIds) =>

@@ -433,13 +433,17 @@ def _build_mcp_app() -> MCPServer:
         return _api.update_proxy(proxy_id, name, url)
 
     @mcp.tool()
-    def vault_delete_proxy(proxy_id: str) -> dict:
-        """删除代理；若它正被设为全局默认，会自动回落到直连"""
+    def vault_delete_proxy(proxy_id: str, reset_references: bool = False) -> dict:
+        """删除代理；若它正被设为全局默认，会自动回落到直连。
+
+        ``reset_references=True`` 时，先把引用该代理的凭据与类别 / 插件默认设置
+        恢复为初始设置，再删除；否则引用了该代理会返回 ``proxy_in_use`` 预览。
+        """
         denied = _perm_denied("vault_delete_proxy")
         if denied:
             return denied
         from . import api as _api
-        return _api.delete_proxy(proxy_id)
+        return _api.delete_proxy(proxy_id, bool(reset_references))
 
     @mcp.tool()
     def vault_set_global_proxy(proxy_id: Optional[str] = None) -> dict:
