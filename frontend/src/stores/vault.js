@@ -16,6 +16,8 @@ const emptyBatch = () => ({
   total: 0,
   currentName: '',
   status: '',
+  // 后台任务 id：横幅上的「取消」据此中断当前批量验证
+  taskId: '',
   // 本次要验证的凭据 id（由 batch_started 事件给）。让对应行的「验证」按钮转成 loading，
   // 免得用户对着已被后台处理的条目重复点。
   ids: [],
@@ -357,6 +359,7 @@ export const useVaultStore = defineStore('vault', {
       this.batch.currentName = ''
       this.batch.status = ''
       this.batch.trigger = detail.trigger || ''
+      this.batch.taskId = detail.task_id || ''
       this.batch.ids = Array.isArray(detail.credentials) ? detail.credentials : []
     },
 
@@ -365,6 +368,7 @@ export const useVaultStore = defineStore('vault', {
       // 结束时必须清掉：留着会让整批条目一直显示 loading，直到下一次批量验证
       this.batch.ids = []
       this.batch.trigger = ''
+      this.batch.taskId = ''
       this.batch.result = detail || null
       await this.fetchCredentials()
       return this.batch.result
@@ -392,6 +396,27 @@ export const useVaultStore = defineStore('vault', {
       this.batch.done = Number(task.current) || 0
       this.batch.total = Number(task.total) || 0
       this.batch.currentName = task.text || ''
+      this.batch.taskId = task.id || ''
+    },
+
+    async cancelBatch() {
+      if (!this.batch.running) return { ok: false, message: '当前没有进行中的批量验证' }
+      let taskId = this.batch.taskId
+      if (!taskId) {
+        // 页面重载后可能还没接上任务快照：现查一次，避免「按钮点了没反应」
+        const list = await api.listTasks()
+        const task = (Array.isArray(list) ? list : []).find(
+          (item) => item && item.kind === 'batch_verify' && item.status === 'running',
+        )
+        taskId = task && task.id
+        if (taskId) this.batch.taskId = taskId
+      }
+      if (!taskId) return { ok: false, message: '找不到正在运行的批量验证任务' }
+      const result = await api.cancelTask(taskId)
+      if (result && result.ok === false) {
+        throw new Error(result.message || '取消失败')
+      }
+      return result
     },
   },
 })

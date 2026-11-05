@@ -271,6 +271,34 @@ function goTasks() {
   router.push('/tasks')
 }
 
+const cancelingBatch = ref(false)
+
+async function cancelBatch() {
+  try {
+    await ElMessageBox.confirm(
+      '已开始的几条会跑完，剩余任务不再执行。确定取消当前批量验证吗？',
+      '取消批量验证',
+      { type: 'warning', confirmButtonText: '取消任务', cancelButtonText: '继续验证' },
+    )
+  } catch {
+    return
+  }
+  cancelingBatch.value = true
+  try {
+    const result = await vaultStore.cancelBatch()
+    if (result && result.ok === false) {
+      ElMessage.error(result.message || '取消失败')
+    } else {
+      // 取消是协作式的：状态要等调度器跑到检查点，由 batch_verify_done 推送回来
+      ElMessage.success('已请求取消，正在停止剩余任务')
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '取消失败')
+  } finally {
+    cancelingBatch.value = false
+  }
+}
+
 async function handleLock() {
   try {
     await appStore.lock()
@@ -395,13 +423,23 @@ async function handleMinimize() {
               </template>
               <template v-else>{{ batchSummary }}</template>
             </span>
-            <el-button
-              v-if="vaultStore.batch.running"
-              size="small"
-              text
-              type="primary"
-              @click="goTasks"
-            >查看任务</el-button>
+            <span class="batch-banner-actions">
+              <el-button
+                v-if="vaultStore.batch.running"
+                size="small"
+                text
+                type="primary"
+                @click="goTasks"
+              >查看任务</el-button>
+              <el-button
+                v-if="vaultStore.batch.running"
+                size="small"
+                text
+                type="danger"
+                :loading="cancelingBatch"
+                @click="cancelBatch"
+              >取消</el-button>
+            </span>
           </span>
         </template>
       </el-alert>
@@ -768,6 +806,13 @@ async function handleMinimize() {
   gap: 12px;
   font-size: 13px;
   line-height: 20px;
+}
+
+.batch-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .batch-banner-text {

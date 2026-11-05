@@ -185,6 +185,7 @@ def batch_verify(
         "total": total,
         "skipped": skipped,
         "trigger": trigger_type,
+        "task_id": task_id,
         "credentials": [c["id"] for c in creds],
     })
 
