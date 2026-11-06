@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { useVaultStore } from '@/stores/vault'
 import { api } from '@/api'
-import { matchPresets, normalizeOptions, visibleFields } from '@/utils/format'
+import { matchPresets, normalizeOptions, STATUS_OPTIONS, visibleFields } from '@/utils/format'
 import ProxySelect from '@/components/ProxySelect.vue'
 import TlsSelect from '@/components/TlsSelect.vue'
 
@@ -27,8 +27,14 @@ const form = reactive({
   credential_type: '',
   group_id: null,
   auto_verify: true,
+  status: 'unknown',
+  status_note: '',
   data: {},
 })
+
+// 编辑前的手动/验证状态快照：只有用户改了状态或说明才写回，避免普通编辑把验证结论转成手动标记
+const initialStatus = ref('unknown')
+const initialStatusNote = ref('')
 
 const isEdit = computed(() => !!(props.credential && props.credential.id))
 
@@ -165,7 +171,13 @@ async function resetForm() {
     form.name = existing.name || ''
     form.credential_type = existing.credential_type || ''
     form.group_id = existing.group_id ?? null
-    form.auto_verify = true
+    // 编辑默认不自动重验；只有用户主动勾选才在保存后跑一次
+    form.auto_verify = false
+    form.status = existing.status || 'unknown'
+    const detail = existing.status_detail || {}
+    form.status_note = detail.manual ? String(detail.message || '') : ''
+    initialStatus.value = form.status
+    initialStatusNote.value = form.status_note.trim()
     const plugin = vaultStore.pluginByType[existing.credential_type]
     const schema = (plugin && plugin.fields_schema) || []
     // 先用非敏感字段同步预填，再拉取完整明文补全敏感字段（避免空值覆盖密钥）
@@ -194,6 +206,10 @@ async function resetForm() {
     form.credential_type = initialType
     form.group_id = props.defaultGroupId ?? null
     form.auto_verify = true
+    form.status = 'unknown'
+    form.status_note = ''
+    initialStatus.value = 'unknown'
+    initialStatusNote.value = ''
     const plugin = plugins.value.find((item) => item.credential_type === initialType)
     form.data = schemaDefaults((plugin && plugin.fields_schema) || [])
     proxyMode.value = 'global'
@@ -339,6 +355,17 @@ async function submit() {
         group_id: payload.group_id,
         data: payload.data,
       })
+      // 只有状态或说明真的改了才写入，避免普通编辑把「验证结论」改成「手动状态」
+      const note = form.status_note.trim()
+      if (form.status !== initialStatus.value || note !== initialStatusNote.value) {
+        const statusResult = await vaultStore.setCredentialStatus(
+          props.credential.id, form.status, note)
+        if (statusResult && statusResult.ok === false) {
+          throw new Error(statusResult.message || '保存状态失败')
+        }
+        initialStatus.value = form.status
+        initialStatusNote.value = note
+      }
       if (form.auto_verify) {
         try {
           await vaultStore.verifyCredential(props.credential.id)
@@ -514,6 +541,31 @@ async function submit() {
         </div>
       </el-form-item>
 
+      <template v-if="isEdit">
+        <el-divider content-position="left">凭据状态</el-divider>
+        <el-form-item label="状态">
+          <el-select v-model="form.status" class="status-select">
+            <el-option
+              v-for="option in STATUS_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="状态说明">
+          <el-input
+            v-model="form.status_note"
+            type="textarea"
+            :rows="2"
+            maxlength="120"
+            show-word-limit
+            placeholder="可选，例如：已人工确认失效"
+          />
+          <div class="status-hint">手动状态会在下一次验证后更新；保存后重新验证默认不勾选。</div>
+        </el-form-item>
+      </template>
+
       <el-form-item>
         <el-checkbox v-model="form.auto_verify">
           {{ isEdit ? '保存后重新验证' : '保存后自动验证' }}
@@ -557,6 +609,17 @@ async function submit() {
   color: var(--el-text-color-secondary);
   line-height: 1.6;
   margin-top: 2px;
+}
+
+.status-select {
+  width: 180px;
+}
+
+.status-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+  margin-top: 4px;
 }
 
 .credential-form :deep(.el-form-item) {

@@ -11,7 +11,7 @@ import SshConsole from '@/components/SshConsole.vue'
 import SshFiles from '@/components/SshFiles.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { useVaultStore } from '@/stores/vault'
-import { STATUS_OPTIONS, formatDateTimeFull, normalizeOptions, statusText, visibleFields } from '@/utils/format'
+import { STATUS_OPTIONS, formatDateTimeFull, normalizeOptions, visibleFields } from '@/utils/format'
 import api, { EVENTS } from '@/api'
 import { inlineIcon } from '@/utils/pluginIcon'
 
@@ -21,15 +21,6 @@ const vaultStore = useVaultStore()
 
 const formVisible = ref(false)
 const editing = ref(null)
-// 手动设置状态：只改本条凭据的 status/status_detail，下一次验证会覆盖
-const statusDialog = ref({
-  visible: false,
-  id: null,
-  name: '',
-  status: 'valid',
-  note: '',
-  saving: false,
-})
 // 正在验证中的凭据 id 列表：逐条独立，互不影响——只记单个 id 的话，点了 A 再点 B
 // 会让 A 的按钮重新可点，重复触发同一凭据的验证。
 const verifyingIds = ref([])
@@ -2071,38 +2062,6 @@ function openEdit(row) {
   formVisible.value = true
 }
 
-function openStatusDialog(row) {
-  if (batchLocked.value) return
-  statusDialog.value = {
-    visible: true,
-    id: row.id,
-    name: row.name || '',
-    status: row.status || 'unknown',
-    note: '',
-    saving: false,
-  }
-}
-
-async function saveStatusDialog() {
-  const dialog = statusDialog.value
-  if (dialog.saving) return
-  if (batchLocked.value) {
-    ElMessage.warning('批量验证进行中，暂时不能修改凭据状态')
-    return
-  }
-  dialog.saving = true
-  try {
-    const result = await vaultStore.setCredentialStatus(dialog.id, dialog.status, dialog.note)
-    if (result && result.ok === false) throw new Error(result.message || '保存失败')
-    ElMessage.success(`已将「${dialog.name}」标记为${statusText(dialog.status)}`)
-    dialog.visible = false
-  } catch (err) {
-    ElMessage.error(err.message || '保存状态失败')
-  } finally {
-    dialog.saving = false
-  }
-}
-
 async function verifyRow(row) {
   if (verifyingIds.value.includes(row.id)) return // 已在验证中：忽略重复点击
   verifyingIds.value = [...verifyingIds.value, row.id]
@@ -2496,7 +2455,6 @@ onMounted(async () => {
                     </el-button>
                   </span>
                 </el-tooltip>
-                <el-button size="small" :disabled="batchLocked" @click="openStatusDialog(row)">状态</el-button>
                 <el-button size="small" :icon="Edit" :disabled="batchLocked" @click="openEdit(row)">编辑</el-button>
                 <el-button size="small" type="danger" plain :icon="Delete" :disabled="batchLocked" @click="removeRow(row)">删除</el-button>
               </div>
@@ -2507,51 +2465,6 @@ onMounted(async () => {
     </div>
 
     <BatchVerifyDialog v-model="batchPickVisible" :candidates="vaultStore.credentials" />
-
-    <el-dialog
-      v-model="statusDialog.visible"
-      title="手动设置凭据状态"
-      width="480px"
-      :close-on-click-modal="false"
-    >
-      <el-form label-width="64px">
-        <el-form-item label="凭据">
-          <span class="status-dialog-name">{{ statusDialog.name }}</span>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="statusDialog.status" class="status-dialog-select">
-            <el-option
-              v-for="option in statusOptions"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="说明">
-          <el-input
-            v-model="statusDialog.note"
-            type="textarea"
-            :rows="2"
-            maxlength="120"
-            show-word-limit
-            placeholder="可选，例如：已人工确认失效"
-          />
-        </el-form-item>
-      </el-form>
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="手动状态仅用于标记；下一次验证会按实际结果覆盖。"
-      />
-      <template #footer>
-        <el-button @click="statusDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="statusDialog.saving" @click="saveStatusDialog">
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
 
     <el-dialog
       v-model="deletePickVisible"
@@ -3563,22 +3476,14 @@ onMounted(async () => {
 }
 
 /* 操作列按钮：flex 布局对齐，清除 Element Plus 相邻按钮的默认左间距 */
-/* 操作列按钮：按 3 列排布，五个按钮占两行，避免单行横排把列拉宽或堆成三行 */
+/* 操作列按钮：按 2 列排布，两两一行，避免单行横排把列拉宽 */
 .action-cell {
   display: grid;
-  grid-template-columns: repeat(3, max-content);
+  grid-template-columns: repeat(2, max-content);
   align-items: center;
   justify-content: start;
   gap: 6px;
   white-space: nowrap;
-}
-
-.status-dialog-name {
-  font-weight: 600;
-}
-
-.status-dialog-select {
-  width: 180px;
 }
 
 .action-cell .el-button {
