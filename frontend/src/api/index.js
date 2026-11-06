@@ -174,6 +174,9 @@ export const api = {
       payload.data ?? null,
     ),
   deleteCredential: (id) => call('delete_credential', id),
+  // 手动覆盖凭据状态（valid / invalid / error / unknown）；下一次验证会覆盖
+  setCredentialStatus: (id, status, note = '') =>
+    call('set_credential_status', id, status, note),
   // 批量删除：一次 IPC 删一批（后端单事务）。pywebview 位置参数，ids 传数组。
   deleteCredentials: (ids) => call('delete_credentials', ids),
   verifyCredential: (id) => call('verify_credential', id),

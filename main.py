@@ -232,6 +232,9 @@ class VaultApi:
     def delete_credential(self, credential_id: int):
         return api.delete_credential(credential_id)
 
+    def set_credential_status(self, credential_id: int, status: str, note: str = ""):
+        return api.set_credential_status(credential_id, status, note)
+
     def delete_credentials(self, credential_ids):
         return api.delete_credentials(credential_ids)
 

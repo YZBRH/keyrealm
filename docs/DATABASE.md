@@ -89,7 +89,7 @@ CREATE TABLE credentials (
     data_encrypted   TEXT NOT NULL,             -- AES-GCM 加密的 JSON（敏感字段）
     data_plain       TEXT DEFAULT '{}',         -- 明文 JSON（非敏感字段，如备注）
     status           TEXT DEFAULT 'unknown',    -- valid / invalid / unknown / error
-    status_detail    TEXT DEFAULT '',           -- 验证返回的账号信息（JSON，如余额）
+    status_detail    TEXT DEFAULT '',           -- 验证返回的账号信息（JSON，如余额）；手动设置状态时为 {manual,message,manual_at}
     last_verified_at TIMESTAMP,                 -- 最后一次验证时间（无论结果）
     last_valid_at    TIMESTAMP,                 -- 最后一次验证通过时间（v2 新增）
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 添加时间

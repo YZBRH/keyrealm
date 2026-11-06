@@ -506,6 +506,24 @@ export function createMockApi() {
       return clone(decorate(target))
     },
 
+    async set_credential_status(id, status, note = '') {
+      await delay(80)
+      requireUnlocked()
+      const labels = { valid: '有效', invalid: '失效', error: '错误', unknown: '未验证' }
+      if (!labels[status]) throw new Error(`不支持的状态：${status}`)
+      const target = state.credentials.find((item) => item.id === Number(id))
+      if (!target) throw new Error(`凭据 #${id} 不存在`)
+      target.status = status
+      target.status_detail = {
+        manual: true,
+        message: String(note || '').trim() || `手动标记为${labels[status]}`,
+        manual_at: iso(),
+      }
+      target.updated_at = iso()
+      emit('vault:credential_updated', clone(decorate(target)))
+      return { ok: true, credential: clone(decorate(target)) }
+    },
+
     async delete_credential(id) {
       await delay(140)
       requireUnlocked()

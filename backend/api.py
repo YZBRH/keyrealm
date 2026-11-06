@@ -650,6 +650,45 @@ def delete_credential(credential_id: int) -> dict:
     return {"ok": True}
 
 
+_MANUAL_STATUS_LABELS = {
+    "valid": "有效",
+    "invalid": "失效",
+    "error": "错误",
+    "unknown": "未验证",
+}
+
+
+def set_credential_status(credential_id: int, status: str, note: str = "") -> dict:
+    """手动覆盖凭据状态（下一次验证会按实际结果覆盖）。
+
+    ``status_detail`` 只写手动标记与说明，不保留旧的账号信息——避免状态已经手改后
+    还显示上一次验证的余额/账号，让用户误以为那是当前结论。
+    """
+    value = str(status or "").strip().lower()
+    if value not in _MANUAL_STATUS_LABELS:
+        return {"ok": False, "message": f"不支持的状态：{status}"}
+    try:
+        cid = int(credential_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "message": "无效的凭据 id"}
+    cred = db.get_credential(cid)
+    if not cred:
+        return {"ok": False, "message": "凭据不存在"}
+
+    text = str(note or "").strip()[:200]
+    detail = {
+        "manual": True,
+        "message": text or f"手动标记为{_MANUAL_STATUS_LABELS[value]}",
+        "manual_at": datetime.now(timezone.utc).isoformat(),
+    }
+    updated = db.update_credential(cid, status=value, status_detail=detail)
+    if not updated:
+        return {"ok": False, "message": "保存失败"}
+    push_event("vault:credential_updated", updated)
+    _log.info("凭据状态已手动设置：id=%s status=%s", cid, value)
+    return {"ok": True, "credential": updated}
+
+
 def delete_credentials(credential_ids: list) -> dict:
     """批量删除（单事务），事件只推一次。
 

@@ -190,6 +190,14 @@ export const useVaultStore = defineStore('vault', {
       return updated
     },
 
+    /** 手动覆盖状态；只影响本条凭据，不重拉分组/插件。 */
+    async setCredentialStatus(id, status, note = '') {
+      const result = await api.setCredentialStatus(id, status, note)
+      const updated = result && result.credential ? result.credential : result
+      if (updated && updated.id != null) this.upsertCredential(updated)
+      return result
+    },
+
     async deleteCredential(id) {
       const result = await api.deleteCredential(id)
       this.credentials = this.credentials.filter((item) => item.id !== id)
