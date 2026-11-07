@@ -1,9 +1,11 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { CopyDocument } from '@element-plus/icons-vue'
 
 import { useVaultStore } from '@/stores/vault'
 import { api } from '@/api'
+import { copyText } from '@/utils/clipboard'
 import { matchPresets, normalizeOptions, STATUS_OPTIONS, visibleFields } from '@/utils/format'
 import ProxySelect from '@/components/ProxySelect.vue'
 import TlsSelect from '@/components/TlsSelect.vue'
@@ -301,6 +303,28 @@ function close() {
   emit('update:modelValue', false)
 }
 
+/** 备注只是说明文字，不是凭据值，不给复制入口。 */
+const NON_COPYABLE_KEYS = ['notes']
+
+/** 该字段是否适合复制（文本类字段；下拉/数字/开关没有可复制文本）。 */
+function copyableField(field) {
+  if (NON_COPYABLE_KEYS.includes(field.key)) return false
+  return field.sensitive || ['text', 'url', 'textarea', 'password'].includes(field.type)
+}
+
+function hasFieldValue(field) {
+  const value = form.data[field.key]
+  return value !== null && value !== undefined && String(value).trim() !== ''
+}
+
+async function copyField(field) {
+  const value = String(form.data[field.key] ?? '')
+  if (!value.trim()) return
+  const ok = await copyText(value)
+  if (ok) ElMessage.success(`已复制${field.label || '凭据值'}`)
+  else ElMessage.error('复制失败，请手动选中复制')
+}
+
 /** 创建前重复检测：敏感字段值与既有凭据任一字段值相同即提示。 */
 async function confirmIfDuplicate(payload) {
   let matches = []
@@ -439,6 +463,16 @@ async function submit() {
             clearable
             class="full-width"
           >
+            <template #suffix>
+              <el-icon
+                v-if="copyableField(field)"
+                class="copy-suffix"
+                :class="{ 'is-empty': !hasFieldValue(field) }"
+                title="复制"
+                @mousedown.prevent
+                @click.stop="copyField(field)"
+              ><CopyDocument /></el-icon>
+            </template>
             <template #default="{ item }">
               <!-- URL 是主信息，说明文字弱化并放在下方；上下留白把相邻候选拉开 -->
               <div style="display: flex; flex-direction: column; gap: 2px; padding: 4px 0; line-height: 1.35">
@@ -453,17 +487,39 @@ async function submit() {
             v-model="form.data[field.key]"
             :placeholder="field.placeholder || ''"
             clearable
-          />
+          >
+            <template #suffix>
+              <el-icon
+                v-if="copyableField(field)"
+                class="copy-suffix"
+                :class="{ 'is-empty': !hasFieldValue(field) }"
+                title="复制"
+                @mousedown.prevent
+                @click.stop="copyField(field)"
+              ><CopyDocument /></el-icon>
+            </template>
+          </el-input>
 
           <!-- textarea 先于 sensitive 判断：私钥这类「敏感且多行」的字段必须能换行粘贴，
-               不能因为 sensitive=true 被渲染成单行密码框。 -->
-          <el-input
-            v-else-if="field.type === 'textarea'"
-            v-model="form.data[field.key]"
-            type="textarea"
-            :rows="4"
-            :placeholder="field.placeholder || ''"
-          />
+               不能因为 sensitive=true 被渲染成单行密码框。
+               textarea 不走 el-input 的 suffix（Element Plus 不给 textarea 渲染），
+               所以复制图标用绝对定位浮在右上角。 -->
+          <div v-else-if="field.type === 'textarea'" class="textarea-with-copy">
+            <el-input
+              v-model="form.data[field.key]"
+              type="textarea"
+              :rows="4"
+              :placeholder="field.placeholder || ''"
+            />
+            <el-icon
+              v-if="copyableField(field)"
+              class="copy-suffix textarea-copy"
+              :class="{ 'is-empty': !hasFieldValue(field) }"
+              title="复制"
+              @mousedown.prevent
+              @click.stop="copyField(field)"
+            ><CopyDocument /></el-icon>
+          </div>
 
           <el-input
             v-else-if="field.type === 'password' || field.sensitive"
@@ -471,7 +527,18 @@ async function submit() {
             type="password"
             show-password
             :placeholder="field.placeholder || '请输入'"
-          />
+          >
+            <template #suffix>
+              <el-icon
+                v-if="copyableField(field)"
+                class="copy-suffix"
+                :class="{ 'is-empty': !hasFieldValue(field) }"
+                title="复制"
+                @mousedown.prevent
+                @click.stop="copyField(field)"
+              ><CopyDocument /></el-icon>
+            </template>
+          </el-input>
 
           <el-select
             v-else-if="field.type === 'select'"
@@ -562,7 +629,6 @@ async function submit() {
             show-word-limit
             placeholder="可选，例如：已人工确认失效"
           />
-          <div class="status-hint">手动状态会在下一次验证后更新；保存后重新验证默认不勾选。</div>
         </el-form-item>
       </template>
 
@@ -615,11 +681,41 @@ async function submit() {
   width: 180px;
 }
 
-.status-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.6;
-  margin-top: 4px;
+/* 复制图标融进输入框右侧，和密码框的「小眼睛」同一位置、同一视觉分量。
+   suffix 插槽的 DOM 顺序在 password 图标之前，用 order 把它挪到最右（眼睛在左、复制在右）。 */
+.copy-suffix {
+  order: 1;
+  font-size: 14px;
+  color: var(--el-text-color-placeholder);
+  cursor: pointer;
+  margin-left: 8px;
+  transition: color 0.15s;
+}
+
+.copy-suffix:not(.is-empty):hover {
+  color: var(--el-color-primary);
+}
+
+.copy-suffix.is-empty {
+  color: var(--el-text-color-disabled);
+  cursor: not-allowed;
+}
+
+/* textarea 不渲染 suffix，复制图标浮在右上角；右侧留出等宽内边距避免盖住正文 */
+.textarea-with-copy {
+  position: relative;
+  width: 100%;
+}
+
+.textarea-with-copy :deep(.el-textarea__inner) {
+  padding-right: 30px;
+}
+
+.textarea-copy {
+  position: absolute;
+  top: 7px;
+  right: 9px;
+  margin-left: 0;
 }
 
 .credential-form :deep(.el-form-item) {

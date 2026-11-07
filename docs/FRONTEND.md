@@ -630,6 +630,10 @@ App.vue
 `checkbox` → `el-switch`、`select` → `el-select`、`number` → `el-input-number`、
 `model` → **可下拉可自由输入**的 `el-select`（`filterable` + `allow-create`，候选来自
 `list_draft_models`，取不到也照样能手打模型名）、其余 → `el-input`（`password` 带 `show-password`）。
+文本 / URL / 多行 / 敏感字段在输入框**内部右侧**带一个仅图标复制入口（`el-input` 用
+`#suffix` 插槽，与密码框的小眼睛并列，**眼睛在左、复制在右**；`textarea` 不支持 suffix，
+图标绝对定位在右上角）。点击把当前值写入剪贴板（走 `utils/clipboard.copyText`，兼容
+pywebview），空值置灰。**`notes`（备注）不是凭据值，不给复制入口。**
 
 > `select` 的 `options` 由 `utils/format.normalizeOptions` 归一，**两种写法都支持**：
 > 纯字符串数组（值与显示都用它）、或 `{value,label}` 对象数组（显示 label、存 value）。
