@@ -256,6 +256,7 @@ function blankActionDialog() {
     actions: [],       // 该凭据声明的全部操作（行内动作要按 id 找到目标操作）
     description: '',   // 操作的说明（菜单里与对话框顶部都会展示）
     row: null,         // 由行内动作打开时，记住那一行（save_to 的文件名模板要用）
+    returnDialog: null, // 从列表行的表单动作进来时，保存列表对话框快照，供「返回上一级」还原
     // ── chat ──
     model: '',
     // 该操作是否声明了 model 字段 → 决定「模型」那一行要不要**常驻**
@@ -550,6 +551,7 @@ function openAction(cred, action, seed = {}, extra = {}) {
     description: action.description || '',
     actions: extra.actions || [action],
     row: extra.row || null,
+    returnDialog: extra.returnDialog || null,
     model: action.model || '',
     modelDeclared: 'model' in action,
     fields,
@@ -578,6 +580,8 @@ function listFrame(dialog) {
     total: dialog.listTotal,
     hasMore: dialog.listHasMore,
     params: dialog.listParams,
+    // 表头上方的查询表单（如「目录」）也要随帧还原，否则返回上一级后输入框还停在下钻的目录
+    values: { ...dialog.values },
   }
 }
 
@@ -591,6 +595,7 @@ function applyFrame(dialog, frame) {
   dialog.listTotal = frame.total
   dialog.listHasMore = frame.hasMore
   dialog.listParams = frame.params
+  if (frame.values) dialog.values = { ...frame.values }
   dialog.listError = ''
 }
 
@@ -753,11 +758,17 @@ function runRowAction(rowAction, row) {
       target, params, [], rowCrumbLabel(row))
     return
   }
+  // 从列表行打开的「非列表」操作（下载表单 / 对话等）：把当前列表对话框整个留个快照，
+  // 表单里点「返回上一级」时原样还原，不重新请求列表。
+  const returnDialog = actionDialog.value.kind === 'list' && actionDialog.value.visible
+    ? actionDialog.value
+    : null
   if (kind === 'form') {
     // 打开表单并用行参数预填；确认留到提交时（预填后就弹确认等于白问）
     openAction({ id: actionDialog.value.credentialId, name: actionDialog.value.credentialName }, target, params, {
       actions: actionDialog.value.actions,
       row,
+      returnDialog,
     })
     return
   }
@@ -765,7 +776,15 @@ function runRowAction(rowAction, row) {
   openAction({ id: actionDialog.value.credentialId, name: actionDialog.value.credentialName }, target, params, {
     actions: actionDialog.value.actions,
     row,
+    returnDialog,
   })
+}
+
+/** 从列表行进入的表单 / 对话：还原打开前的列表对话框（含下钻栈与滚动外的全部状态）。 */
+function returnToPreviousList() {
+  const prev = actionDialog.value.returnDialog
+  if (!prev || actionDialog.value.busy) return
+  actionDialog.value = prev
 }
 
 // ── 列表行的右键菜单 / 双击 ────────────────────────────────
@@ -2684,6 +2703,15 @@ onMounted(async () => {
       :width="actionDialogWidth"
       :close-on-click-modal="false"
     >
+      <div v-if="actionDialog.returnDialog" class="action-back">
+        <el-button
+          text
+          size="small"
+          :icon="ArrowLeft"
+          :disabled="actionDialog.busy"
+          @click="returnToPreviousList"
+        >返回上一级</el-button>
+      </div>
       <div v-if="actionDialog.description" class="action-desc">{{ actionDialog.description }}</div>
 
       <template v-if="actionDialog.kind === 'console'">
@@ -3557,6 +3585,10 @@ onMounted(async () => {
 
 .list-fields {
   margin-bottom: 4px;
+}
+
+.action-back {
+  margin: -6px 0 4px -10px;   /* 文字按钮的左内边距用负外边距抵消，和正文左边缘对齐 */
 }
 
 .action-desc {
