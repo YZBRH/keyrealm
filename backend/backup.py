@@ -30,6 +30,7 @@ from . import data_upgrades
 from . import database as db
 from . import plugin_manager
 from . import preset_store
+from . import proxy_store
 from .crypto import decrypt, decrypt_dict, encrypt, encrypt_dict, mask_secret
 from .logger import LOG_DIR
 
@@ -335,7 +336,8 @@ def _schedule_doc(s: dict) -> dict:
 
 
 def import_backup(key: bytes, doc: dict, dedupe: bool = True, source: str = "",
-                  decrypt_key: Optional[bytes] = None) -> dict:
+                  decrypt_key: Optional[bytes] = None,
+                  proxy_override: Optional[dict] = None) -> dict:
     """把备份文档**填充式**导入当前库，返回统计与逐条失败原因。
 
     ``source`` 只用于日志抬头（记一下这份备份是从哪个文件来的），不影响导入逻辑。
@@ -344,6 +346,10 @@ def import_backup(key: bytes, doc: dict, dedupe: bool = True, source: str = "",
     文档来自**别的保险库**（v2 起带 ``vault.salt``）时，调用方先用「原主密码 + 文档里的 salt」
     派生出源 key 传进来——这样密文解得开、再用当前库的 key 重新加密写回，跨库还原才成立。
     加密备份解不开时直接抛 ``ValueError`` 中止整个导入（说明拿错了密码/文件，逐条报失败没意义）。
+
+    ``proxy_override``：给**这次导入的每一条凭据**统一指定出口（``_proxy_mode`` /
+    ``_proxy_id`` 两个保留键；空 dict = 清掉条目自己的代理设置、回到跟随默认）。
+    ``None`` = 保留备份条目各自携带的代理设置。
     """
     if not isinstance(doc, dict) or doc.get("format") != FORMAT:
         raise ValueError("不是有效的 Keyrealm 备份文件")
@@ -459,6 +465,12 @@ def import_backup(key: bytes, doc: dict, dedupe: bool = True, source: str = "",
         # 老格式 → 当前格式（一次性数据升级，规则见 backend/data_upgrades.py）：
         # 先升级再校验，于是导入进来的旧备份直接就是当前格式，插件无需做双格式兼容。
         data = data_upgrades.upgrade_credential(ct, data or {})
+        if proxy_override is not None:
+            # 导入方可统一指定出口：先清掉条目自带的代理键，再写入覆盖值（空 dict = 清空）
+            data = dict(data)
+            data.pop(proxy_store.KEY_MODE, None)
+            data.pop(proxy_store.KEY_ID, None)
+            data.update(proxy_override)
         effective, errors = _prepare_entry(schema, data)
         rec["data"] = effective
         if errors:

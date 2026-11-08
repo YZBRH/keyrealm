@@ -22,10 +22,16 @@
 - **火山引擎 STS 临时凭据**：凭据新增可选 `Session Token` 字段。STS 临时凭据
   （AccessKeyId 以 `AKTP` 开头）需一并填写，签名时附带 `X-Security-Token`；长期 AK/SK
   留空即可。令牌过期会判为失效并给出原因。
+- **MCP 凭据出口设置**：`vault_create_credential` 新增可选 `proxy_mode` / `proxy_id`
+  （跟随默认 / 直连 / 指定代理）；`vault_import_credentials` 也可给整批导入统一指定出口。
+  创建、修改与导入都会校验代理保留键：模式非法、`proxy` 缺 id、指向不存在的代理一律拒绝，
+  不再静默降级成直连。
 
 ### 变更
 
 - 移除编辑凭据表单中关于手动状态与重新验证默认值的提示文字。
+- **MCP「导入备份」更名为「导入凭据」**：工具名改为 `vault_import_credentials`，
+  显示名与说明同步为「导入凭据」；旧的工具权限记录在启动时自动清理，客户端需重新连接一次。
 
 ## [1.5.3] - 2026-11-06
 

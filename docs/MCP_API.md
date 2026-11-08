@@ -241,7 +241,9 @@ claude mcp add keyrealm \
     "notes": "测试环境"
   },
   "group_id": 1,          // 可选
-  "auto_verify": true     // 可选，默认 true
+  "auto_verify": true,    // 可选，默认 true
+  "proxy_mode": "proxy",  // 可选：global / direct / proxy（留空 = 跟随上层/全局默认）
+  "proxy_id": "3f2a...",  // 仅 proxy 模式需要，取自 vault_list_proxies（代理链 id 也可）
 }
 
 // 出参：credential 为新建的凭据记录（字段同 vault_get_credential）
@@ -249,6 +251,11 @@ claude mcp add keyrealm \
 ```
 
 > 参数校验失败或插件不存在时，直接返回该错误对象（形如 `{"error": "..."}`），不包 `ok`。
+>
+> **代理参数**：`proxy_mode` / `proxy_id` 留空时跟随该插件 / 类别 / 全局默认；显式传空串
+> 表示清掉这条凭据自己的代理设置。只给 `proxy_id` 不给 `proxy_mode` 时按 `proxy` 处理；
+> 模式非法、`proxy` 模式缺 id、或 id 在当前库不存在，后端一律拒绝并给出原因。
+> 也可以把 `_proxy_mode` / `_proxy_id` 直接放进 `data`（与界面一致），显式参数优先。
 
 ---
 
@@ -544,23 +551,29 @@ claude mcp add keyrealm \
 | `path` | str | 省略 | 写入该文件；**省略则把文档放在返回值的 `document` 字段里** |
 
 ```json
-// 省略 path：文档直接返回，便于转手交给 vault_import_backup 或由 Agent 自行保存
+// 省略 path：文档直接返回，便于转手交给 vault_import_credentials 或由 Agent 自行保存
 { "ok": true, "count": 12, "scope": "all", "encrypted": true, "document": { "format": "credential-vault-backup", "...": "..." } }
 
 // 给了 path：落盘并回显路径
 { "ok": true, "count": 12, "scope": "all", "encrypted": true, "path": "D:/bak/vault-20261005.json" }
 ```
 
-#### `vault_import_backup`
+#### `vault_import_credentials`（导入凭据）
 **默认权限：❌ 关闭（高危）**
 
-把备份并入当前库（合并语义）。`document` 与 `path` **二选一**。
+把备份文档并入当前库（合并语义），即「导入凭据」。`document` 与 `path` **二选一**。
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `document` | object | — | 备份 JSON 对象（可直接用 `vault_export_backup` 的返回值） |
 | `path` | str | — | 备份文件路径（服务端所在机器的路径） |
 | `dedupe` | bool | `true` | 「同类型 + 敏感值相同」的凭据跳过 |
+| `proxy_mode` | str | 省略 | 给**本次导入的每条凭据**统一指定出口：`global` / `direct` / `proxy`；省略 = 保留条目自带的代理设置 |
+| `proxy_id` | str | 省略 | 仅 `proxy` 模式需要，取 `vault_list_proxies` 的 id；只给 id 不给 mode 时按 `proxy` 处理 |
+
+显式传空串（`proxy_mode=""` 且 `proxy_id=""`）= 清掉条目自带的代理设置，回到跟随默认。
+覆盖值会先整体校验：模式非法 / `proxy` 缺 id / id 在当前库不存在时整体拒绝（`ok=false`），
+不会导入一半。
 
 ```json
 // 出参
@@ -568,6 +581,10 @@ claude mcp add keyrealm \
 ```
 
 加密备份需与当前主密码一致，否则返回 `{"ok": false, "message": "备份是加密的，且与当前主密码不匹配，无法导入"}`。
+
+> **条目里的代理设置同样会被校验**：`_proxy_mode` 只接受 `global` / `direct` / `proxy`；
+> `proxy` 模式必须带当前库中真实存在的 `_proxy_id`（代理链 id 也算），否则该条判失败并
+> 在 `failed[].reason` 里给出「指定的代理不存在或已删除」。不设置 = 跟随插件 / 类别 / 全局默认。
 
 ---
 
@@ -590,10 +607,10 @@ claude mcp add keyrealm \
 |----------|------|------|
 | 只读 | `vault_list_credentials`, `vault_verify_credential`, `vault_list_groups`, `vault_list_plugins`, `vault_list_proxies` | ✅ 开启 |
 | 写操作 | `vault_get_credential`, `vault_create_*`, `vault_update_*`, `vault_delete_*`, `vault_batch_verify`, `vault_set_global_proxy`, `vault_test_proxy` | ❌ 关闭 |
-| 高危 | `vault_get_secret`, `vault_export_backup`, `vault_import_backup` | ❌ 关闭 |
+| 高危 | `vault_get_secret`, `vault_export_backup`, `vault_import_credentials` | ❌ 关闭 |
 
 > 界面上的「⚠️ 二次确认」名单（前端 `SENSITIVE_TOOLS`）比上表的高危行更宽：除
-> `vault_get_secret` / `vault_export_backup` / `vault_import_backup` 外，还包括三个改动
+> `vault_get_secret` / `vault_export_backup` / `vault_import_credentials` 外，还包括三个改动
 > 凭据的工具，以及五个代理工具（`vault_create/update/delete_proxy`、`vault_set_global_proxy`、
 > `vault_test_proxy`）——**代理决定「凭据的验证流量发到哪」**，改动即等于改变凭据出口。
 

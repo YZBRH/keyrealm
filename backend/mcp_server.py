@@ -22,6 +22,7 @@ from . import backup
 from . import database as db
 from . import mcp_audit
 from . import plugin_manager
+from . import proxy_store
 from .crypto import decrypt_dict, hash_token
 
 # 由 api.py 注入
@@ -85,6 +86,31 @@ def _perm_denied(tool_name: str) -> Optional[dict]:
 
 # ── MCP 工具定义 ──────────────────────────────────────────
 
+def _with_proxy_args(data, proxy_mode, proxy_id) -> dict:
+    """把可选的代理参数并进凭据 data（保留键），供创建接口统一校验/落库。
+
+    - 两个参数都没传（None）→ 原样返回 data，`data` 里的保留键仍然有效；
+    - 显式传了（哪怕是空串）→ 以参数为准，避免「想清空代理却清不掉」；
+    - 只给 `proxy_id` → 视为 `proxy` 模式；
+    - 给的是 `global` / `direct` → 顺手丢掉残留的 `_proxy_id`（否则会留下无意义的引用）。
+    """
+    payload = dict(data) if isinstance(data, dict) else {}
+    if proxy_mode is None and proxy_id is None:
+        return payload
+    mode = str(proxy_mode or "").strip().lower()
+    pid = str(proxy_id or "").strip()
+    if mode == proxy_store.MODE_PROXY or (not mode and pid):
+        payload[proxy_store.KEY_MODE] = proxy_store.MODE_PROXY
+        payload[proxy_store.KEY_ID] = pid
+    elif mode:
+        payload[proxy_store.KEY_MODE] = mode
+        payload.pop(proxy_store.KEY_ID, None)
+    else:
+        payload.pop(proxy_store.KEY_MODE, None)
+        payload.pop(proxy_store.KEY_ID, None)
+    return payload
+
+
 def _build_mcp_app() -> MCPServer:
     from mcp.server.mcpserver import MCPServer  # 重依赖下沉，见文件头注释
 
@@ -93,9 +119,15 @@ def _build_mcp_app() -> MCPServer:
         instructions="Keyrealm MCP Server — 管理、验证 LLM API Key 及其他凭据",
     )
 
-    def _tool(fn):
-        """注册工具并记录审计；审计失败不影响工具本身。"""
-        return mcp.tool()(mcp_audit.audited(fn))
+    def _tool(fn=None, *, title=None):
+        """注册工具并记录审计；审计失败不影响工具本身。
+
+        可传 ``title`` 作为客户端里显示的名字（例如「导入凭据」），工具名仍是函数名，
+        不改 ``vault_*`` 标识（改名会破坏已有客户端配置与权限记录）。
+        """
+        def register(func):
+            return mcp.tool(title=title)(mcp_audit.audited(func))
+        return register(fn) if fn is not None else register
 
     # ── vault_list_credentials ────────────────────────────
     @_tool
@@ -156,15 +188,28 @@ def _build_mcp_app() -> MCPServer:
         data: dict,
         group_id: Optional[int] = None,
         auto_verify: bool = True,
+        proxy_mode: Optional[str] = None,
+        proxy_id: Optional[str] = None,
     ) -> dict:
-        """创建凭据（与界面共用同一份实现，因此同样会继承类别/插件默认设置）"""
+        """创建凭据（与界面共用同一份实现，因此同样会继承类别/插件默认设置）。
+
+        `proxy_mode` / `proxy_id` 为**可选**的出口设置，留空 = 跟随该插件 / 类别 / 全局默认：
+
+        - `proxy_mode`：`global`（跟随默认）/ `direct`（直连）/ `proxy`（指定代理）；
+        - `proxy_id`：仅 `proxy` 模式需要，取 `vault_list_proxies` 返回的 id（代理链 id 也可）；
+          只给 `proxy_id` 不给 `proxy_mode` 时按 `proxy` 处理；
+        - 指定的代理不存在、模式非法、或 `proxy` 模式没给 id，后端会拒绝并给出原因。
+
+        也可以把 `_proxy_mode` / `_proxy_id` 直接放进 `data`（与界面一致）；显式参数优先。
+        """
         denied = _perm_denied("vault_create_credential")
         if denied:
             return denied
         # 不要在这里复制一份创建逻辑——否则会出现「表单创建继承默认、MCP 创建不继承」
         # 这类不一致（两份实现改一处漏一处）。
         from . import api as _api
-        result = _api.create_credential(name, credential_type, data, group_id, auto_verify)
+        payload = _with_proxy_args(data, proxy_mode, proxy_id)
+        result = _api.create_credential(name, credential_type, payload, group_id, auto_verify)
         if isinstance(result, dict) and result.get("error"):
             return result
         return {"ok": True, "credential": result}
@@ -335,7 +380,7 @@ def _build_mcp_app() -> MCPServer:
           **False 会把密钥明文写出**，仅在明确需要跨主密码迁移时使用
         - `credential_ids`：只导出这些凭据 id（省略 = 全部）
         - `path`：写入该文件；**省略则把备份文档放在返回值的 `document` 字段里**
-          （便于直接交给 `vault_import_backup` 或由 Agent 自行保存）
+          （便于直接交给 `vault_import_credentials` 或由 Agent 自行保存）
         """
         denied = _perm_denied("vault_export_backup")
         if denied:
@@ -363,17 +408,25 @@ def _build_mcp_app() -> MCPServer:
             result["document"] = doc
         return result
 
-    # ── vault_import_backup ───────────────────────────────
-    @_tool
-    def vault_import_backup(
+    # ── vault_import_credentials ───────────────────────────────
+    @_tool(title="导入凭据")
+    def vault_import_credentials(
         document: Optional[dict] = None,
         path: Optional[str] = None,
         dedupe: bool = True,
+        proxy_mode: Optional[str] = None,
+        proxy_id: Optional[str] = None,
     ) -> dict:
-        """导入备份（合并入库，高危：会新增凭据、可能覆盖偏好设置）。
+        """导入凭据（从备份文档 / 备份文件合并入库，高危：会新增凭据、可能覆盖偏好设置）。
 
         `document`（备份 JSON 对象）与 `path`（备份文件路径）**二选一**。
+        逐条按当前插件字段表填充；条目里的 `_proxy_mode` / `_proxy_id`（保留键）同样会
+        校验——指定代理时必须指向当前库中真实存在的代理，否则该条判失败并给出原因。
         `dedupe=True` 时「同类型 + 敏感值相同」的凭据会跳过。
+
+        `proxy_mode` / `proxy_id` 可选：给**本次导入的每条凭据**统一指定出口
+        （`global` / `direct` / `proxy`；`proxy` 需给 `vault_list_proxies` 的 id）。
+        不传 = 保留备份条目自带的代理设置；显式传空串 = 清掉条目自带设置、回到跟随默认。
 
         导入是**填充式**的：以当前插件的字段表为蓝本。插件未安装 / 已禁用、备份里含当前插件
         不认识的字段、必填字段在备份里没有着落（且插件无默认值）的条目，都会**整条判失败**
@@ -383,7 +436,7 @@ def _build_mcp_app() -> MCPServer:
         `*_failed.log`（**含明文**，供人工比对）。路径见返回值的 `log_file`/`failed_log_file`。
         加密备份需与当前主密码一致，否则报错。
         """
-        denied = _perm_denied("vault_import_backup")
+        denied = _perm_denied("vault_import_credentials")
         if denied:
             return denied
         from . import api as _api
@@ -399,7 +452,12 @@ def _build_mcp_app() -> MCPServer:
         if not isinstance(doc, dict):
             return {"ok": False, "message": "备份内容必须是 JSON 对象"}
 
-        result = _api.apply_backup_doc(doc, dedupe=bool(dedupe), source=path or "document")
+        override = None
+        if proxy_mode is not None or proxy_id is not None:
+            override = _with_proxy_args({}, proxy_mode, proxy_id)
+        result = _api.apply_backup_doc(doc, dedupe=bool(dedupe),
+                                       source=path or "document",
+                                       proxy_override=override)
         if result.get("ok"):
             result["source"] = path or "document"
         return result

@@ -824,6 +824,10 @@ def validate_field_values(credential_type: str, data: dict, *, check_unknown: bo
         elif field_type in ("text", "url", "password", "textarea", "model"):
             if raw is not None and isinstance(raw, (dict, list)):
                 errors.append(f"{label}的值类型不合法")
+
+    # 保留键不是 manifest 字段，但它们同样会落进凭据数据：代理引用必须指向真实存在的代理，
+    # 否则解析时会静默降级成直连。创建 / 修改 / MCP / 备份导入都汇到这里。
+    errors.extend(proxy_store.validate_credential_proxy(data))
     return errors
 
 

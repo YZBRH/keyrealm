@@ -2661,12 +2661,17 @@ def _resolve_decrypt_key(doc: dict, key: bytes, orig_password: Optional[str]) ->
 
 
 def apply_backup_doc(doc: dict, dedupe: bool = True, source: str = "",
-                     orig_password: Optional[str] = None) -> dict:
+                     orig_password: Optional[str] = None,
+                     proxy_override: Optional[dict] = None) -> dict:
     """把备份文档并入当前库（不弹对话框）——GUI 导入与 MCP 工具共用。
 
     ``source`` 只写进导入日志抬头，标明这份备份的来源文件。
     ``orig_password``：文档来自**别的保险库**（带 ``vault.salt``）时，用它来解开密文；
     缺省/不对时返回 ``{"ok": False, "need_password": True}``，由界面补问后重试。
+
+    ``proxy_override``：给本次导入的每条凭据统一指定出口（保留键 ``_proxy_mode`` /
+    ``_proxy_id``；空 dict = 清空、回到跟随默认；``None`` = 保留条目自带设置）。
+    值不合法（模式错误 / 指定代理不存在）时整体拒绝，不会导一半。
     """
     key = _get_key()
     if key is None:
@@ -2677,12 +2682,17 @@ def apply_backup_doc(doc: dict, dedupe: bool = True, source: str = "",
     if not sc.get("ok"):
         return {"ok": False,
                 "message": f"数据库结构升级失败，已中止导入：{sc.get('message')}"}
+    if proxy_override is not None:
+        errors = proxy_store.validate_credential_proxy(proxy_override)
+        if errors:
+            return {"ok": False, "message": "代理设置不合法：" + "；".join(errors)}
     decrypt_key, need_msg = _resolve_decrypt_key(doc, key, orig_password)
     if decrypt_key is None:
         return {"ok": False, "need_password": True, "message": need_msg}
     try:
         result = backup.import_backup(key, doc, dedupe=dedupe, source=source,
-                                      decrypt_key=decrypt_key)
+                                      decrypt_key=decrypt_key,
+                                      proxy_override=proxy_override)
     except ValueError as e:
         return {"ok": False, "message": str(e)}
 

@@ -29,8 +29,12 @@ from . import vault_proxy_ctx as ctx
 KEY_MODE = "_proxy_mode"
 KEY_ID = "_proxy_id"
 
+MODE_GLOBAL = "global"
 MODE_PROXY = "proxy"
 MODE_DIRECT = "direct"
+
+#: `_proxy_mode` 的全部合法取值（空 = 未指定，等同跟随上层的默认）
+PROXY_MODES = (MODE_GLOBAL, MODE_DIRECT, MODE_PROXY)
 
 SETTING_GLOBAL_ID = "global_proxy_id"
 # 旧版单值：保留作为「没启用多代理」时的兜底，也是进程环境变量 VAULT_PROXY 的来源
@@ -308,6 +312,36 @@ def effective_url(resolved: Union[object, str]) -> Optional[str]:
     if resolved is not ctx.UNSET:
         return str(resolved) or None
     return env_url() or global_url()
+
+
+def validate_credential_proxy(data: dict) -> list[str]:
+    """校验凭据 ``data`` 里的代理保留键（所有写入路径共用：创建 / 修改 / MCP / 备份导入）。
+
+    - 两个键都没给（或值为空）→ 跟随上层 / 全局默认，合法；
+    - ``_proxy_mode`` 只接受 ``global`` / ``direct`` / ``proxy``；
+    - ``proxy`` 模式必须带非空、且**当前库中确实存在**的 ``_proxy_id``（代理链 id 也算）；
+    - ``global`` / ``direct`` 模式下 ``_proxy_id`` 被忽略（历史数据可能残留，不报错）。
+
+    为什么必须在写入时校验：悬空引用会被 ``_resolve_spec`` **静默降级成直连**——用户以为在走
+    代理，实际是直连，且没有任何报错（见 ``missing_proxy_ref`` 的说明）。MCP / 备份导入这类
+    非表单路径没人替我们点选下拉，只能在这里兜住。
+    """
+    if not isinstance(data, dict):
+        return []
+    raw_mode = data.get(KEY_MODE)
+    mode = str(raw_mode or "").strip().lower()
+    if not mode:
+        return []
+    if mode not in PROXY_MODES:
+        return [f"代理模式不合法：{raw_mode}（可选：{' / '.join(PROXY_MODES)}）"]
+    if mode != MODE_PROXY:
+        return []
+    pid = str(data.get(KEY_ID) or "").strip()
+    if not pid:
+        return ["选择「指定代理」时必须提供 _proxy_id"]
+    if get_proxy_url(pid) is None:
+        return [f"指定的代理不存在或已删除：{pid}"]
+    return []
 
 
 def missing_proxy_ref(data: dict, credential_type: str = ""):

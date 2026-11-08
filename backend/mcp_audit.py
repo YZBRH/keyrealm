@@ -37,7 +37,7 @@ _OPERATIONS = {
     "vault_list_plugins": "查询插件列表",
     "vault_get_secret": "读取敏感字段",
     "vault_export_backup": "导出备份",
-    "vault_import_backup": "导入备份",
+    "vault_import_credentials": "导入凭据",
     "vault_list_proxies": "查询代理列表",
     "vault_create_proxy": "新增代理",
     "vault_update_proxy": "修改代理",

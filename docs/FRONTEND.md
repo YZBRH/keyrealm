@@ -883,7 +883,7 @@ store 随后重拉分组 / 插件。**不走「前端 for 循环调单条删除�
 | `vault_export_backup` | 导出备份 | ⬜ ⚠️ |
 | `vault_get_credential` | 获取凭据详情 | ⬜ |
 | `vault_get_secret` | 获取明文密钥 | ⬜ ⚠️ |
-| `vault_import_backup` | 导入备份 | ⬜ ⚠️ |
+| `vault_import_credentials` | 导入凭据 | ⬜ ⚠️ |
 | `vault_list_credentials` | 列出凭据 | ✅ |
 | `vault_list_groups` | 列出分组 | ✅ |
 | `vault_list_plugins` | 列出插件 | ✅ |

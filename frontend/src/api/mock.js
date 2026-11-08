@@ -93,7 +93,7 @@ function createState() {
     { tool_name: 'vault_export_backup', enabled: false, description: '导出备份' },
     { tool_name: 'vault_get_credential', enabled: false, description: '获取凭据详情' },
     { tool_name: 'vault_get_secret', enabled: false, description: '获取解密后的敏感字段（高危）' },
-    { tool_name: 'vault_import_backup', enabled: false, description: '导入备份' },
+    { tool_name: 'vault_import_credentials', enabled: false, description: '导入凭据' },
     { tool_name: 'vault_list_credentials', enabled: true, description: '列出凭据' },
     { tool_name: 'vault_list_groups', enabled: true, description: '列出分组' },
     { tool_name: 'vault_list_plugins', enabled: true, description: '列出插件' },

@@ -258,7 +258,7 @@ def _seed_mcp_permissions(conn: sqlite3.Connection):
         ("vault_list_plugins",      1, "列出插件"),
         ("vault_get_secret",        0, "获取解密后的敏感字段（高危）"),
         ("vault_export_backup",     0, "导出备份（触及整库数据，高危；encrypted=false 会写出明文密钥）"),
-        ("vault_import_backup",     0, "导入备份（合并入库，高危：会新增凭据、可能覆盖偏好设置）"),
+        ("vault_import_credentials",     0, "导入凭据（从备份文档合并入库，高危：会新增凭据、可能覆盖偏好设置）"),
         # 验证代理管理。只读的列出默认开；其余（改动代理表）默认关。
         # vault_test_proxy 会真的朝外发一次请求、把本机出口暴露给被代理的对端，也让用户显式开。
         ("vault_list_proxies",      1, "列出验证代理与当前全局默认"),

@@ -259,7 +259,7 @@ CREATE TABLE mcp_permissions (
 | `vault_list_plugins` | ✅ 开 | 列出插件 |
 | `vault_get_secret` | ❌ 关 | 获取解密后的敏感字段（高危） |
 | `vault_export_backup` | ❌ 关 | 导出备份（高危；`encrypted=false` 会把密钥明文写出） |
-| `vault_import_backup` | ❌ 关 | 导入备份（高危：会合并凭据、可能覆盖偏好设置） |
+| `vault_import_credentials` | ❌ 关 | 导入凭据（高危：从备份文档合并入库、可能覆盖偏好设置） |
 | `vault_list_proxies` | ✅ 开 | 列出验证代理与当前全局默认 |
 | `vault_create_proxy` | ❌ 关 | 新增验证代理 |
 | `vault_update_proxy` | ❌ 关 | 修改验证代理 |

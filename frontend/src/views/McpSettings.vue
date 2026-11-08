@@ -83,7 +83,7 @@ const SENSITIVE_TOOLS = new Set([
   'vault_update_credential',
   'vault_delete_credential',
   'vault_export_backup',
-  'vault_import_backup',
+  'vault_import_credentials',
   'vault_create_proxy',
   'vault_update_proxy',
   'vault_delete_proxy',
