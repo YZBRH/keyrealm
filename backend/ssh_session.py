@@ -89,6 +89,73 @@ def _clean(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+class _SftpName(str):
+    """SFTP 文本字段（文件名 / realpath / 提示）的宽松解码结果。
+
+    显示按 ``str``，``raw`` 保留服务器给的原始字节。中文环境里不少服务器不按 SFTP
+    规范用 UTF-8 编码文件名（常见 GB18030），而 paramiko 的 ``Message.get_text()``
+    固定按 UTF-8 解码 —— 碰到这种名字会直接抛 UnicodeDecodeError，**整个目录都列不出来**。
+    解码成功后把原始字节挂回对象，读写 / 删除时按原字节回传，才能真正操作到那个文件。
+    """
+
+    __slots__ = ("raw", "encoding")
+
+    def __new__(cls, text: str, raw: bytes, encoding: str = ""):
+        obj = super().__new__(cls, text)
+        obj.raw = raw
+        obj.encoding = encoding
+        return obj
+
+
+def _install_lenient_sftp_names() -> None:
+    """给 paramiko 的 ``Message.get_text`` 打一次宽松解码补丁（幂等）。
+
+    UTF-8 能解就照旧返回普通 ``str``；解不了再试 GB18030 / Latin-1，并返回带原始字节的
+    ``_SftpName``。补丁只在原来会**抛异常**的分支上改变行为，因此不会影响正常服务器。
+    """
+    from paramiko.message import Message  # noqa: PLC0415 - paramiko 按需导入
+
+    if getattr(Message.get_text, "_keyrealm_lenient", False):
+        return
+
+    def get_text(self):
+        raw = self.get_string()
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        for encoding in ("gb18030", "latin-1"):
+            try:
+                return _SftpName(raw.decode(encoding), raw, encoding)
+            except UnicodeDecodeError:
+                continue
+        return _SftpName(raw.decode("utf-8", "replace"), raw, "utf-8")
+
+    get_text._keyrealm_lenient = True  # type: ignore[attr-defined]
+    Message.get_text = get_text
+
+
+def _raw_bytes(value) -> bytes:
+    """取一个 SFTP 名字 / 路径的原始字节（``_SftpName`` 用 ``raw``，其余按 UTF-8）。"""
+    raw = getattr(value, "raw", None)
+    if isinstance(raw, bytes):
+        return raw
+    if isinstance(value, bytes):
+        return value
+    return str(value).encode("utf-8")
+
+
+def _wire_path(display: str, raw: bytes):
+    """回写给 paramiko 的路径：UTF-8 名字直接给 ``str``（与原行为一致），
+    只有「显示串重新编码后与原始字节不同」的（GBK 等）才给 ``bytes``，避免被二次转码。"""
+    try:
+        if raw == display.encode("utf-8"):
+            return display
+    except UnicodeEncodeError:
+        return raw
+    return raw
+
+
 def _entry_name(name: str) -> str:
     """校验「新建 / 重命名」用的单层名称：不允许路径分隔符与占位名。"""
     text = str(name or "").strip()
@@ -235,6 +302,10 @@ class _Session:
         self.sftp = None
         self.sftp_lock = threading.Lock()
         self.closed = False
+        # 非 UTF-8 文件名（GBK 等）的「显示路径 → 原始字节」映射；只在确实需要回传原字节时记录。
+        self._raw_paths: dict[str, bytes] = {}
+        # 目录名当初使用的编码（gb18030 / latin-1），新建子条目时沿用
+        self._path_encodings: dict[str, str] = {}
 
     # ── 底层读写 ──────────────────────────────────────
 
@@ -458,6 +529,7 @@ class _Session:
             raise SshError("会话已断开，请重新连接")
         if self.sftp is not None:
             return self.sftp
+        _install_lenient_sftp_names()
         try:
             sftp = self.client.open_sftp()
             channel = sftp.get_channel()
@@ -468,14 +540,84 @@ class _Session:
         self.sftp = sftp
         return sftp
 
+    # ── 非 UTF-8 文件名的原始字节映射 ─────────────────
+    # 只有服务器用了非 UTF-8 编码（中文环境常见 GB18030）时才会记录；正常名字不进表。
+
+    _RAW_PATH_LIMIT = 20000
+
+    def _remember_name(self, display: str, raw: bytes, encoding: str = "") -> None:
+        """记录非 UTF-8 名字的原始字节。正常（UTF-8）名字不进表，避免无谓占用。"""
+        if not display:
+            return
+        try:
+            needed = raw != display.encode("utf-8")
+        except UnicodeEncodeError:
+            needed = True
+        if not needed and not encoding:
+            return
+        if len(self._raw_paths) >= self._RAW_PATH_LIMIT:
+            for key in list(self._raw_paths)[: self._RAW_PATH_LIMIT // 4]:
+                self._raw_paths.pop(key, None)
+                self._path_encodings.pop(key, None)
+        self._raw_paths[display] = raw
+        if encoding:
+            self._path_encodings[display] = encoding
+
+    def _raw_path(self, path: str):
+        """显示路径 → 回写给 paramiko 的路径。
+
+        有精确映射给原始字节；是某个非 UTF-8 目录的子路径时，按该目录的编码拼出原始字节；
+        其余原样返回 ``str``（paramiko 会按 UTF-8 编码，与旧行为一致）。
+        """
+        text = str(path or "")
+        hit = self._raw_paths.get(text)
+        if hit is not None:
+            return hit
+        best_display = ""
+        best_raw = None
+        for display, raw in self._raw_paths.items():
+            prefix = display.rstrip("/")
+            if not prefix or prefix == "/":
+                continue
+            if text.startswith(prefix + "/") and len(prefix) > len(best_display):
+                best_display, best_raw = prefix, raw
+        if best_raw is not None:
+            tail = text[len(best_display) + 1:]
+            return posixpath.join(best_raw, self._encode_child(best_display, tail))
+        return text
+
+    def _encode_child(self, directory_display: str, name: str) -> bytes:
+        """新建子条目用父目录当初的编码（GBK 服务器上新建中文名才不会乱码）。"""
+        encoding = self._path_encodings.get(directory_display, "utf-8")
+        try:
+            return str(name).encode(encoding)
+        except UnicodeEncodeError:
+            return str(name).encode("utf-8")
+
+    def _child_target(self, base_display: str, base_raw: bytes, name: str):
+        """在某个目录下构造子条目的 ``(显示路径, 原始字节, 回写路径)``。"""
+        display = posixpath.join(base_display, name)
+        raw = posixpath.join(base_raw, self._encode_child(base_display, name))
+        wire = _wire_path(display, raw)
+        self._remember_name(display, raw, self._path_encodings.get(base_display, ""))
+        return display, raw, wire
+
     def list_dir(self, path: str) -> dict:
         with self.sftp_lock:
             self.last_used = time.monotonic()
             sftp = self._sftp_locked()
             try:
-                base = sftp.normalize(path or ".")
+                base = sftp.normalize(self._raw_path(path or "."))
                 home = sftp.normalize(".")
-                attrs = sftp.listdir_attr(base)
+                base_display = str(base)
+                base_raw = _raw_bytes(base)
+                home_display = str(home)
+                home_raw = _raw_bytes(home)
+                # 记下 home / base 自身：否则从 home 往上跳到 GBK 命名的父目录时，
+                # 显示路径无法还原成原始字节，后续操作会报「路径不存在」。
+                self._remember_name(base_display, base_raw, getattr(base, "encoding", ""))
+                self._remember_name(home_display, home_raw, getattr(home, "encoding", ""))
+                attrs = sftp.listdir_attr(_wire_path(base_display, base_raw))
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "无法读取目录") from exc
 
@@ -484,15 +626,19 @@ class _Session:
                 mode = attr.st_mode or 0
                 is_link = stat.S_ISLNK(mode)
                 is_dir = stat.S_ISDIR(mode)
-                entry_path = posixpath.join(base, attr.filename)
+                name_display = str(attr.filename)
+                entry_path = posixpath.join(base_display, name_display)
+                entry_raw = posixpath.join(base_raw, _raw_bytes(attr.filename))
+                self._remember_name(entry_path, entry_raw,
+                                    getattr(attr.filename, "encoding", ""))
                 if is_link:
                     try:
-                        target = sftp.stat(entry_path)
+                        target = sftp.stat(_wire_path(entry_path, entry_raw))
                         is_dir = stat.S_ISDIR(target.st_mode or 0)
                     except (IOError, OSError):
                         pass
                 entries.append({
-                    "name": attr.filename,
+                    "name": name_display,
                     "path": entry_path,
                     "is_dir": bool(is_dir),
                     "is_link": bool(is_link),
@@ -500,11 +646,13 @@ class _Session:
                     "mtime": int(attr.st_mtime or 0),
                 })
             entries.sort(key=lambda item: (not item["is_dir"], item["name"].lower()))
-            parent = posixpath.dirname(base.rstrip("/")) or "/"
+            parent = posixpath.dirname(base_display.rstrip("/")) or "/"
+            raw_parent = posixpath.dirname(base_raw.rstrip(b"/")) or b"/"
+            self._remember_name(parent, raw_parent)
             return {
                 "ok": True,
-                "path": base,
-                "home": home,
+                "path": base_display,
+                "home": home_display,
                 "parent": parent,
                 "entries": entries,
                 "truncated": len(attrs) > SFTP_DIR_MAX,
@@ -517,10 +665,11 @@ class _Session:
             self.last_used = time.monotonic()
             sftp = self._sftp_locked()
             try:
-                attr = sftp.stat(path)
+                sftp_path = self._raw_path(path)
+                attr = sftp.stat(sftp_path)
                 if stat.S_ISDIR(attr.st_mode or 0):
                     raise SshError("不能读取目录")
-                with sftp.open(path, "rb") as handle:
+                with sftp.open(sftp_path, "rb") as handle:
                     data = handle.read(limit + 1)
             except SshError:
                 raise
@@ -556,14 +705,15 @@ class _Session:
             self.last_used = time.monotonic()
             sftp = self._sftp_locked()
             try:
-                attr = sftp.stat(remote_path)
+                sftp_path = self._raw_path(remote_path)
+                attr = sftp.stat(sftp_path)
                 if stat.S_ISDIR(attr.st_mode or 0):
                     raise SshError("不能下载目录")
                 size = int(attr.st_size or 0)
                 if size > SFTP_DOWNLOAD_MAX:
                     raise SshError(f"文件超过下载上限（{SFTP_DOWNLOAD_MAX // 1024 // 1024}MB）")
                 written = 0
-                with sftp.open(remote_path, "rb") as source:
+                with sftp.open(sftp_path, "rb") as source:
                     with open(local_path, "wb") as target:
                         while True:
                             chunk = source.read(65536)
@@ -581,11 +731,17 @@ class _Session:
                 raise SshError(str(exc) or "下载失败") from exc
         return {"ok": True, "path": local_path, "size": written}
 
-    def _remove_tree_locked(self, sftp, path: str, budget: list[int]) -> None:
+    def _remove_tree_locked(self, sftp, path, budget: list[int]) -> None:
+        """递归删除。``path`` 可能是 ``str``（正常名字）或 ``bytes``（非 UTF-8 名字）。"""
         if budget[0] <= 0:
             raise SshError("目录条目过多，已中止递归删除")
         for attr in sftp.listdir_attr(path):
-            child = posixpath.join(path, attr.filename)
+            name = str(attr.filename)
+            child_raw = posixpath.join(_raw_bytes(path), _raw_bytes(attr.filename))
+            if isinstance(path, bytes):
+                child = child_raw
+            else:
+                child = _wire_path(posixpath.join(path, name), child_raw)
             mode = attr.st_mode or 0
             if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
                 self._remove_tree_locked(sftp, child, budget)
@@ -603,13 +759,16 @@ class _Session:
             self.last_used = time.monotonic()
             sftp = self._sftp_locked()
             try:
-                target = sftp.normalize(raw)
+                target = sftp.normalize(self._raw_path(raw))
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "路径不合法") from exc
-            if not target or target == "/" or target in (".", ".."):
+            target_display = str(target)
+            if not target_display or target_display == "/" or target_display in (".", ".."):
                 raise SshError("不能删除根目录")
+            target_raw = _raw_bytes(target)
+            target_wire = _wire_path(target_display, target_raw)
             try:
-                attr = sftp.lstat(target)
+                attr = sftp.lstat(target_wire)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "路径不存在") from exc
             mode = attr.st_mode or 0
@@ -617,14 +776,14 @@ class _Session:
             try:
                 if stat.S_ISDIR(mode) and not is_link:
                     if not recursive:
-                        sftp.rmdir(target)
+                        sftp.rmdir(target_wire)
                         deleted = 1
                     else:
                         budget = [5000]
-                        self._remove_tree_locked(sftp, target, budget)
+                        self._remove_tree_locked(sftp, target_wire, budget)
                         deleted = 5001 - budget[0]
                 else:
-                    sftp.remove(target)
+                    sftp.remove(target_wire)
                     deleted = 1
             except SshError:
                 raise
@@ -632,7 +791,7 @@ class _Session:
                 if stat.S_ISDIR(mode) and not recursive:
                     raise SshError("目录非空；如需连同内容删除，请使用递归删除") from exc
                 raise SshError(str(exc) or "删除失败") from exc
-        return {"ok": True, "path": target, "deleted": deleted}
+        return {"ok": True, "path": target_display, "deleted": deleted}
 
     def write_file(self, directory: str, name: str, content_b64: str) -> dict:
         name = _entry_name(name)
@@ -646,13 +805,14 @@ class _Session:
             self.last_used = time.monotonic()
             sftp = self._sftp_locked()
             try:
-                base = sftp.normalize(directory or ".")
-                target = posixpath.join(base, name)
+                base = sftp.normalize(self._raw_path(directory or "."))
+                target_display, _target_raw, target = self._child_target(
+                    str(base), _raw_bytes(base), name)
                 with sftp.open(target, "wb") as handle:
                     handle.write(data)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "无法写入文件") from exc
-        return {"ok": True, "path": target, "size": len(data)}
+        return {"ok": True, "path": target_display, "size": len(data)}
 
     def create_entry(self, directory: str, name: str, is_dir: bool = False,
                      content_b64: str = "") -> dict:
@@ -670,8 +830,9 @@ class _Session:
             self.last_used = time.monotonic()
             sftp = self._sftp_locked()
             try:
-                base = sftp.normalize(directory or ".")
-                target = posixpath.join(base, name)
+                base = sftp.normalize(self._raw_path(directory or "."))
+                target_display, _target_raw, target = self._child_target(
+                    str(base), _raw_bytes(base), name)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "路径不合法") from exc
             try:
@@ -690,7 +851,7 @@ class _Session:
                         handle.write(data)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or ("无法创建目录" if is_dir else "无法创建文件")) from exc
-        return {"ok": True, "path": target, "name": name, "is_dir": bool(is_dir),
+        return {"ok": True, "path": target_display, "name": name, "is_dir": bool(is_dir),
                 "size": len(data)}
 
     def rename_path(self, path: str, new_name: str) -> dict:
@@ -703,18 +864,23 @@ class _Session:
             self.last_used = time.monotonic()
             sftp = self._sftp_locked()
             try:
-                target = sftp.normalize(raw)
+                target = sftp.normalize(self._raw_path(raw))
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "路径不合法") from exc
-            if not target or target == "/" or target in (".", ".."):
+            target_display = str(target)
+            if not target_display or target_display == "/" or target_display in (".", ".."):
                 raise SshError("不能重命名根目录")
-            parent = posixpath.dirname(target.rstrip("/")) or "/"
-            destination = posixpath.join(parent, name)
-            if destination == target:
-                return {"ok": True, "path": target, "old_path": target,
+            target_raw = _raw_bytes(target)
+            target_wire = _wire_path(target_display, target_raw)
+            parent = posixpath.dirname(target_display.rstrip("/")) or "/"
+            raw_parent = posixpath.dirname(target_raw.rstrip(b"/")) or b"/"
+            destination_display, _dest_raw, destination = self._child_target(
+                parent, raw_parent, name)
+            if destination_display == target_display:
+                return {"ok": True, "path": target_display, "old_path": target_display,
                         "name": name, "renamed": False}
             try:
-                sftp.lstat(target)
+                sftp.lstat(target_wire)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "路径不存在") from exc
             try:
@@ -726,10 +892,10 @@ class _Session:
             try:
                 # 标准 SSH_FXP_RENAME：目标已存在时由服务器拒绝（**不会覆盖**）。
                 # 不用 posix-rename：它的语义是「原子覆盖」，与这里「不覆盖同名」的承诺相反。
-                sftp.rename(target, destination)
+                sftp.rename(target_wire, destination)
             except (IOError, OSError) as exc:
                 raise SshError(str(exc) or "重命名失败") from exc
-        return {"ok": True, "path": destination, "old_path": target,
+        return {"ok": True, "path": destination_display, "old_path": target_display,
                 "name": name, "renamed": True}
 
     def close(self) -> None:

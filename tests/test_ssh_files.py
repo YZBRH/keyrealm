@@ -142,11 +142,90 @@ class _FakeClient:
         self.closed = True
 
 
+class _GbkSFTP:
+    """模拟 GB18030 文件名的服务器（paramiko 的 UTF-8 解码会直接抛异常）。"""
+
+    def __init__(self):
+        self.gbk = "构".encode("gb18030")
+        self.path = b"/" + self.gbk
+        self.stat_paths = []
+        self.open_paths = []
+
+    def get_channel(self):
+        return None
+
+    def normalize(self, path):
+        if path in ("", ".", "~", "/", b"/"):
+            return "/"
+        if isinstance(path, bytes):
+            return ssh_session._SftpName("/构", path, "gb18030")
+        return path
+
+    def listdir_attr(self, path):
+        if path != "/":
+            raise IOError("No such directory")
+        return [_Attr(ssh_session._SftpName("构", self.gbk, "gb18030"),
+                      stat.S_IFREG | 0o644, 3, 100)]
+
+    def stat(self, path):
+        self.stat_paths.append(path)
+        if path == self.path:
+            return _Attr("构", stat.S_IFREG | 0o644, 3, 100)
+        raise IOError("No such file")
+
+    def open(self, path, mode="rb"):
+        self.open_paths.append(path)
+        if path == self.path:
+            return _Handle(b"abc")
+        raise IOError("No such file")
+
+
 def _session():
     client = _FakeClient()
     session = ssh_session._Session("test", client, None, {"username": "u", "host": "h"})
     session.mode = "files"
     return session, client
+
+
+def test_lenient_get_text_falls_back_to_gb18030():
+    from paramiko.message import Message
+    ssh_session._install_lenient_sftp_names()
+    msg = Message()
+    msg.add_string("构".encode("gb18030"))
+    msg.rewind()
+    name = msg.get_text()
+    assert isinstance(name, ssh_session._SftpName)
+    assert str(name) == "构"
+    assert name.raw == "构".encode("gb18030")
+
+    plain = Message()
+    plain.add_string("正常.txt".encode("utf-8"))
+    plain.rewind()
+    assert type(plain.get_text()) is str
+
+
+def test_gbk_filenames_are_listed_and_operated_with_raw_bytes():
+    client = _FakeClient()
+    fake = _GbkSFTP()
+    client.sftp = fake
+    session = ssh_session._Session("gbk", client, None, {"username": "u", "host": "h"})
+    session.mode = "files"
+
+    listed = session.list_dir("/")
+    assert [entry["name"] for entry in listed["entries"]] == ["构"]
+    assert listed["entries"][0]["path"] == "/构"
+
+    data = session.read_file("/构")
+    assert base64.b64decode(data["content_b64"]) == b"abc"
+    assert fake.stat_paths[-1] == fake.path
+    assert fake.open_paths[-1] == fake.path
+
+    # 在 GBK 目录下新建条目时沿用该目录的编码
+    display, raw, wire = session._child_target("/构", fake.path, "子目录")
+    assert display == "/构/子目录"
+    assert raw == fake.path + b"/" + "子目录".encode("gb18030")
+    assert wire == raw
+    assert session._raw_path("/构/子目录") == raw
 
 
 def test_list_dir_sorts_and_reports_parent():

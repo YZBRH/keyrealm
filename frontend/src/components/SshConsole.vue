@@ -35,6 +35,33 @@ const prompt = computed(() => {
   return mode.value === 'shell' ? `${base}:${path}$ ` : `${base}$ `
 })
 
+// 输入行里的路径最多展示多少字符：路径过长时只保留尾部（当前目录才是关键信息），
+// 完整路径仍由 title 悬停提示与终端回显（prompt）给出。
+const PROMPT_PATH_MAX = 32
+
+function compactPath(path, max = PROMPT_PATH_MAX) {
+  if (!path || path.length <= max) return path
+  const parts = path.split('/').filter(Boolean)
+  let tail = ''
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const next = tail ? `${parts[i]}/${tail}` : parts[i]
+    if (next.length + 2 > max) break
+    tail = next
+  }
+  if (!tail) {
+    const last = parts[parts.length - 1] || path
+    tail = last.slice(Math.max(0, last.length - (max - 2)))
+  }
+  return `…/${tail}`
+}
+
+/** 输入行左侧的提示：user@host:压缩后的路径（不含末尾的 `$ `）。 */
+const promptLead = computed(() => {
+  const base = summary.value || props.credentialName || 'ssh'
+  if (mode.value !== 'shell') return base
+  return `${base}:${compactPath(displayPath(cwd.value))}`
+})
+
 // ── 终端高亮：命令回显、应用提示、错误 / 警告关键字 ──────────
 const ERROR_WORDS = 'error|failed|failure|denied|refused|not found|no such file|permission denied|timed out|timeout|invalid|fatal|panic|exception|错误|失败|拒绝|无法|超时'
 const WARN_WORDS = 'warning|warn|deprecated|警告|注意'
@@ -277,7 +304,10 @@ defineExpose({ connect })
     <pre ref="termEl" class="ssh-term" v-html="highlighted"></pre>
 
     <div class="ssh-input-row">
-      <span class="ssh-prompt">{{ connected ? prompt : '$' }}</span>
+      <span class="ssh-prompt" :title="connected ? prompt : ''">
+        <span class="ssh-prompt-lead">{{ connected ? promptLead : '$' }}</span>
+        <span v-if="connected" class="ssh-prompt-suffix">$&nbsp;</span>
+      </span>
       <input
         ref="inputEl"
         v-model="input"
@@ -379,17 +409,30 @@ defineExpose({ connect })
   gap: 8px;
 }
 .ssh-prompt {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 46%;
+  display: inline-flex;
+  align-items: baseline;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-family: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', monospace;
   font-size: 12px;
   color: #a3e635;
 }
+/* 主机名 / 路径过长时从尾部截断；`$ ` 单独放在 flex: none 的尾段里，永远不会被截掉 */
+.ssh-prompt-lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ssh-prompt-suffix {
+  flex: none;
+  white-space: nowrap;
+}
 .ssh-input {
   flex: 1;
+  min-width: 180px;
   height: 32px;
   padding: 0 10px;
   border: 1px solid rgba(244, 244, 245, 0.14);
