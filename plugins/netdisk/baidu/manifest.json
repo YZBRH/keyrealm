@@ -1,0 +1,43 @@
+{
+  "name": "百度网盘",
+  "version": "1.1.0",
+  "credential_type": "netdisk_baidu",
+  "author": "Keyrealm",
+  "description": "验证百度网盘 access_token 有效性（拉取用户信息，只读），并提供账号信息（含容量）、文件列表、文件搜索、文件详情与文件下载",
+  "icon": "logo.png",
+  "fields": [
+    {
+      "key": "access_token",
+      "label": "Access Token",
+      "type": "password",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "121.xxxxxxxx...",
+      "hint": "百度网盘 OAuth 授权换来的 access_token（形如 121.xxx），有效期约 30 天，过期后需重新授权。"
+    },
+    {
+      "key": "refresh_token",
+      "label": "Refresh Token",
+      "type": "password",
+      "required": false,
+      "sensitive": true,
+      "placeholder": "选填，122.xxxxxxxx...",
+      "hint": "刷新 access_token 用；本插件只加密留档，不会自动换取（刷新还需应用自己的 AppKey / SecretKey）。"
+    },
+    {
+      "key": "uk",
+      "label": "用户 UID (uk)",
+      "type": "text",
+      "required": false,
+      "sensitive": false,
+      "placeholder": "选填，如 1939923272",
+      "hint": "账号数字 ID，仅用于备注与展示；验证与查询都只依赖 access_token。"
+    },
+    {
+      "key": "notes",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}

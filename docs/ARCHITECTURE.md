@@ -194,6 +194,7 @@ plugins/
 ├── map/                      # 地图：amap（高德）/ baidu（百度）/ tencent（腾讯位置服务）
 ├── exchange/                 # 交易所：okx / binance / guosen（Skill 网关与开放 API 两类密钥）
 ├── storage/                  # 对象存储：s3（任意 S3 兼容 / MinIO）/ anon（匿名桶探测）（另含 storage_s3v4.py、storage_common.py 类别共享模块）
+├── netdisk/                  # 网盘：baidu（百度网盘 access_token，只读查询）
 └── mail/                     # 邮箱 / 短信：smtp（通用 SMTP）/ gateway（短信网关 / 接码服务商）
 ```
 

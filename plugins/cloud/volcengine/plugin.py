@@ -1,6 +1,10 @@
 # coding: utf-8
 """火山引擎（Volcengine）AK/SK 插件（plugins/cloud/ 类别下的独立子插件）。
 
+``session_token`` 为**选填**：STS 临时凭据（AccessKeyId 以 ``AKTP`` 开头）需一并填写，
+签名器会附带 ``X-Security-Token`` 头（该头同样参与签名）；长期 AK/SK（``AKLT`` 开头）
+留空即可。
+
 火山引擎的 OpenAPI 走**统一网关**（``open.volcengineapi.com``），签名是自研的
 **SignerV4**：名字与 AWS SigV4 神似但**不同源**，实现在同目录的 ``volc_signer.py``
 （由官方 Python SDK 的固定向量逐条自证）。三个最容易踩的点：
@@ -178,9 +182,12 @@ def _error_of(payload) -> dict:
 
 # ── 请求构造与发送 ──────────────────────────────────────
 
-def _request(client, ak: str, sk: str, action: str, *, version: str, region: str,
-             service: str, host: str, params: dict | None = None):
+def _request(client, ak: str, sk: str, action: str, *, sts: str = "", version: str,
+             region: str, service: str, host: str, params: dict | None = None):
     """签名 + 发送 + 解析，返回 ``(payload, error)``。
+
+    ``sts`` 为 STS 临时凭证的 session_token（长期 AK/SK 传空）：非空时签名器会附带
+    ``X-Security-Token`` 头。
 
     ``payload`` 为 ``None`` 时 ``error`` 已是给人看的中文（且已脱敏）。网关报错时不抛
     异常，而是把 ``Code`` / ``Message`` 取出来交给调用方——调用方多半要把它当表格里的
@@ -188,7 +195,7 @@ def _request(client, ak: str, sk: str, action: str, *, version: str, region: str
     """
     method, url, headers, body = signer.sign(
         action, ak=ak, sk=sk, version=version, params=params or {},
-        region=region, service=service, host=host,
+        region=region, service=service, host=host, session_token=sts,
     )
     resp = client.request(method, url, headers=headers, content=body)
     payload = safe_json(resp)
@@ -198,31 +205,32 @@ def _request(client, ak: str, sk: str, action: str, *, version: str, region: str
     error = _error_of(payload)
     code = _text(error.get("Code"))
     if code:
-        detail = _redact(_text(error.get("Message")), ak, sk)
+        detail = _redact(_text(error.get("Message")), ak, sk, sts)
         return None, f"{code}：{detail}".rstrip("：")
     return payload, ""
 
 
-def _ecs_call(client, ak: str, sk: str, action: str, *, region: str, params: dict | None = None):
+def _ecs_call(client, ak: str, sk: str, action: str, *, region: str, sts: str = "",
+              params: dict | None = None):
     """发一个 ECS 只读请求（``open.volcengineapi.com`` / service=ecs / Version=2020-04-01）。"""
-    return _request(client, ak, sk, action,
+    return _request(client, ak, sk, action, sts=sts,
                     version=signer.ECS_API_VERSION, region=region,
                     service=signer.DEFAULT_SERVICE, host=signer.DEFAULT_HOST, params=params)
 
 
-def _iam_call(client, ak: str, sk: str, action: str, params: dict | None = None):
+def _iam_call(client, ak: str, sk: str, action: str, params: dict | None = None, *, sts: str = ""):
     """发一个 IAM 只读请求。
 
     IAM 是**全局服务**：主机与区域都和凭据里配的地域无关（官方 SDK 的 ``ServiceInfo``
     把区域写死成 ``cn-north-1``），故这里不带调用方的地域。
     """
-    return _request(client, ak, sk, action,
+    return _request(client, ak, sk, action, sts=sts,
                     version=signer.IAM_API_VERSION, region=signer.IAM_REGION,
                     service=signer.IAM_SERVICE, host=signer.IAM_HOST, params=params)
 
 
 def _describe_page(client, ak: str, sk: str, action: str, key: str, region: str,
-                   extra: dict, builder):
+                   extra: dict, builder, *, sts: str = ""):
     """翻页拉一份列表，返回 ``(rows, total, has_more, error)``；``rows is None`` 表示失败。
 
     ``total`` 优先取上游的 ``TotalCount``，拿不到就退化成 ``len(rows)``（官方文档里
@@ -243,7 +251,8 @@ def _describe_page(client, ak: str, sk: str, action: str, key: str, region: str,
         query["MaxResults"] = str(_PAGE_SIZE)
         if token:
             query["NextToken"] = token
-        payload, error = _ecs_call(client, ak, sk, action, region=region, params=query)
+        payload, error = _ecs_call(client, ak, sk, action, region=region,
+                                   params=query, sts=sts)
         if payload is None:
             return None, 0, False, error
         items = _items(payload, key)
@@ -413,7 +422,7 @@ def _gateway_error(resp) -> tuple[str, str, str]:
             _text(error.get("Message")))
 
 
-def _classify(resp, ak: str, sk: str) -> tuple[str, str]:
+def _classify(resp, ak: str, sk: str, sts: str = "") -> tuple[str, str]:
     """把一次探针响应判成框架口径的 ``(status, message)``，消息已脱敏。
 
     基础判读**完全复用** ``signer.interpret()``（它拿的就是 ``ResponseMetadata.Error.Code``
@@ -430,13 +439,13 @@ def _classify(resp, ak: str, sk: str) -> tuple[str, str]:
 
     if verdict == "error":
         code, code_n, detail = _gateway_error(resp)
-        detail = _redact(detail, ak, sk)
+        detail = _redact(detail, ak, sk, sts)
         lowered = detail.lower()
         if code in _EXTRA_RESTRICTED_CODES or any(h in lowered for h in _RESTRICTED_HINTS):
             tag = code + (f"(CodeN={code_n})" if code_n else "")
             return "restricted", f"凭据有效但受限：{tag} {detail}".strip()
 
-    return verdict, _redact(_text(base.get("message")), ak, sk)
+    return verdict, _redact(_text(base.get("message")), ak, sk, sts)
 
 
 def _probe_account(resp) -> dict | None:
@@ -464,7 +473,7 @@ _USER_FIELDS = (
 )
 
 
-def _run_whoami(client, ak: str, sk: str, params: dict) -> dict:
+def _run_whoami(client, ak: str, sk: str, params: dict, sts: str = "") -> dict:
     """账号信息：IAM GetUser + ListAccessKeys + ECS 只读探测。
 
     三段都是**尽力而为**：根账号的 AK 调 ``GetUser`` 可能被拒，子账号可能没有 IAM 读权限，
@@ -481,7 +490,7 @@ def _run_whoami(client, ak: str, sk: str, params: dict) -> dict:
     notes: list[str] = []
     hits = 0
 
-    payload, error = _iam_call(client, ak, sk, "GetUser")
+    payload, error = _iam_call(client, ak, sk, "GetUser", sts=sts)
     user = _result(payload).get("User") if payload is not None else None
     if isinstance(user, dict):
         hits += 1
@@ -495,7 +504,7 @@ def _run_whoami(client, ak: str, sk: str, params: dict) -> dict:
     else:
         notes.append(f"身份信息（IAM GetUser）未取到：{error or '返回体里没有 User'}")
 
-    payload, error = _iam_call(client, ak, sk, "ListAccessKeys")
+    payload, error = _iam_call(client, ak, sk, "ListAccessKeys", sts=sts)
     keys = _items(payload, "AccessKeyMetadata") if payload is not None else None
     if keys is None:
         notes.append(f"AccessKey 列表未取到：{error or '返回体里没有 AccessKeyMetadata'}")
@@ -514,7 +523,7 @@ def _run_whoami(client, ak: str, sk: str, params: dict) -> dict:
                 rows.append({"item": "当前 AK 状态",
                              "value": "不在 IAM 的 AccessKey 列表里（多为根账号 AK，或该 AK 属别的用户）"})
 
-    payload, error = _ecs_call(client, ak, sk, "DescribeRegions", region=DEFAULT_REGION)
+    payload, error = _ecs_call(client, ak, sk, "DescribeRegions", region=DEFAULT_REGION, sts=sts)
     regions = _items(payload, "Regions") if payload is not None else None
     if regions is None:
         notes.append(f"ECS 只读权限不可用：{error or '返回体里没有 Regions'}")
@@ -528,12 +537,12 @@ def _run_whoami(client, ak: str, sk: str, params: dict) -> dict:
     return _list_result(rows, _KV_COLUMNS, "未取到账号信息")
 
 
-def _run_list_regions(client, ak: str, sk: str, params: dict) -> dict:
+def _run_list_regions(client, ak: str, sk: str, params: dict, sts: str = "") -> dict:
     """地域列表：ECS ``DescribeRegions``。
 
     地域清单是**全局**的（不随凭据里配的地域变），故固定用 ``cn-beijing`` 签名。
     """
-    payload, error = _ecs_call(client, ak, sk, "DescribeRegions", region=DEFAULT_REGION)
+    payload, error = _ecs_call(client, ak, sk, "DescribeRegions", region=DEFAULT_REGION, sts=sts)
     items = _items(payload, "Regions")
     if items is None:
         return {"ok": False, "error": error or "返回体里没有 Regions，无法解析"}
@@ -542,10 +551,10 @@ def _run_list_regions(client, ak: str, sk: str, params: dict) -> dict:
                         "没有可见的地域", has_more=has_more)
 
 
-def _run_list_zones(client, ak: str, sk: str, params: dict) -> dict:
+def _run_list_zones(client, ak: str, sk: str, params: dict, sts: str = "") -> dict:
     """可用区列表：ECS ``DescribeZones``（按签名范围里的地域）。"""
     region = _field(params, "region") or DEFAULT_REGION
-    payload, error = _ecs_call(client, ak, sk, "DescribeZones", region=region)
+    payload, error = _ecs_call(client, ak, sk, "DescribeZones", region=region, sts=sts)
     items = _items(payload, "Zones")
     if items is None:
         return {"ok": False, "error": error or f"地域 {region} 的返回体里没有 Zones，无法解析"}
@@ -553,7 +562,7 @@ def _run_list_zones(client, ak: str, sk: str, params: dict) -> dict:
                         f"地域 {region} 下没有可用区")
 
 
-def _run_list_instances(client, ak: str, sk: str, params: dict) -> dict:
+def _run_list_instances(client, ak: str, sk: str, params: dict, sts: str = "") -> dict:
     """云服务器列表：ECS ``DescribeInstances``（按签名范围里的地域）。"""
     region = _field(params, "region") or DEFAULT_REGION
     extra = {
@@ -563,20 +572,20 @@ def _run_list_instances(client, ak: str, sk: str, params: dict) -> dict:
     }
     rows, total, has_more, error = _describe_page(
         client, ak, sk, "DescribeInstances", "Instances", region, extra,
-        lambda item: _instance_row(item, region))
+        lambda item: _instance_row(item, region), sts=sts)
     if rows is None:
         return {"ok": False, "error": error}
     return _list_result(rows, _INSTANCE_COLUMNS, f"地域 {region} 下没有云服务器",
                         total=total, has_more=has_more)
 
 
-def _run_list_images(client, ak: str, sk: str, params: dict) -> dict:
+def _run_list_images(client, ak: str, sk: str, params: dict, sts: str = "") -> dict:
     """镜像列表：ECS ``DescribeImages``（按签名范围里的地域）。"""
     region = _field(params, "region") or DEFAULT_REGION
     extra = {"ImageName": _field(params, "image_name")}
     rows, total, has_more, error = _describe_page(
         client, ak, sk, "DescribeImages", "Images", region, extra,
-        lambda item: _image_row(item, region))
+        lambda item: _image_row(item, region), sts=sts)
     if rows is None:
         return {"ok": False, "error": error}
     return _list_result(rows, _IMAGE_COLUMNS, f"地域 {region} 下没有镜像",
@@ -709,6 +718,7 @@ def run_action(action_id: str, params: dict, data: dict) -> dict:
     try:
         ak = _field(data, "access_key_id")
         sk = _field(data, "secret_access_key")
+        sts = _field(data, "session_token")
         if not ak or not sk:
             return {"ok": False, "error": "Access Key ID 或 Secret Access Key 为空"}
 
@@ -717,7 +727,7 @@ def run_action(action_id: str, params: dict, data: dict) -> dict:
             return {"ok": False, "error": f"未知操作：{action_id}"}
 
         with make_client() as client:
-            return handler(client, ak, sk, params)
+            return handler(client, ak, sk, params, sts)
     except Exception as exc:  # noqa: BLE001 - 操作边界兜底，绝不抛出
         # 只回异常类型名：httpx 的异常文本含完整请求 URL 与请求头，会把 AK/SK 泄进界面
         return {"ok": False, "error": f"执行异常：{type(exc).__name__}"}
@@ -760,29 +770,32 @@ def verify(data) -> VerifyResult:
 
     ak = _field(data, "access_key_id")
     sk = _field(data, "secret_access_key")
+    sts = _field(data, "session_token")
     region = _field(data, "region") or DEFAULT_REGION
-    log(f"校验火山引擎凭据 {mask_secret(ak)}（ECS DescribeRegions @ {signer.DEFAULT_HOST}）")
+    mode = "STS 临时凭据" if sts else "长期 AK/SK"
+    log(f"校验火山引擎凭据 {mask_secret(ak)}（{mode}，ECS DescribeRegions @ {signer.DEFAULT_HOST}）")
 
-    method, url, headers, body = signer.sign_probe(ak, sk, region=region)
+    method, url, headers, body = signer.sign_probe(ak, sk, region=region, session_token=sts)
     with make_client() as client:
         resp = client.request(method, url, headers=headers, content=body)
 
-    status, message = _classify(resp, ak, sk)
+    status, message = _classify(resp, ak, sk, sts)
     return VerifyResult(status=status, message=message, account_info=_probe_account(resp))
 
 
 # ── 权限探测（capabilities）─────────────────────────────
 
-def _probe_iam(client, ak: str, sk: str) -> tuple[str, str]:
+def _probe_iam(client, ak: str, sk: str, sts: str = "") -> tuple[str, str]:
     """探一下 IAM 是否可用（``whoami`` 走 IAM，与 ECS 的授权是两套）。"""
     try:
         method, url, headers, body = signer.sign(
             "GetUser", ak=ak, sk=sk, version=signer.IAM_API_VERSION,
-            region=signer.IAM_REGION, service=signer.IAM_SERVICE, host=signer.IAM_HOST)
+            region=signer.IAM_REGION, service=signer.IAM_SERVICE, host=signer.IAM_HOST,
+            session_token=sts)
         resp = client.request(method, url, headers=headers, content=body)
     except Exception as exc:  # noqa: BLE001 - 探测失败按「未知」处理，绝不外抛
         return "error", f"执行异常：{type(exc).__name__}"
-    return _classify(resp, ak, sk)
+    return _classify(resp, ak, sk, sts)
 
 
 def capabilities(data: dict) -> dict:
@@ -799,18 +812,19 @@ def capabilities(data: dict) -> dict:
     data = data or {}
     ak = _field(data, "access_key_id")
     sk = _field(data, "secret_access_key")
+    sts = _field(data, "session_token")
     if not ak or not sk:
         return {"available": [], "note": "缺少 Access Key ID 或 Secret Access Key"}
     region = _field(data, "region") or DEFAULT_REGION
 
-    method, url, headers, body = signer.sign_probe(ak, sk, region=region)
+    method, url, headers, body = signer.sign_probe(ak, sk, region=region, session_token=sts)
     with make_client() as client:
         resp = client.request(method, url, headers=headers, content=body)
-        status, message = _classify(resp, ak, sk)
+        status, message = _classify(resp, ak, sk, sts)
 
         if status == "valid":
             available = ["list_regions", "list_zones", "list_instances", "list_images"]
-            iam_status, iam_message = _probe_iam(client, ak, sk)
+            iam_status, iam_message = _probe_iam(client, ak, sk, sts)
             # IAM 探针失败只降级、不拦路：whoami 本身对「缺权限」是容错的，
             # 只有明确判定这把 AK 在 IAM 侧无效才不给它 —— 那与 ECS 侧「有效」矛盾，
             # 属于异常情形，宁可少给一个操作。

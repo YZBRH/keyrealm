@@ -82,6 +82,9 @@ plugins/
 │   ├── okx/
 │   ├── binance/
 │   └── guosen/                 # 国信证券（Skill 网关 GS_API_KEY / 开放 API AK+SK）
+├── netdisk/                    # 类别目录（网盘）
+│   ├── category.json
+│   └── baidu/                  # 百度网盘（access_token，只读查询）
 ├── mail/                       # 类别目录（邮箱 / 短信）
 │   ├── category.json
 │   ├── mail_common.py          # 类别共享模块：仅本类别特有的辅助（SOCKS 解析、TunneledSMTP/IMAP）
@@ -1049,7 +1052,7 @@ wechat_mp（微信公众号）、wechat_miniprogram（微信小程序）。
 **cloud/ 类别（12 个）**：aliyun（阿里云 AK/SK）、tencentcloud（腾讯云 SecretId/Key）、aws（AWS Access Key）、
 gcp（GCP 服务账号）、huaweicloud（华为云 AK/SK）、firebase（Firebase 管理密钥）、
 jdcloud（京东云 AK/SK）、ucloud（UCloud PublicKey/PrivateKey）、baiducloud（百度智能云 BCE AK/SK）、
-volcengine（火山引擎 AK/SK）、ctyun（天翼云 AK/SK）、
+volcengine（火山引擎 AK/SK，可选 STS 临时凭据的 session_token）、ctyun（天翼云 AK/SK）、
 cloudflare（Cloudflare API Token，或 Email + Global API Key）。
 国内五家（京东云 / UCloud / 百度智能云 / 火山引擎 / 天翼云）**一律只用只读接口做校验**
 （IAM 列举 / GetRegion / DescribeRegions / 资源池列表），且各自提供一组只读查询操作
@@ -1077,6 +1080,15 @@ anon（**匿名对象存储**：无凭据探测公开桶）。
 `write_probe`（`write: true`，**PUT 一个临时探针对象后立即 DELETE** 判定「公开可写」；删不掉时**不算成功**
 并把残留对象的完整地址回给用户手动清理）。`validate()` 拒绝预签名 URL（带查询串）。
 XML 解析与带进度 / 取消的流式下载放在类别共享模块 `storage_common.py`。
+
+**netdisk/ 类别（1 个）**：baidu（百度网盘）。凭据 = **access_token**（必填）+ refresh_token / uk（选填，
+后者仅用于展示与备注）。验证走 `xpan/nas?method=uinfo`（HTTP 恒 200，业务错误看 `errno`；
+`-6/110/111/20017/31064` 才判 `invalid`）。操作全部**只读**：账号信息（`uinfo`，并合并
+`/api/quota` 的容量；容量取不到不拖垮账号信息）· 文件列表（`xpan/file?method=list`，目录行可下钻）·
+文件搜索（`method=search`，实测 `num` 不生效，故不提供「每页条数」）· 文件详情
+（`xpan/multimedia?method=filemetas`）· 文件下载（`dlink=1` 取直链后流式落盘，需带
+`User-Agent: pan.baidu.com` 与 access_token；直链有效期约 8 小时，非会员账号可能被限速）。
+access_token 在查询串里，所有上游提示与异常文本都经 `_redact` 净化。
 
 **map/ 类别（3 个）**：amap（高德地图 Key；「Web 服务」类型实调校验，其它平台按「该 Key 是否存在」判定）、
 baidu（百度地图服务端 AK，选填私钥 SK —— AK 开了 **SN 校验**时补上 SK 由插件自动签名）、
@@ -1212,6 +1224,9 @@ SMTP 与 IMAP 两条路径共用同一策略。
   anon（**匿名对象存储**）—— **无凭据**，`list_objects` / `download_object` / `download_prefix`
   （即「公开可列 / 可读」）+ `write_probe`（**`write`**：匿名 PUT 一个探针对象后立即 DELETE，
   判定「公开可写」；删不掉时**不算成功**并把残留对象的地址回给用户手动清理）。
+- **netdisk**：baidu（**百度网盘**）—— `uinfo`（账号信息，含容量）·
+  `list_files`（文件列表，目录行可下钻）· `search`（文件搜索）· `file_meta`（按 fs_id 查详情）·
+  `download`（文件行右键下载，`save_to` + 进度 + 可取消）。除下载本地落盘外均为只读。
 - **map**：amap（高德，**仅「Web 服务」类型的 Key** 提供下列操作 —— 其它平台的 Key 调不动 REST 接口）—— 地理编码 · 逆地理编码 · 行政区划 · 实况天气 · 预报天气 · IP 定位 · 距离测量；
   baidu（百度）—— 地理编码 · 逆地理编码 · 地点检索 · IP 定位 · 实况天气 · 预报天气；
   tencent（腾讯位置服务）—— 地理编码 · 逆地址解析 · 地点搜索 · 行政区划 · 距离计算 · IP 定位 · 实况天气 · 预报天气。

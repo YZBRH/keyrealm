@@ -1,9 +1,9 @@
 {
   "name": "火山引擎",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "cloud_volcengine",
   "author": "Keyrealm",
-  "description": "验证火山引擎 AK/SK 有效性（ECS DescribeRegions，只读），并提供身份、地域、可用区、云服务器与镜像的只读查询操作",
+  "description": "验证火山引擎 AK/SK 有效性（ECS DescribeRegions，只读；可选 STS Session Token），并提供身份、地域、可用区、云服务器与镜像的只读查询操作",
   "icon": "logo.svg",
   "fields": [
     {
@@ -12,7 +12,8 @@
       "type": "password",
       "required": true,
       "sensitive": true,
-      "placeholder": "请输入 Access Key ID"
+      "placeholder": "请输入 Access Key ID",
+      "hint": "长期密钥以 AKLT 开头；STS 临时凭据以 AKTP 开头（此时必须填 Session Token）。"
     },
     {
       "key": "secret_access_key",
@@ -21,6 +22,15 @@
       "required": true,
       "sensitive": true,
       "placeholder": "请输入 Secret Access Key"
+    },
+    {
+      "key": "session_token",
+      "label": "Session Token",
+      "type": "password",
+      "required": false,
+      "sensitive": true,
+      "placeholder": "仅 STS 临时凭据需要，长期 AK/SK 留空",
+      "hint": "STS 临时凭据（AK 以 AKTP 开头）必须填写，否则网关报 InvalidAccessKey；令牌通常 1-12 小时过期，过期后需重新获取。仅填 AK/SK 无法使用临时凭据。"
     },
     {
       "key": "region",

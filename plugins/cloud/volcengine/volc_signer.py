@@ -201,12 +201,16 @@ def sign(
     path: str = "/",
     body: str = "",
     x_date: str | None = None,
+    session_token: str = "",
 ):
     """构造任意一个火山引擎 OpenAPI 请求，返回 ``(method, url, headers, body)``。
 
     ``Action`` / ``Version`` 由签名器统一拼进 query（``params`` 里不要重复给）；
     ``params`` 中值为 ``None`` 或空串的键会被丢弃——这样调用方可以直接把
     「用户没填」的表单字段原样传进来。
+
+    ``session_token`` 用于 STS 临时凭证：非空时附带 ``X-Security-Token`` 头
+    （它同样参与签名），长期 AK/SK 留空即可。
 
     ``x_date`` 仅供测试注入固定时间，正常运行留空（用当前 UTC 时间）。
     """
@@ -226,14 +230,17 @@ def sign(
         region=region,
         service=service,
         x_date=x_date or _now_utc(),
+        session_token=session_token or "",
     )
 
 
 def sign_probe(ak: str, sk: str, *, region: str = DEFAULT_REGION, service: str = DEFAULT_SERVICE,
-               host: str = DEFAULT_HOST, x_date: str | None = None):
+               host: str = DEFAULT_HOST, x_date: str | None = None,
+               session_token: str = ""):
     """只读探针：ECS ``DescribeRegions``（无任何参数、不触碰任何资源）。"""
     return sign("DescribeRegions", ak=ak, sk=sk, version=ECS_API_VERSION,
-                region=region, service=service, host=host, x_date=x_date)
+                region=region, service=service, host=host, x_date=x_date,
+                session_token=session_token)
 
 
 # 判定为「凭据无效」的错误码
@@ -244,6 +251,7 @@ INVALID_CODES = {
     "InvalidSignature",
     "MissingAuthenticationToken",  # 缺少鉴权信息 -> 401, CodeN=100003
     "InvalidCredential",      # 实网验证：Authorization 头缺失/格式错 -> 400, CodeN=100025
+    "InvalidSecretToken",     # 实网验证：STS session_token 过期/无效 -> 401, CodeN=100026
 }
 # 判定为「凭据有效但受限」的错误码（权限不足 / 账号异常）
 RESTRICTED_CODES = {
@@ -256,8 +264,8 @@ def interpret(status_code: int | None, body_text: str) -> dict:
 
     返回 ``{"verdict": "valid"|"invalid"|"restricted"|"error", "message": str}``。
 
-    判定口径遵循框架统一规则：**只有明确「AK 不存在 / 签名校验失败」才判 invalid**；
-    「权限不足 / 账号被冻结」这类都是「凭据本身有效但受限」。未归类的错误码一律
+    判定口径遵循框架统一规则：**只有明确「AK 不存在 / 签名校验失败 / STS 令牌过期」才判
+    invalid**；「权限不足 / 账号被冻结」这类都是「凭据本身有效但受限」。未归类的错误码一律
     回 ``error``——**绝不猜成 invalid**，否则会把一把好密钥标成失效。
     """
     data = None
