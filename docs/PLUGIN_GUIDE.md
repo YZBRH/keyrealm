@@ -518,6 +518,9 @@ def quota_probe(data: dict):
   > `PrepaidBillOverdue` / `PostpaidBillOverdue` / `BudgetLimitExceeded`；智谱 `1113`；
   > MiniMax `1008`；商汤**没有**专门的余额码（额度耗尽与限流共用 `429 quota_exceeded_error`，
   > 官方自己都不区分，框架只能报「异常」而不是猜「欠费」）。
+  > **套餐/订阅缺失**走 `is_subscription_missing()`：智谱 Anthropic 端点（Claude Code）没有
+  > 可用 GLM Coding Plan 时返回 **429 `1309`「套餐已到期」**，不能按限流处理；该端点只认
+  > Coding Plan，按量付费余额要走 `/api/paas/v4`（OpenAI 兼容）。
 - **MiniMax 的 `base_resp`**：它的 200 里带 `base_resp`（官方：成功时 `status_code == 0`），
   **业务错误可能藏在 200 里**，只看 HTTP 状态码会漏判成成功；而它的 4xx 又是**另一套**信封
   `{"type":"error","error":{…}}`、数字码塞在 message 文本里（如 `(1004)`）。两种形状都要认。

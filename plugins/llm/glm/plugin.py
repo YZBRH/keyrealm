@@ -159,6 +159,11 @@ def _verify(data: dict) -> VerifyResult:
             info = dict(result.account_info or {})
             info.update(balance)
             result.account_info = info
+        if (protocol == PROTOCOL_ANTHROPIC
+                and ("套餐" in result.message or "订阅" in result.message)):
+            # 1309：Anthropic 端点只认 Coding Plan；按量付费余额要走 OpenAI 兼容端点
+            result.message = ("凭证有效，但该 Anthropic 端点需要 GLM Coding Plan 套餐"
+                              "（已到期或未开通）；按量付费余额请改用 /api/paas/v4（OpenAI 兼容）")
     return result
 
 

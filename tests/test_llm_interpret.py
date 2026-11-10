@@ -37,6 +37,15 @@ def test_insufficient_in_403_is_valid():
     assert result.status == "valid"
 
 
+def test_glm_coding_plan_expired_is_subscription_not_rate_limit():
+    result = llm_protocols._interpret_chat(_resp(
+        429, '{"type":"error","error":{"type":"rate_limit_error","code":"1309",'
+             '"message":"[1309][您的GLM Coding Plan套餐已到期，暂无法使用]"}}'))
+    assert result.status == "valid"
+    assert "套餐" in result.message or "订阅" in result.message
+    assert "速率限制" not in result.message
+
+
 def test_invalid_key_still_invalid():
     result = llm_protocols._interpret_simple(_resp(
         401, '{"error":{"message":"Invalid token","type":"authentication_error"}}'))

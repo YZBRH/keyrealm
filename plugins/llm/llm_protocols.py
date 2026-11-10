@@ -68,6 +68,13 @@ _SUBSCRIPTION_KEYWORDS = (
     "无可用订阅",
     "订阅不存在",
     "无订阅",
+    # 智谱 GLM Coding Plan：Anthropic 端点没有套餐时返回 429 code 1309，
+    # 原文「您的 GLM Coding Plan 套餐已到期，暂无法使用」；不能按「限流」处理。
+    "coding plan",
+    "套餐已到期",
+    "套餐到期",
+    "套餐已过期",
+    "不存在coding plan",
 )
 
 
@@ -914,6 +921,9 @@ def _interpret_chat(resp: httpx.Response) -> VerifyResult:
         if is_insufficient_balance(snippet):
             # 欠费不算失效：密钥本身有效，仅账户余额不足
             return VerifyResult(status="valid", message="凭证有效，但账户欠费或无可用资源包")
+        if is_subscription_missing(snippet):
+            # 智谱 GLM Coding Plan 到期 / 未开通也走 429（code 1309），不是限流
+            return VerifyResult(status="valid", message="凭证有效，但无可用订阅/套餐")
         return VerifyResult(status="valid", message="凭证有效，但触发速率限制 (HTTP 429)")
     if status == 402:
         # 402 Payment Required：欠费不算失效
