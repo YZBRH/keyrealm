@@ -81,18 +81,21 @@ _generic_quota_probe = make_quota_probe(base_url_of, protocol_of)
 
 
 def quota_probe(data: dict):
-    """验证通过后的欠费探测：**先看 Coding Plan，再决定是否做对话探测**。
+    """验证通过后的欠费探测。
 
-    有有效套餐时直接补充套餐信息并返回 —— 不能让「按量付费余额为 0」把 plan 账号
-    误判成欠费（套餐额度与现金余额是两套计费）。
+    **官方站点**（bigmodel / z.ai）已经直接查询套餐与余额，附加信息里该有的都有了，
+    不再发对话探针：否则会多出「chat_probe 欠费 / 实测」这类重复表述，甚至覆盖
+    套餐结论。只有自定义 / 中转 Base URL（查不到余额）才退回通用对话探测。
     """
     data = data or {}
     api_key = (data.get("api_key") or "").strip()
     if not api_key:
         return None
-    plan = _fetch_plan(base_url_of(data), api_key)
-    if plan:
-        return {"account_info": plan}
+    base_url = base_url_of(data)
+    origin, _currency = _balance_origin(base_url)
+    if origin:
+        plan = _fetch_plan(base_url, api_key)
+        return {"account_info": plan} if plan else None
     return _generic_quota_probe(data)
 
 

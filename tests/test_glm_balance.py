@@ -120,6 +120,30 @@ def test_no_plan_shows_balance_only():
     assert "套餐" not in result.account_info
 
 
+def test_quota_probe_skips_chat_for_official_hosts():
+    """官方站点已展示余额/套餐，不再发对话探针，避免出现「实测 欠费」等重复表述。"""
+    with patch.object(glm, "_fetch_plan", lambda *a: None), \
+            patch.object(glm, "_generic_quota_probe",
+                         lambda d: {"account_info": {"chat_probe": "欠费"}}):
+        assert glm.quota_probe({"api_key": "k", "base_url": "", "probe_chat": True}) is None
+
+
+def test_quota_probe_uses_chat_probe_for_custom_base():
+    with patch.object(glm, "_generic_quota_probe",
+                      lambda d: {"account_info": {"chat_probe": "可用"}}):
+        result = glm.quota_probe({"api_key": "k",
+                                  "base_url": "https://relay.example.com/v1",
+                                  "probe_chat": True})
+    assert result == {"account_info": {"chat_probe": "可用"}}
+
+
+def test_quota_probe_returns_plan_info():
+    with patch.object(glm, "_fetch_plan",
+                      lambda *a: {"套餐": "GLM Coding Lite", "五小时剩余": "56%"}):
+        result = glm.quota_probe({"api_key": "k", "base_url": "", "probe_chat": True})
+    assert result == {"account_info": {"套餐": "GLM Coding Lite", "五小时剩余": "56%"}}
+
+
 def test_fetch_balance_parses_available_balance():
     payload = {"code": 200, "success": True,
                "data": {"balance": 0E-9, "availableBalance": 27.502911760}}
