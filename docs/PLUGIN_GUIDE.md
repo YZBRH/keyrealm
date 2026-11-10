@@ -364,7 +364,7 @@ def proxy():
 | 使用率（plan/额度制） | `{"usage_rate": 0.52}` | 使用率 52%（已用 ÷ 总额度，按服务适配） |
 | 其它可读字段 | 如 `organization` / `domain_count` / `account_id` | `组织 Xxx` / `域名数 1` / `账号 ID …` |
 
-- **LLM 类**：附加信息只展示**余额**；无余额概念的 plan 账号展示**使用率**。余额由**各厂商自己的 `plugin.py`** 按各自的余额端点 best-effort 查询（金额合理性闸见下条）——目前 DeepSeek / Moonshot 有余额接口，智谱走控制台财务接口 `/api/biz/account/query-customer-account-report`（非公开 OpenAPI，Best-effort；国内站 CNY / Z.ai USD），并**先查 Coding Plan**（订阅列表 + 配额接口）：有有效套餐时按「余额 / 套餐名 / 五小时剩余 / 周剩余」分行展示（额度接口给的是已用百分比，展示时换算成剩余），无套餐只展示余额；官方站点已展示余额/套餐，**不再执行对话欠费探测**（附加信息里不会出现「实测 / chat_probe」行），仅自定义或中转 Base URL 查不到余额时才使用该开关；套餐账号不会因按量付费余额为 0 被误判欠费；MiniMax M Plan 走 `GET {origin}/v1/token_plan/remains`
+- **LLM 类**：附加信息只展示**余额**；无余额概念的 plan 账号展示**使用率**。余额由**各厂商自己的 `plugin.py`** 按各自的余额端点 best-effort 查询（金额合理性闸见下条）——目前 DeepSeek / Moonshot 有余额接口，智谱走控制台财务接口 `/api/biz/account/query-customer-account-report`（非公开 OpenAPI，Best-effort；国内站 CNY / Z.ai USD），并**先查 Coding Plan**（订阅列表 + 配额接口）：有有效套餐时按「余额 / 套餐名 / 五小时剩余 / 周剩余」分行展示（额度接口给的是已用百分比，展示时换算成剩余），无套餐只展示余额；官方站点已展示余额/套餐，**不再执行对话欠费探测**（附加信息里不会出现「实测 / chat_probe」行）；**统一规则：验证时已查到余额 / 用量 / 套餐的凭据一律跳过 `probe_chat` 对话探测**（见 §2.4），仅查不到账务信息时才使用该开关；套餐账号不会因按量付费余额为 0 被误判欠费；MiniMax M Plan 走 `GET {origin}/v1/token_plan/remains`
 （五小时 / 周剩余），小米 MiMo 按 Key 前缀分别走 `/v1/platform/balance`（sk-）与
 `/v1/platform/token_plan`（tp-/ttp-）；OpenRouter 用 `/credits` 计算余额与使用率；OpenAI 的 ChatGPT 登录态模式经实验性端点 `GET /backend-api/wham/usage` 读 5 小时窗的 `used_percent` 作为 `usage_rate`（付费套餐才查，取不到就不显示）；Anthropic / Gemini / DashScope / 火山方舟 / SenseNova / NVIDIA / 华为 MaaS / OpenAI / 硅基流动 /
 百度文心等均无 API Key 可查的余额或套餐接口（仅控制台、AK/SK 控制面或登录态），附加信息为空。
@@ -452,12 +452,14 @@ def timeout(fallback: float = TIMEOUT) -> float:
 
 | manifest 字段 | 类型 | 含义 |
 |---------------|------|------|
-| `probe_chat` | `checkbox` | 余额未知时是否发一次最小对话探测，默认 false |
+| `probe_chat` | `checkbox` | 未查到余额 / 用量 / 套餐时是否发一次最小对话探测，默认 false |
 | `probe_model` | `model` | 探测模型（可下拉可手输）；留空 = 自动从模型列表挑一个便宜的 |
 
-后端在验证通过、且 `account_info` 里**没有** `balance` 也没有 `usage_rate` 时，才会把机会交给
-插件的 `quota_probe`（见 `backend/plugin_manager._apply_quota_probe`）。有余额的凭据不会再花
-这一发请求。
+后端在验证通过、且 `account_info` 里**没有**账务结论时，才会把机会交给插件的
+`quota_probe`（见 `backend/plugin_manager._apply_quota_probe`）。账务结论包括：
+`balance`（余额）、`usage_rate` / `usage_label`（用量）、`plan`（套餐 / 不限额度），
+以及 `套餐*`、`*剩余` 这类套餐额度字段。命中任意一个就跳过探测——有余额 / 套餐的凭据
+不会再花这一发请求，也不会让「实测」结论覆盖套餐展示。
 
 **接入方式**
 

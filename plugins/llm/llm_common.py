@@ -41,7 +41,7 @@ def plausible_amount(value) -> bool:
 # ── 欠费探测（余额拿不到时的可选项） ─────────────────────
 #
 # 契约：子插件可导出 ``quota_probe(data) -> Optional[dict]``，后端在「验证通过且没拿到
-# 余额/使用率」时调用它（见 backend/plugin_manager._apply_quota_probe）。返回值：
+# 余额/使用率/套餐」时调用它（见 backend/plugin_manager._apply_quota_probe）。返回值：
 #   None                          → 未开启 / 无结论 / 无异常，后端什么都不改
 #   {"account_info": {...}}       → 补充展示字段（用 quota_ok()）
 #   {"message": "..."}            → 替换状态说明（用 quota_insufficient()）
@@ -101,7 +101,8 @@ def make_quota_probe(default_base_url, protocol="openai", token_param="max_token
     ——同一插件支持多种接口格式时（如智谱 GLM 同时提供 OpenAI 与 Anthropic 端点）用它按凭据取。
 
     开关与模型取自**凭据自身**的字段（``probe_chat`` / ``probe_model``），逐条凭据独立开启，
-    不涉及全局设置。真正发请求的是 ``llm_protocols.quota_chat_probe``（延迟导入，避免模块成环）。
+    不涉及全局设置。后端已查到余额 / 用量 / 套餐时不会调用本函数（见
+    ``plugin_manager._has_billing_info``）。真正发请求的是 ``llm_protocols.quota_chat_probe``（延迟导入，避免模块成环）。
     非通用鉴权的插件请自行实现 ``quota_probe``，复用 ``probe_requested`` / ``probe_model`` /
     ``quota_ok`` / ``quota_insufficient`` 即可。
     """

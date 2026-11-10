@@ -25,7 +25,7 @@ TLS 版本策略 `tls_version()` 与 `ssl_context()`（`auto`/`1.0`/`1.1`/`1.2`/
 `capabilities(data) -> dict`    可选：报告当前凭据**真正能用**的操作（fail-open）
 `list_models(data, force)`      可选：可用模型名列表（force=用户手动刷新，穿透清单缓存）
 `stream_action(...)`            可选：流式执行操作（回报进度、支持取消）
-`quota_probe(data) -> dict`     可选：余额拿不到时的欠费探测
+`quota_probe(data) -> dict`     可选：未查到余额 / 套餐时的欠费探测
 ============================== =================================================
 """
 from __future__ import annotations

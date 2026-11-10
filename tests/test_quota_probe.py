@@ -59,15 +59,36 @@ def test_success_marks_chat_probe_available():
     assert result == {"account_info": {"chat_probe": "可用"}}
 
 
-def test_probe_runs_even_when_balance_known():
+def _apply(module, account_info):
+    result = VerifyResult(status="valid", message="凭证有效", account_info=account_info)
+    plugin_manager._apply_quota_probe("llm_test", module, {}, result)
+    return result
+
+
+def test_probe_skipped_when_balance_known():
     module = SimpleNamespace(
         quota_probe=lambda data: {"status": "invalid", "message": "对话鉴权失败"})
-    result = VerifyResult(status="valid", message="凭证有效",
-                          account_info={"balance": 100, "currency": "USD"})
-    plugin_manager._apply_quota_probe("llm_test", module, {}, result)
-    assert result.status == "invalid"
-    assert result.message == "对话鉴权失败"
-    assert result.account_info["balance"] == 100
+    result = _apply(module, {"balance": 100, "currency": "USD"})
+    assert result.status == "valid"
+    assert result.message == "凭证有效"
+    assert result.account_info == {"balance": 100, "currency": "USD"}
+
+
+def test_probe_skipped_when_plan_known():
+    for info in ({"plan": "不限额度"}, {"套餐": "GLM Coding Lite"},
+                 {"五小时剩余": "56%"}, {"usage_label": "已消耗 $1.00"}):
+        result = _apply(SimpleNamespace(
+            quota_probe=lambda data: {"status": "invalid", "message": "对话鉴权失败"}), info)
+        assert result.status == "valid", info
+
+
+def test_probe_runs_without_billing_info():
+    module = SimpleNamespace(
+        quota_probe=lambda data: {"status": "invalid", "message": "对话鉴权失败"})
+    for info in (None, {}, {"account_type": "按量付费"}):
+        result = _apply(module, info)
+        assert result.status == "invalid", info
+        assert result.message == "对话鉴权失败"
 
 
 def main():

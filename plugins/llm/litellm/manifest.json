@@ -1,6 +1,6 @@
 {
   "name": "LiteLLM API",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "credential_type": "llm_litellm",
   "author": "Keyrealm",
   "description": "验证 LiteLLM Proxy 的 API Key，并展示 Key 的累计消费与预算",
@@ -27,7 +27,7 @@
       "label": "额外发一次对话探测",
       "type": "checkbox",
       "required": false,
-      "hint": "部分 LiteLLM 部署的 /models 不校验 Key，开启后会额外发一次 max_tokens=1 的对话请求实测 Key 是否真的可用（会消耗极少量额度）。默认关闭。"
+      "hint": "部分 LiteLLM 部署的 /models 不校验 Key，开启后会额外发一次 max_tokens=1 的对话请求实测 Key 是否真的可用（会消耗极少量额度）；已查到消费 / 预算时不执行。默认关闭。"
     },
     {
       "key": "probe_model",

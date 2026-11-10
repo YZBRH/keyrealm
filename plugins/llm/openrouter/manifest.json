@@ -1,6 +1,6 @@
 {
   "name": "OpenRouter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "credential_type": "llm_openrouter",
   "author": "Keyrealm",
   "description": "验证 OpenRouter API Key 有效性",
@@ -33,7 +33,7 @@
       "label": "验证通过后再发一次对话探测",
       "type": "checkbox",
       "required": false,
-      "hint": "验证通过后会额外发一次 max_tokens=1 的对话请求实测账户是否可用（会消耗极少量额度）。默认关闭。"
+      "hint": "验证通过后会额外发一次 max_tokens=1 的对话请求实测账户是否可用（会消耗极少量额度）；已查到余额 / 套餐时不执行。默认关闭。"
     },
     {
       "key": "probe_model",

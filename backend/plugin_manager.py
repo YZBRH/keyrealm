@@ -616,16 +616,36 @@ def plugin_uses_proxy(credential_type: str) -> bool:
     return bool(getattr(module, "USES_PROXY", True))
 
 
+# account_info 里代表「已查到账务信息」的键：余额（balance）、用量（usage_rate /
+# usage_label）、套餐 / 额度（plan / 套餐* / *剩余）。命中任意一个就不再发对话探测——
+# 账单接口已经给出了结论，再花一发对话既浪费额度，也可能用「实测」结论覆盖套餐展示。
+_BILLING_KEYS = frozenset({"balance", "usage_rate", "usage_label", "plan"})
+
+
+def _has_billing_info(account_info) -> bool:
+    """``account_info`` 是否已包含余额 / 用量 / 套餐等账务结论。"""
+    if not isinstance(account_info, dict):
+        return False
+    for key in account_info:
+        text = str(key)
+        if text in _BILLING_KEYS or text.startswith("套餐") or text.endswith("剩余"):
+            return True
+    return False
+
+
 def _apply_quota_probe(credential_type: str, module, data: dict, result: VerifyResult) -> None:
     """验证通过后的「实测可用」后置检查（原地修改 result）。
 
-    只要插件接入了 ``quota_probe`` 就调用它；是否真的发请求由凭据字段
-    ``probe_chat`` 决定（未开启时 probe 直接返回 ``None``）。**不再要求余额未知**：
-    ``/models`` 与余额接口都正常、但对话渠道已失效的情况并不少见，只有实测才能发现。
+    插件接入了 ``quota_probe`` 才调用；是否真的发请求由凭据字段 ``probe_chat`` 决定
+    （未开启时 probe 直接返回 ``None``）。**已查到余额 / 用量 / 套餐时不调用**：
+    账务接口已经给出结论，不再多花一发对话请求（见 ``_has_billing_info``）。
+    只有账务信息缺失时才用实测补「账户是否真的可用」。
     probe 可以返回 ``status``（``invalid`` / ``error``）把「认证通过但实际不可用」升级为
     相应状态；不返回则保持 ``valid``。
     """
     if result.status != "valid":
+        return
+    if _has_billing_info(result.account_info):
         return
     probe = getattr(module, "quota_probe", None)
     if not callable(probe):
