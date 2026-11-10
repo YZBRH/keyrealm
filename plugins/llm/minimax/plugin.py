@@ -3,12 +3,15 @@
 参考文档：https://platform.minimax.cn/docs/api-reference/text-openai-api
 参考文档：https://platform.minimax.io/docs/api-reference/text-openai-api
 参考文档：https://platform.minimax.io/docs/api-reference/errorcode
+参考文档：https://platform.minimax.io/docs/m-plan/usage-rules
 """
 from __future__ import annotations
 
+import hashlib
+import time
 from urllib.parse import urlparse
 
-from backend.plugin_sdk import VerifyResult, guarded, log
+from backend.plugin_sdk import VerifyResult, guarded, log, make_client, safe_json
 from llm_common import make_quota_probe
 from llm_protocols import probe_openai_models, chat_completion, fetch_models, chat_completion_stream, resolve_chat_model
 
@@ -36,8 +39,89 @@ def _base_url(data: dict) -> str:
     return raw
 
 
+# M Plan 套餐额度端点（官方文档 platform.minimax.io/docs/m-plan/usage-rules）：
+# GET {origin}/v1/token_plan/remains，Authorization: Bearer <M Plan Key>，无需 GroupId。
+PLAN_PATH = "/v1/token_plan/remains"
+PLAN_CACHE_TTL = 60.0
+_plan_cache: dict[tuple[str, str], tuple[float, dict | None]] = {}
+
 # 余额拿不到时的可选项（「设置」页开关，默认关闭）：发一次最小对话请求判断是否欠费
-quota_probe = make_quota_probe(DEFAULT_BASE_URL, "openai", TOKEN_PARAM)
+_generic_quota_probe = make_quota_probe(DEFAULT_BASE_URL, "openai", TOKEN_PARAM)
+
+
+def _origin(base_url: str) -> str:
+    try:
+        parsed = urlparse(base_url or "")
+    except ValueError:
+        return ""
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _parse_plan(payload) -> dict | None:
+    """解析 /v1/token_plan/remains：只取百分比窗口，不臆造套餐名/到期日。"""
+    if not isinstance(payload, dict):
+        return None
+    base = payload.get("base_resp")
+    if not isinstance(base, dict) or str(base.get("status_code")) != "0":
+        return None
+    rows = payload.get("model_remains")
+    if not isinstance(rows, list) or not rows:
+        return None
+    row = next((r for r in rows
+                if isinstance(r, dict) and r.get("model_name") == "general"), None)
+    if row is None:
+        row = next((r for r in rows if isinstance(r, dict)), None)
+    if not row:
+        return None
+    info = {"套餐": "MiniMax M Plan"}
+    for key, label in (("current_interval_remaining_percent", "五小时剩余"),
+                       ("current_weekly_remaining_percent", "周剩余")):
+        value = row.get(key)
+        if value is None:
+            continue
+        try:
+            info[label] = f"{max(0, min(100, round(float(value))))}%"
+        except (TypeError, ValueError):
+            continue
+    return info if len(info) > 1 else None
+
+
+def _fetch_plan(data: dict) -> dict | None:
+    """查询 M Plan 套餐额度（best-effort + 60s 缓存）；非套餐 Key 返回 None。"""
+    api_key = ((data or {}).get("api_key") or "").strip()
+    origin = _origin(_base_url(data))
+    if not origin or not api_key:
+        return None
+    cache_key = (origin, hashlib.sha256(api_key.encode("utf-8")).hexdigest())
+    now = time.monotonic()
+    hit = _plan_cache.get(cache_key)
+    if hit and now - hit[0] < PLAN_CACHE_TTL:
+        return hit[1]
+    plan = None
+    try:
+        with make_client() as client:
+            resp = client.get(origin + PLAN_PATH,
+                              headers={"Authorization": f"Bearer {api_key}"})
+        if resp.status_code == 200:
+            plan = _parse_plan(safe_json(resp))
+    except Exception:  # noqa: BLE001 - 套餐查询失败绝不能影响验证结论
+        plan = None
+    _plan_cache[cache_key] = (now, plan)
+    if len(_plan_cache) > 256:
+        for key in [k for k, (ts, _v) in _plan_cache.items()
+                    if now - ts >= PLAN_CACHE_TTL]:
+            _plan_cache.pop(key, None)
+    return plan
+
+
+def quota_probe(data: dict):
+    """验证通过后的欠费探测：有 M Plan 套餐时不发对话探针，避免误报欠费。"""
+    plan = _fetch_plan(data or {})
+    if plan:
+        return {"account_info": plan}
+    return _generic_quota_probe(data)
 
 
 def validate(data: dict) -> list[str]:
@@ -62,7 +146,14 @@ def _verify(data: dict) -> VerifyResult:
     if not base_url:
         return VerifyResult(status="error", message=f"厂商「{NAME}」需要填写 Base URL")
 
-    return probe_openai_models(base_url, api_key)
+    result = probe_openai_models(base_url, api_key)
+    if result.status == "valid":
+        plan = _fetch_plan(data)
+        if plan:
+            result.account_info = {**(result.account_info or {}), **plan}
+            if any(word in (result.message or "") for word in ("欠费", "余额不足")):
+                result.message = "凭证有效，使用 MiniMax M Plan 套餐"
+    return result
 
 
 @guarded

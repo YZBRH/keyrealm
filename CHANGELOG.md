@@ -36,6 +36,19 @@
   创建、修改与导入都会校验代理保留键：模式非法、`proxy` 缺 id、指向不存在的代理一律拒绝，
   不再静默降级成直连。
 
+### 新增
+
+- **MiniMax M Plan 套餐额度**：M Plan 套餐 Key 验证后查询
+  `GET {origin}/v1/token_plan/remains`，附加信息显示「套餐 MiniMax M Plan / 五小时剩余 / 周剩余」；
+  无套餐的 Key 不误报，欠费探测也不会再覆盖套餐结论。
+- **小米 MiMo 余额与套餐**：`sk-` Key 查询 `GET /v1/platform/balance`（现金 + 赠送余额），
+  `tp-/ttp-` Key 查询 `GET {token-plan区域主机}/v1/platform/token_plan`（套餐名 / 本周期剩余 /
+  到期时间）；按官方 V2.2.0 文档接入，库中暂无真实 MiMo Key 可实测。
+- **LLM 账务接口审计**：逐一核对现有 LLM 插件——除已支持的 DeepSeek / Moonshot / OpenRouter /
+  GLM / LiteLLM / New API / CodeBuddy 外，本轮新增 MiniMax M Plan 与 MiMo；其余厂商
+  （DashScope、火山方舟、SenseNova、NVIDIA、华为 MaaS、OpenAI、Gemini、Anthropic、硅基流动、
+  百度文心）确认没有 API Key 可查的余额/套餐接口，只有控制台、AK/SK 控制面或登录态。
+
 ### 变更
 
 - 移除编辑凭据表单中关于手动状态与重新验证默认值的提示文字。

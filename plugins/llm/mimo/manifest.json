@@ -1,9 +1,9 @@
 {
   "name": "小米 MiMo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "llm_mimo",
   "author": "Keyrealm",
-  "description": "验证 小米 MiMo API Key 有效性（按量付费 / Token Plan）",
+  "description": "验证 小米 MiMo API Key 有效性（按量付费 / Token Plan），支持余额与套餐查询",
   "icon": "logo.png",
   "fields": [
     {
@@ -49,7 +49,7 @@
       "label": "验证通过后再发一次对话探测",
       "type": "checkbox",
       "required": false,
-      "hint": "官方没有公开的额度查询接口；开启后验证会额外发一次 max_tokens=1 的对话请求实测账户是否可用（会消耗极少量额度）。默认关闭。"
+      "hint": "官方已提供账务查询 API：sk- Key 查现金余额，tp-/ttp- Key 查 Token Plan 套餐额度；能查到时不执行本项。查询失败时才补发一次 max_tokens=1 的对话探测（会消耗极少量额度）。默认关闭。"
     },
     {
       "key": "probe_model",

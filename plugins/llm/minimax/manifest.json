@@ -1,9 +1,9 @@
 {
   "name": "MiniMax",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "credential_type": "llm_minimax",
   "author": "Keyrealm",
-  "description": "验证 MiniMax API Key 有效性",
+  "description": "验证 MiniMax API Key 有效性（按量付费 / Token Plan），支持 M Plan 套餐额度查询",
   "icon": "logo.png",
   "fields": [
     {
@@ -37,7 +37,7 @@
       "label": "验证通过后再发一次对话探测",
       "type": "checkbox",
       "required": false,
-      "hint": "验证通过后会额外发一次 max_tokens=1 的对话请求实测账户是否可用（会消耗极少量额度）。默认关闭。"
+      "hint": "M Plan 订阅 Key 会直接查询套餐额度（五小时 / 周剩余），不再执行本项；按量付费 Key 查不到套餐时，开启后会额外发一次 max_tokens=1 的对话请求判断账户是否可用（会消耗极少量额度）。默认关闭。"
     },
     {
       "key": "probe_model",
