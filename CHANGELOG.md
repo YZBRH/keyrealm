@@ -22,6 +22,10 @@
 - **火山引擎 STS 临时凭据**：凭据新增可选 `Session Token` 字段。STS 临时凭据
   （AccessKeyId 以 `AKTP` 开头）需一并填写，签名时附带 `X-Security-Token`；长期 AK/SK
   留空即可。令牌过期会判为失效并给出原因。
+- **智谱 GLM 余额查询与双端点**：验证通过后调用控制台财务接口
+  `query-customer-account-report`，在「附加信息」展示可用余额（国内站 CNY / Z.ai USD）；
+  中转 / 自建 Base URL 不查询，接口失败不影响验证结论。同时按 Base URL 自动识别
+  OpenAI 兼容（`/api/paas/v4`）与 Anthropic 兼容（`/api/anthropic`，Claude Code）端点。
 - **MCP 凭据出口设置**：`vault_create_credential` 新增可选 `proxy_mode` / `proxy_id`
   （跟随默认 / 直连 / 指定代理）；`vault_import_credentials` 也可给整批导入统一指定出口。
   创建、修改与导入都会校验代理保留键：模式非法、`proxy` 缺 id、指向不存在的代理一律拒绝，
