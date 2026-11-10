@@ -122,22 +122,48 @@ def _balance_origin(base_url: str) -> tuple[str, str]:
     return "", ""
 
 
-def _plan_usage(quota_payload) -> str:
-    """把 quota/limit 里各个 TOKENS_LIMIT 窗口摊成一行（如「5 小时 0% / 1 周 36%」）。"""
+_CN_NUMBERS = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五",
+               6: "六", 7: "七", 8: "八", 9: "九", 10: "十"}
+
+
+def _cn_number(value) -> str:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return _CN_NUMBERS.get(number, str(number))
+
+
+def _plan_quota_fields(quota_payload) -> dict:
+    """把 quota/limit 里各个 TOKENS_LIMIT 窗口摊成「XX剩余 NN%」字段。
+
+    ``percentage`` 是**已用**百分比（新账号为 0），展示时换算成剩余。
+    5 小时窗口 → ``五小时剩余 56%``；1 周窗口 → ``周剩余 77%``；其他窗口按单位兜底。
+    """
     data = (quota_payload or {}).get("data")
     if not isinstance(data, dict):
-        return ""
-    parts = []
+        return {}
+    fields: dict[str, str] = {}
     for item in data.get("limits") or []:
         if not isinstance(item, dict) or item.get("type") != "TOKENS_LIMIT":
             continue
         pct = item.get("percentage")
         if pct is None:
             continue
+        try:
+            used = float(pct)
+        except (TypeError, ValueError):
+            continue
+        remaining = max(0, min(100, round(100 - used)))
         unit, number = item.get("unit"), item.get("number")
-        label = {3: f"{number} 小时", 6: f"{number} 周"}.get(unit, f"{number} 窗口")
-        parts.append(f"{label} {pct}%")
-    return " / ".join(parts)
+        if unit == 3:
+            label = f"{_cn_number(number)}小时剩余"
+        elif unit == 6:
+            label = "周剩余" if str(number) == "1" else f"{_cn_number(number)}周剩余"
+        else:
+            label = f"{_cn_number(number)}窗口剩余"
+        fields[label] = f"{remaining}%"
+    return fields
 
 
 def _parse_plan(sub_payload, quota_payload) -> dict | None:
@@ -157,19 +183,17 @@ def _parse_plan(sub_payload, quota_payload) -> dict | None:
     if active:
         name = str(active.get("productName") or active.get("productBigTitle")
                    or "GLM Coding Plan").strip()
-        usage = _plan_usage(quota_payload)
-        renew = str(active.get("nextRenewTime") or "").strip()
-        detail = usage
-        if renew:
-            detail = f"{detail}；{renew} 续费" if detail else f"{renew} 续费"
-        return {"套餐": f"{name}（{detail}）" if detail else name}
+        plan = {"套餐": name}
+        plan.update(_plan_quota_fields(quota_payload))
+        return plan
 
     data = (quota_payload or {}).get("data")
     if isinstance(data, dict) and data.get("limits"):
         level = str(data.get("level") or "").strip()
         name = f"GLM Coding Plan{' · ' + level if level else ''}"
-        usage = _plan_usage(quota_payload)
-        return {"套餐": f"{name}（{usage}）" if usage else name}
+        plan = {"套餐": name}
+        plan.update(_plan_quota_fields(quota_payload))
+        return plan
     return None
 
 

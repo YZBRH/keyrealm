@@ -68,10 +68,9 @@ def test_parse_plan_from_subscription_and_quota():
         {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 41},
     ], "level": "lite"}}
     plan = glm._parse_plan(sub, quota)
-    assert "GLM Coding Lite" in plan["套餐"]
-    assert "5 小时 28%" in plan["套餐"]
-    assert "1 周 41%" in plan["套餐"]
-    assert "2027-04-08 续费" in plan["套餐"]
+    assert plan["套餐"] == "GLM Coding Lite"
+    assert plan["五小时剩余"] == "72%"      # 28% 已用 → 72% 剩余
+    assert plan["周剩余"] == "59%"          # 41% 已用 → 59% 剩余
 
 
 def test_parse_plan_absent():
@@ -85,6 +84,7 @@ def test_parse_plan_quota_fallback():
     plan = glm._parse_plan({"data": []}, quota)
     assert "GLM Coding Plan" in plan["套餐"]
     assert "lite" in plan["套餐"]
+    assert plan["五小时剩余"] == "100%"
 
 
 def test_plan_key_not_reported_as_unpaid():
@@ -95,7 +95,8 @@ def test_plan_key_not_reported_as_unpaid():
 
     with patch.object(glm, "list_models", lambda data, force=False: ["glm-5.3"]), \
             patch.object(glm, "probe_openai_chat", fake_probe), \
-            patch.object(glm, "_fetch_plan", lambda *a: {"套餐": "GLM Coding Lite（5 小时 0%）"}), \
+            patch.object(glm, "_fetch_plan",
+                         lambda *a: {"套餐": "GLM Coding Lite", "五小时剩余": "100%"}), \
             patch.object(glm, "_fetch_balance", lambda *a: {"balance": 0.0, "currency": "CNY"}):
         result = glm._verify({"api_key": "sk-test", "base_url": ""})
     assert result.status == "valid"
