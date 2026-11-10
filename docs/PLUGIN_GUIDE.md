@@ -367,6 +367,11 @@ def proxy():
 - **LLM 类**：附加信息只展示**余额**；无余额概念的 plan 账号展示**使用率**。余额由**各厂商自己的 `plugin.py`** 按各自的余额端点 best-effort 查询（金额合理性闸见下条）——目前 DeepSeek / Moonshot 有余额接口，智谱走控制台财务接口 `/api/biz/account/query-customer-account-report`（非公开 OpenAPI，Best-effort；国内站 CNY / Z.ai USD），并**先查 Coding Plan**（订阅列表 + 配额接口）：有有效套餐时按「余额 / 套餐名 / 五小时剩余 / 周剩余」分行展示（额度接口给的是已用百分比，展示时换算成剩余），无套餐只展示余额；官方站点已展示余额/套餐，**不再执行对话欠费探测**（附加信息里不会出现「实测 / chat_probe」行），仅自定义或中转 Base URL 查不到余额时才使用该开关；套餐账号不会因按量付费余额为 0 被误判欠费，OpenRouter 用 `/credits` 计算余额与使用率；OpenAI 的 ChatGPT 登录态模式经实验性端点 `GET /backend-api/wham/usage` 读 5 小时窗的 `used_percent` 作为 `usage_rate`（付费套餐才查，取不到就不显示）；Anthropic / Gemini 等多数无公开余额接口，附加信息为空。
 - **金额合理性闸**：one-api / new-api 类中转站在「不限额」时会把硬限额（`hard_limit_usd`）填成哨兵值（New API 官方写死 **`100000000`（1e8）**，且只在**令牌维度**出现——`token.UnlimitedQuota` 分支），拿它去减消耗就会得出 `99999900` 这种假余额。所有要展示的金额都必须先过 `llm_common.plausible_amount()`（有限数值且绝对值 < `AMOUNT_LIMIT = 1e7`），不通过**则不展示该金额**。新增带余额的厂商/中转插件时需一并加这道闸。
 - **中转站**：`openai_compatible`（兼容接口）与 `newapi`（New API 专用）都走 one-api 兼容的 `/dashboard/billing/subscription` + `/dashboard/billing/usage`。New API 的 `hard_limit_usd` 是**令牌总额度（剩余 + 已用）**，`total_usage` 单位是**美分**，故 `余额 = hard_limit_usd − total_usage / 100`（依据官方 `controller/billing.go` / `channel-billing.go`）；命中哨兵值则按「不限额度」处理，改为展示 `套餐 不限额度` 而非数字。**两处官方源码确认的字段差异**：(a) `total_usage` 是**终身累计**、非本月（new-api 的 `GetUsage` **忽略** `start_date`/`end_date`，那是 OpenAI 原生接口的行为）；(b) `*_USD` 里的数字**不一定是美元**——官方按站点 `QuotaDisplayType` 三分支填 `USD`/`CNY`/`TOKENS`，故 `newapi` 在「`used > total`」（两字段不同单位的信号）时**不显示余额**，宁缺毋滥。
+- **Gemini 模型清单**：Google 的 `/models` 会返回与项目无关的全量模型（含 embedding / TTS /
+  image / omni / antigravity / deep-research 等），且默认只返回 50 条。插件会 `pageSize=1000`
+  翻页拉全，再按 `supportedGenerationMethods` + 名称族过滤；排序优先稳定的 `*-latest` 别名，
+  避免把 `antigravity` 这类仅 Interactions API 的模型排到默认位置。项目级退役 / 免费层配额 0
+  无法静态判断，失败时按 Gemini 错误码给出「换模型 / 开通计费」的提示。
 - **多条 = 多行**：前端把 `account_info` 摊成**每个字段一行**（不再「最多 2 条、用 ` · ` 拼一行」）。
   所以**每多回一个键，列表里就多一行**——只想要一行的信息，就只回一个键。
 - **值是对象/数组的键前端会跳过**（渲染不出来）。想把数组里的东西展示出来，请在插件里**先摊平成标量**

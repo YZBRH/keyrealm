@@ -11,7 +11,11 @@ from typing import Optional
 
 from backend.plugin_sdk import VerifyResult, body_snippet, guarded, make_client, safe_json
 from llm_common import make_quota_probe
-from llm_protocols import chat_completion, fetch_models, chat_completion_stream, resolve_chat_model
+from llm_protocols import (
+    chat_completion,
+    chat_completion_stream,
+    model_items,
+)
 
 NAME = "Google Gemini"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -28,6 +32,33 @@ _RESTRICTED_KEY_REASONS = {
 
 # 余额不可用时的可选校验（设置页开关，默认关闭）：发送最小对话请求判断账户状态
 quota_probe = make_quota_probe(DEFAULT_BASE_URL, "gemini")
+
+# 模型名里出现这些词 → 不是纯文本对话模型（embedding / TTS / 图像 / 实时语音等），
+# 不进入「简单对话」下拉。`generateContent` 只能过滤掉一部分：image/tts/omni 等模型
+# 也声明了 generateContent，但请求文本时要么 400（需要 AUDIO/IMAGE 模态），要么只走
+# Interactions API（antigravity / deep-research / omni），实测均不可用于纯文本对话。
+_NON_TEXT_HINTS = (
+    "embed", "rerank", "aqa", "tts", "lyria", "transcribe", "robotics",
+    "omni", "antigravity", "deep-research", "computer-use",
+    "image", "imagen", "banana", "veo", "sora",
+)
+
+# 默认模型优先级：稳定的 `*-latest` 别名优先（跨项目可用性最好），然后才是版本化 flash、pro。
+_MODEL_PRIORITY = (
+    ("flash-lite-latest", 0),
+    ("flash-latest", 1),
+    ("flash-lite", 2),
+    ("flash", 3),
+    ("pro-latest", 4),
+    ("pro", 5),
+    ("gemma", 6),
+)
+
+# 模型层面的失败（换一个模型可能就好了），用于「默认模型」的候选回退。
+_MODEL_LEVEL_HINTS = (
+    "HTTP 4", "HTTP 5",
+    "Interactions API", "no longer available", "退役", "模态", "免费层",
+)
 
 
 def validate(data: dict) -> list[str]:
@@ -127,11 +158,60 @@ def verify(data: dict) -> VerifyResult:
     return _verify(data or {})
 
 
+def _is_text_chat_model(item: dict) -> bool:
+    """该模型是否可能用于纯文本 generateContent（静态过滤，不等于项目级一定有权限）。"""
+    methods = item.get("supportedGenerationMethods") or []
+    if "generateContent" not in methods:
+        return False
+    name = str(item.get("name") or "").lower()
+    return not any(hint in name for hint in _NON_TEXT_HINTS)
+
+
+def _model_rank(name: str) -> int:
+    lowered = name.lower()
+    for hint, rank in _MODEL_PRIORITY:
+        if hint in lowered:
+            return rank
+    return 9
+
+
+def _ordered_models(names) -> list:
+    return sorted(set(names), key=lambda name: (_model_rank(name), name))
+
+
 def list_models(data: dict, force: bool = False) -> list:
-    """获取该厂商可用模型列表（供「简单对话」选择模型）。"""
+    """获取可用于文本对话的模型（供「简单对话」选择与默认模型）。
+
+    - 读 `/models` 的**原始条目**（已分页），保留 `supportedGenerationMethods`；
+    - 过滤非文本族（embedding / TTS / image / omni / antigravity / deep-research 等）；
+    - **按默认模型优先级排序**：`*-flash-lite-latest` / `*-flash-latest` 在首位，
+      避免 `sorted()` 把 antigravity 这类模型排到默认位置。
+    """
     data = data or {}
     base_url = (data.get("base_url") or "").strip() or DEFAULT_BASE_URL
-    return fetch_models("gemini", base_url, (data.get("api_key") or "").strip(), force)
+    items = model_items("gemini", base_url, (data.get("api_key") or "").strip(), force)
+    names = []
+    for item in items:
+        if not _is_text_chat_model(item):
+            continue
+        name = str(item.get("name") or "")
+        if name.startswith("models/"):
+            name = name[len("models/"):]
+        if name:
+            names.append(name)
+    return _ordered_models(names)
+
+
+def _chat_candidates(data: dict, requested: str) -> list:
+    """本次对话要尝试的模型：用户明确选择时只用它；否则取默认排序前几个。"""
+    requested = str(requested or "").strip()
+    if requested:
+        return [requested]
+    return list_models(data)[:4]
+
+
+def _is_model_level_error(message: str) -> bool:
+    return any(hint in (message or "") for hint in _MODEL_LEVEL_HINTS)
 
 
 # ── 可选操作：简单对话 ──────────────────────────────────
@@ -150,17 +230,23 @@ def run_action(action_id: str, params: dict, data: dict) -> dict:
         return {"ok": False, "error": "未知操作"}
     data = data or {}
     params = params or {}
-    model = resolve_chat_model(params.get("model"), lambda: list_models(data))
-    if not model:
+    requested = str(params.get("model") or "").strip()
+    candidates = _chat_candidates(data, requested)
+    if not candidates:
         return {"ok": False, "error": "无法确定模型：请先选择模型（自动获取模型列表失败）"}
     base_url = (data.get("base_url") or "").strip() or DEFAULT_BASE_URL
-    return chat_completion(
-        base_url,
-        (data.get("api_key") or "").strip(),
-        model,
-        params.get("messages") or [],
-        protocol="gemini",
-    )
+    api_key = (data.get("api_key") or "").strip()
+    last = None
+    for model in candidates:
+        result = chat_completion(
+            base_url, api_key, model, params.get("messages") or [], protocol="gemini")
+        if result.get("ok"):
+            return result
+        last = result
+        # 用户明确选定的模型不做静默替换；默认模型的「模型层面失败」才换下一个。
+        if requested or not _is_model_level_error(str(result.get("error") or "")):
+            return result
+    return last or {"ok": False, "error": "没有可用模型"}
 
 
 def stream_action(action_id: str, params: dict, data: dict, on_delta) -> dict:
@@ -172,17 +258,30 @@ def stream_action(action_id: str, params: dict, data: dict, on_delta) -> dict:
     base_url = (data.get("base_url") or "").strip() or DEFAULT_BASE_URL
     if not base_url:
         return {"ok": False, "error": "需要填写 Base URL"}
-    model = resolve_chat_model(params.get("model"), lambda: list_models(data))
-    if not model:
+    requested = str(params.get("model") or "").strip()
+    candidates = _chat_candidates(data, requested)
+    if not candidates:
         return {"ok": False, "error": "无法确定模型：请先选择模型（自动获取模型列表失败）"}
-    return chat_completion_stream(
-        base_url,
-        (data.get("api_key") or "").strip(),
-        model,
-        params.get("messages") or [],
-        protocol="gemini",
-        on_delta=on_delta,
-    )
+    api_key = (data.get("api_key") or "").strip()
+    last = None
+    for model in candidates:
+        emitted = {"count": 0}
+
+        def _delta(text, _emit=on_delta, _state=emitted):
+            _state["count"] += 1
+            _emit(text)
+
+        result = chat_completion_stream(
+            base_url, api_key, model, params.get("messages") or [],
+            protocol="gemini", on_delta=_delta,
+        )
+        if result.get("ok"):
+            return result
+        last = result
+        # 已经吐出过内容是中途失败，不能换模型重来（会重复）；用户明确选择也不替换。
+        if requested or emitted["count"] or not _is_model_level_error(str(result.get("error") or "")):
+            return result
+    return last or {"ok": False, "error": "没有可用模型"}
 
 
 def get_display_summary(data: dict) -> str:

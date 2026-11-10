@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "credential_type": "llm_gemini",
   "author": "Keyrealm",
-  "description": "验证 Google Gemini API Key 有效性",
+  "description": "验证 Google Gemini API Key 有效性；模型列表按文本对话能力过滤，并区分项目退役 / Interactions-only / TTS / 免费层不可用等错误",
   "icon": "logo.png",
   "fields": [
     {

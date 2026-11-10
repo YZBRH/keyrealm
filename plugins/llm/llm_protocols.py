@@ -92,6 +92,23 @@ def _anthropic_root(base_url: str) -> str:
 
 # ── 简单对话 ─────────────────────────────────────────────
 
+# Gemini 的 400/404/429 里混着多种「模型层面不可用」的情况：项目退役、仅 Interactions API、
+# TTS 需要音频输出、免费层该模型配额为 0。统一成「鉴权或请求错误」会误导用户去查 Key。
+def _gemini_error_hint(status: int, payload, text: str) -> str:
+    err = payload.get("error") if isinstance(payload, dict) else None
+    message = str((err or {}).get("message") or "") if isinstance(err, dict) else ""
+    lowered = f"{message} {text or ''}".lower()
+    if status == 404 and "no longer available to new users" in lowered:
+        return "该模型已对当前项目退役（no longer available to new users）；请换一个模型"
+    if status == 400 and "only supports interactions api" in lowered:
+        return "该模型不支持 generateContent（仅 Interactions API）；请换一个模型"
+    if status == 400 and "requested combination of response modalities" in lowered:
+        return "该模型是 TTS / 语音模型，不支持纯文本对话；请换一个模型"
+    if status == 429 and "generate_content_free_tier_requests" in lowered:
+        return "该模型在免费层不可用（配额为 0）；需开通计费或换一个模型"
+    return ""
+
+
 def chat_completion(base_url: str, api_key: str, model: str, messages: list,
                     protocol: str = "openai", max_tokens: int = 512,
                     token_param: str = "max_tokens") -> dict:
@@ -208,6 +225,10 @@ def chat_completion(base_url: str, api_key: str, model: str, messages: list,
     # 阿里云百炼欠费就是 HTTP 400 + `{"type":"Arrearage","code":"Arrearage"}`，
     # 判成鉴权错误会把用户往「密钥写错了」的方向引。先读响应体，欠费就说欠费。
     snippet = body_snippet(resp)
+    if protocol == "gemini":
+        hint = _gemini_error_hint(status, payload, snippet)
+        if hint:
+            return {"ok": False, "error": hint}
     if is_insufficient_balance(snippet):
         return {"ok": False, "error": f"账户欠费或无可用额度 (HTTP {status})"}
     detail = f": {snippet}" if snippet else ""
@@ -341,6 +362,10 @@ def chat_completion_stream(base_url: str, api_key: str, model: str, messages: li
                 if resp.status_code != 200:
                     resp.read()
                     snippet = body_snippet(resp)
+                    if protocol == "gemini":
+                        hint = _gemini_error_hint(resp.status_code, safe_json(resp), snippet)
+                        if hint:
+                            return {"ok": False, "error": hint, "output": "".join(parts)}
                     # 与 chat_completion 同一套判定：先读响应体认欠费，再说是不是鉴权问题
                     if is_insufficient_balance(snippet):
                         return {"ok": False, "error": f"账户欠费或无可用额度 (HTTP {resp.status_code})",
@@ -398,7 +423,26 @@ def _fetch_model_items(protocol: str, base_url: str, api_key: str) -> list:
     try:
         with make_client() as client:
             if protocol == "gemini":
-                resp = client.get(f"{root}/models", params={"key": api_key})
+                # Gemini 默认只返回 50 条并带 nextPageToken（实测 62 个模型时会丢 12 个）。
+                # pageSize 上限 1000；循环翻页直到没有 nextPageToken。
+                items: list[dict] = []
+                token = ""
+                for _ in range(10):
+                    params = {"key": api_key, "pageSize": 1000}
+                    if token:
+                        params["pageToken"] = token
+                    resp = client.get(f"{root}/models", params=params)
+                    if resp.status_code != 200:
+                        return items
+                    payload = safe_json(resp)
+                    if not isinstance(payload, dict):
+                        return items
+                    items.extend(i for i in (payload.get("models") or [])
+                                 if isinstance(i, dict))
+                    token = str(payload.get("nextPageToken") or "")
+                    if not token:
+                        break
+                return items
             elif protocol == "anthropic":
                 # 与 `probe_anthropic_models` 同一套归一化：裸域名也要打到 `/v1/models`，
                 # 别在「验证」与「列模型」两处用不同的拼法（会一个通一个不通）。
@@ -546,6 +590,10 @@ _MODEL_CACHE_FILE = Path(__file__).resolve().parents[1] / ".model_cache.json"
 _MODEL_CACHE_TTL = 24 * 3600
 
 
+# 缓存结构版本：v2 起 Gemini 改为 pageSize=1000 + 翻页（旧缓存只有 50/62 条，必须作废）
+_MODEL_CACHE_VERSION = 2
+
+
 def _cache_key(protocol: str, base_url: str, api_key: str) -> str:
     """缓存键：协议 + Base URL + **密钥指纹**。
 
@@ -553,7 +601,7 @@ def _cache_key(protocol: str, base_url: str, api_key: str) -> str:
     只用 protocol+base_url 会把 A 账号的清单错给 B 账号。指纹是 sha256 前 10 位，非密钥本身。
     """
     fp = hashlib.sha256((api_key or "").encode("utf-8")).hexdigest()[:10]
-    return f"{protocol}|{base_url.rstrip('/')}|{fp}"
+    return f"{protocol}|{base_url.rstrip('/')}|{fp}|v{_MODEL_CACHE_VERSION}"
 
 
 def _cache_read() -> dict:

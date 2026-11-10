@@ -49,6 +49,12 @@
 
 ### 修复
 
+- **Gemini 模型列表与默认模型**：`/models` 未传 `pageSize`/未翻页（62 个模型只拿到 50 个），
+  且未按 `supportedGenerationMethods` 过滤非文本模型；默认模型取字母序首项，恰好命中仅支持
+  Interactions API 的 `antigravity`，简单对话直接 400。现改为分页拉全、过滤
+  embedding/TTS/image/omni/antigravity/deep-research 等非文本族，稳定 `*-latest` 别名优先排序；
+  默认模型失败时按错误码回退下一个候选，并把 404 项目退役、400 Interactions-only、400 TTS 模态、
+  429 免费层配额 0 分别给出准确提示。
 - **SSH 文件管理无法列出非 UTF-8 文件名**：服务器用 GB18030 / GBK 编码文件名时，目录列表
   因 `'utf-8' codec can't decode` 直接失败；现按 UTF-8 → GB18030 → Latin-1 宽松解码显示，
   读写 / 下载 / 删除 / 重命名时回传原始字节，正常 UTF-8 服务器行为不变。
