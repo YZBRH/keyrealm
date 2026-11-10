@@ -5,6 +5,7 @@
 import importlib.util
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -57,6 +58,65 @@ def test_protocol_detection():
     assert glm.protocol_for("https://open.bigmodel.cn/api/coding/paas/v4") == "openai"
     assert glm.protocol_for("https://api.z.ai/api/anthropic") == "anthropic"
     assert glm.protocol_of({"base_url": "https://open.bigmodel.cn/api/anthropic"}) == "anthropic"
+
+
+def test_parse_plan_from_subscription_and_quota():
+    sub = {"data": [{"productName": "GLM Coding Lite", "status": "VALID",
+                     "nextRenewTime": "2027-04-08"}]}
+    quota = {"data": {"limits": [
+        {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 28},
+        {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 41},
+    ], "level": "lite"}}
+    plan = glm._parse_plan(sub, quota)
+    assert "GLM Coding Lite" in plan["套餐"]
+    assert "5 小时 28%" in plan["套餐"]
+    assert "1 周 41%" in plan["套餐"]
+    assert "2027-04-08 续费" in plan["套餐"]
+
+
+def test_parse_plan_absent():
+    assert glm._parse_plan({"data": []}, {"code": 500, "success": False}) is None
+    assert glm._parse_plan(None, None) is None
+
+
+def test_parse_plan_quota_fallback():
+    quota = {"data": {"limits": [{"type": "TOKENS_LIMIT", "unit": 3, "number": 5,
+                                  "percentage": 0}], "level": "lite"}}
+    plan = glm._parse_plan({"data": []}, quota)
+    assert "GLM Coding Plan" in plan["套餐"]
+    assert "lite" in plan["套餐"]
+
+
+def test_plan_key_not_reported_as_unpaid():
+    from backend.plugin_sdk import VerifyResult
+
+    def fake_probe(*args, **kwargs):
+        return VerifyResult(status="valid", message="凭证有效，但账户欠费或无可用资源包")
+
+    with patch.object(glm, "list_models", lambda data, force=False: ["glm-5.3"]), \
+            patch.object(glm, "probe_openai_chat", fake_probe), \
+            patch.object(glm, "_fetch_plan", lambda *a: {"套餐": "GLM Coding Lite（5 小时 0%）"}), \
+            patch.object(glm, "_fetch_balance", lambda *a: {"balance": 0.0, "currency": "CNY"}):
+        result = glm._verify({"api_key": "sk-test", "base_url": ""})
+    assert result.status == "valid"
+    assert "Coding Plan" in result.message
+    assert "欠费" not in result.message
+    assert result.account_info["套餐"].startswith("GLM Coding Lite")
+    assert result.account_info["balance"] == 0.0
+
+
+def test_no_plan_shows_balance_only():
+    from backend.plugin_sdk import VerifyResult
+
+    with patch.object(glm, "list_models", lambda data, force=False: ["glm-5.3"]), \
+            patch.object(glm, "probe_openai_chat",
+                         lambda *a, **k: VerifyResult(status="valid", message="凭证有效")), \
+            patch.object(glm, "_fetch_plan", lambda *a: None), \
+            patch.object(glm, "_fetch_balance",
+                         lambda *a: {"balance": 27.5, "currency": "CNY"}):
+        result = glm._verify({"api_key": "sk-test", "base_url": ""})
+    assert result.account_info == {"balance": 27.5, "currency": "CNY"}
+    assert "套餐" not in result.account_info
 
 
 def test_fetch_balance_parses_available_balance():

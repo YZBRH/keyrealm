@@ -22,6 +22,8 @@ GLM 有 `/models`（无鉴权访问返回 401，说明端点存在），但 **ch
 """
 from __future__ import annotations
 
+import hashlib
+import time
 from urllib.parse import urlparse
 
 from backend.plugin_sdk import VerifyResult, guarded, make_client, safe_json
@@ -41,6 +43,11 @@ NAME = "智谱 GLM"
 DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 # 控制台财务总览自己调用的余额接口（非公开 OpenAPI，best-effort）
 BALANCE_PATH = "/api/biz/account/query-customer-account-report"
+# Coding Plan：订阅列表 + 额度用量（同样是控制台内部接口）
+PLAN_SUBSCRIPTION_PATH = "/api/biz/subscription/list"
+PLAN_QUOTA_PATH = "/api/monitor/usage/quota/limit"
+PLAN_CACHE_TTL = 60.0
+_plan_cache: dict[tuple[str, str], tuple[float, dict | None]] = {}
 BALANCE_HOSTS = (
     ("bigmodel.cn", "CNY"),
     ("z.ai", "USD"),
@@ -70,7 +77,23 @@ def protocol_of(data: dict) -> str:
 
 # 余额拿不到时的可选项（凭据级开关，默认关闭）：发一次最小对话请求判断是否欠费。
 # 协议跟随 Base URL —— 同一插件支持 OpenAI / Anthropic 两种端点，不能写死 openai。
-quota_probe = make_quota_probe(base_url_of, protocol_of)
+_generic_quota_probe = make_quota_probe(base_url_of, protocol_of)
+
+
+def quota_probe(data: dict):
+    """验证通过后的欠费探测：**先看 Coding Plan，再决定是否做对话探测**。
+
+    有有效套餐时直接补充套餐信息并返回 —— 不能让「按量付费余额为 0」把 plan 账号
+    误判成欠费（套餐额度与现金余额是两套计费）。
+    """
+    data = data or {}
+    api_key = (data.get("api_key") or "").strip()
+    if not api_key:
+        return None
+    plan = _fetch_plan(base_url_of(data), api_key)
+    if plan:
+        return {"account_info": plan}
+    return _generic_quota_probe(data)
 
 
 def validate(data: dict) -> list[str]:
@@ -97,6 +120,85 @@ def _balance_origin(base_url: str) -> tuple[str, str]:
         if host == suffix or host.endswith("." + suffix):
             return f"{parsed.scheme or 'https'}://{host}", currency
     return "", ""
+
+
+def _plan_usage(quota_payload) -> str:
+    """把 quota/limit 里各个 TOKENS_LIMIT 窗口摊成一行（如「5 小时 0% / 1 周 36%」）。"""
+    data = (quota_payload or {}).get("data")
+    if not isinstance(data, dict):
+        return ""
+    parts = []
+    for item in data.get("limits") or []:
+        if not isinstance(item, dict) or item.get("type") != "TOKENS_LIMIT":
+            continue
+        pct = item.get("percentage")
+        if pct is None:
+            continue
+        unit, number = item.get("unit"), item.get("number")
+        label = {3: f"{number} 小时", 6: f"{number} 周"}.get(unit, f"{number} 窗口")
+        parts.append(f"{label} {pct}%")
+    return " / ".join(parts)
+
+
+def _parse_plan(sub_payload, quota_payload) -> dict | None:
+    """解析「当前是否有有效 Coding Plan」；返回可直接并入 account_info 的单个字段。
+
+    优先看订阅列表（能拿到产品名与续费时间）；列表为空时用 quota 接口兜底
+    （`data.limits` 非空即认为存在套餐）。没有有效套餐返回 ``None``。
+    """
+    rows = (sub_payload or {}).get("data")
+    active = None
+    if isinstance(rows, list):
+        active = next(
+            (row for row in rows
+             if isinstance(row, dict) and str(row.get("status") or "").upper() == "VALID"),
+            None,
+        )
+    if active:
+        name = str(active.get("productName") or active.get("productBigTitle")
+                   or "GLM Coding Plan").strip()
+        usage = _plan_usage(quota_payload)
+        renew = str(active.get("nextRenewTime") or "").strip()
+        detail = usage
+        if renew:
+            detail = f"{detail}；{renew} 续费" if detail else f"{renew} 续费"
+        return {"套餐": f"{name}（{detail}）" if detail else name}
+
+    data = (quota_payload or {}).get("data")
+    if isinstance(data, dict) and data.get("limits"):
+        level = str(data.get("level") or "").strip()
+        name = f"GLM Coding Plan{' · ' + level if level else ''}"
+        usage = _plan_usage(quota_payload)
+        return {"套餐": f"{name}（{usage}）" if usage else name}
+    return None
+
+
+def _fetch_plan(base_url: str, api_key: str) -> dict | None:
+    """查询 Coding Plan（best-effort + 60s 缓存）；非官方站点直接返回 None。"""
+    origin, _ = _balance_origin(base_url)
+    if not origin:
+        return None
+    cache_key = (origin, hashlib.sha256(api_key.encode("utf-8")).hexdigest())
+    now = time.monotonic()
+    hit = _plan_cache.get(cache_key)
+    if hit and now - hit[0] < PLAN_CACHE_TTL:
+        return hit[1]
+    plan = None
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"}
+        with make_client() as client:
+            sub_resp = client.get(origin + PLAN_SUBSCRIPTION_PATH, headers=headers)
+            quota_resp = client.get(origin + PLAN_QUOTA_PATH, headers=headers)
+        sub_payload = safe_json(sub_resp) if sub_resp.status_code == 200 else None
+        quota_payload = safe_json(quota_resp) if quota_resp.status_code == 200 else None
+        plan = _parse_plan(sub_payload, quota_payload)
+    except Exception:  # noqa: BLE001 - 套餐查询失败绝不能影响验证结论
+        plan = None
+    _plan_cache[cache_key] = (now, plan)
+    if len(_plan_cache) > 256:
+        for key in [k for k, (ts, _v) in _plan_cache.items() if now - ts >= PLAN_CACHE_TTL]:
+            _plan_cache.pop(key, None)
+    return plan
 
 
 def _fetch_balance(base_url: str, api_key: str) -> dict | None:
@@ -154,13 +256,26 @@ def _verify(data: dict) -> VerifyResult:
         result = probe_openai_chat(base_url, api_key, model)
 
     if result.status == "valid":
+        # 官方 Key：先判断有没有 Coding Plan，再看余额。套餐额度与现金余额是两套计费，
+        # plan 账号的「按量付费余额为 0」不能当成欠费。
+        plan = _fetch_plan(base_url, api_key)
         balance = _fetch_balance(base_url, api_key)
+        info = dict(result.account_info or {})
+        if plan:
+            info.update(plan)
         if balance:
-            info = dict(result.account_info or {})
             info.update(balance)
+        if info:
             result.account_info = info
-        if (protocol == PROTOCOL_ANTHROPIC
-                and ("套餐" in result.message or "订阅" in result.message)):
+
+        if plan and any(word in result.message for word in ("欠费", "余额不足", "资源包")):
+            if protocol == PROTOCOL_ANTHROPIC:
+                result.message = "凭证有效，使用 GLM Coding Plan 套餐"
+            else:
+                result.message = ("凭证有效，账户有 GLM Coding Plan 套餐；"
+                                  "该套餐仅适用于 /api/anthropic（Anthropic 兼容）端点")
+        elif (protocol == PROTOCOL_ANTHROPIC and not plan
+              and ("套餐" in result.message or "订阅" in result.message)):
             # 1309：Anthropic 端点只认 Coding Plan；按量付费余额要走 OpenAI 兼容端点
             result.message = ("凭证有效，但该 Anthropic 端点需要 GLM Coding Plan 套餐"
                               "（已到期或未开通）；按量付费余额请改用 /api/paas/v4（OpenAI 兼容）")

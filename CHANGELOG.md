@@ -28,6 +28,9 @@
   OpenAI 兼容（`/api/paas/v4`）与 Anthropic 兼容（`/api/anthropic`，Claude Code）端点；
   Anthropic 端点缺少 Coding Plan 时的 429（code `1309`）判为「无可用套餐/订阅」而非限流，
   并提示按量付费余额需改用 `/api/paas/v4`。
+- **智谱 GLM Coding Plan 识别**：验证时先查订阅与配额，再查余额——有有效套餐显示
+  「套餐（窗口额度 / 续费时间）+ 余额」，无套餐只显示余额；套餐账号不再因按量付费余额为 0
+  被误判欠费，欠费提示也会改为套餐说明。
 - **MCP 凭据出口设置**：`vault_create_credential` 新增可选 `proxy_mode` / `proxy_id`
   （跟随默认 / 直连 / 指定代理）；`vault_import_credentials` 也可给整批导入统一指定出口。
   创建、修改与导入都会校验代理保留键：模式非法、`proxy` 缺 id、指向不存在的代理一律拒绝，
